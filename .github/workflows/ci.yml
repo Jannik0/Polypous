@@ -152,4 +152,5 @@ jobs:
 
       - name: Skip Vulkan tests (feature not available yet)
         if: steps.features.outputs.available != 'true'
-        run: echo "polypous-backend has no 'vulkan' feature yet (issue #2). Lavapipe is set up; tests are skipped."
+        run: |
+          echo "polypous-backend has no 'vulkan' feature yet (issue #2). Lavapipe is set up; tests are skipped."
