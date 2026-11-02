@@ -13,3 +13,6 @@ All notable changes to Polypous are documented here. The format follows
   `-runtime`, `-train`, `-pipelines`, `polypous`, and `polypous-cli` with the `polyp` binary), workspace
   lints (`unsafe_code` denied, `unwrap_used`/`expect_used` warned outside tests) and the Rust toolchain
   pinned to 1.99.1 in `rust-toolchain.toml`.
+- CI on GitHub Actions: fmt, clippy and CPU tests on Linux and Windows, `cargo deny` (licenses and
+  advisories, `deny.toml`), a dependency-boundary check (`tools/ci/check_dependency_boundary.py`),
+  Vulkan tests on Mesa lavapipe, and a macOS build-only job for Metal (on `main` and manual dispatch).

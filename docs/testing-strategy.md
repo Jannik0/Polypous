@@ -56,13 +56,30 @@ an explanation in the PR.
 - **Metal:** compile-checked in CI on a macOS runner. No real tests until Mac hardware is available.
   Report this in PRs that touch Metal paths.
 
-## 5. CI (planned, M0)
+## 5. CI
 
-- Linux + Windows: `fmt`, `clippy -D warnings`, CPU tests, `cargo deny` (licenses, advisories), dependency-boundary
-  check (Burn only in allowed crates).
-- macOS: build only (Metal feature).
-- Linux: Vulkan tests on lavapipe (if feasible).
-- Nightly on T1 (self-hosted runner, optional): GPU and model reference tests.
+GitHub Actions, set up in M0 (issue #3). Workflows in [`.github/workflows/`](../.github/workflows/),
+helper scripts in [`tools/ci/`](../tools/ci/). The toolchain is always the one in `rust-toolchain.toml`.
+
+| Job (stable name, used for required checks) | Workflow | Runs on | What |
+|---|---|---|---|
+| `Lint & test (Linux)` | `ci.yml` | every PR, push to `main` | `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace` (CPU features) |
+| `Lint & test (Windows)` | `ci.yml` | every PR, push to `main` | same on Windows |
+| `cargo-deny (licenses, advisories)` | `ci.yml` | every PR, push to `main` | `cargo deny check` with [`deny.toml`](../deny.toml): MIT-compatible licenses only ([ADR-0010](adr/0010-mit-license.md)), RustSec advisories, crates.io only |
+| `Dependency boundary` | `ci.yml` | every PR, push to `main` | `tools/ci/check_dependency_boundary.py` (and its tests): Burn/CubeCL only in `polypous-backend`/`polypous-quant` ([ADR-0007](adr/0007-burn-version-pinning.md)); no GPU dependency, direct or transitive, in `polypous-ir`/`-formats`/`-polyp` |
+| `Vulkan tests (Linux, lavapipe)` | `ci.yml` | every PR, push to `main` | `cargo test --workspace --features polypous-backend/vulkan -- --include-ignored` on Mesa lavapipe (software Vulkan) |
+| `Build (macOS, Metal)` | `macos.yml` | push to `main`, manual dispatch | `cargo build --workspace --all-targets --features polypous-backend/metal` (build only, no Mac hardware) |
+
+- **Minutes budget.** The repository is private on the free plan, where macOS minutes count 10×.
+  The macOS job therefore does not run on PRs (so it cannot be a required check); trigger it by
+  hand for PRs that touch Metal paths. Superseded runs on PR branches are cancelled. Cargo caching
+  (`Swatinem/rust-cache`) keeps a no-change run at roughly 10 minutes or less.
+- **Backend features.** Until `polypous-backend` has the `cpu`, `vulkan` and `metal` features
+  (issue #2), the jobs use the default features and show a warning annotation; the Vulkan job sets
+  up lavapipe and checks that it is visible but skips the tests. `tools/ci/backend_feature.py`
+  switches to the features automatically once they exist.
+- **Actions** are pinned to full commit SHAs with a version comment. Update them deliberately.
+- Nightly on T1 (self-hosted runner, optional, later): GPU and model reference tests.
 
 ## 6. Writing a reference test (checklist)
 

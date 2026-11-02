@@ -1,0 +1,53 @@
+# macOS build-only job: compile-checks the Metal backend (docs/testing-strategy.md §4, §5).
+#
+# Triggers: pushes to `main` and manual dispatch only, NOT pull requests. The repository is
+# private on GitHub's free plan, where macOS runner minutes count 10x. To check a PR branch, run it
+# by hand ("Run workflow" in the Actions tab, or
+# `gh api -X POST repos/Jannik0/Polypous/actions/workflows/macos.yml/dispatches -f ref=<branch>`).
+# Because it does not run on PRs, its job cannot be a required status check.
+#
+# Job name (stable): Build (macOS, Metal)
+#
+# There is no Mac hardware for testing, so this job only builds. Until `polypous-backend` has a
+# `metal` feature (issue #2) it builds the default features and emits a warning annotation;
+# tools/ci/backend_feature.py switches to `--features polypous-backend/metal` automatically.
+
+name: macOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-metal:
+    name: Build (macOS, Metal)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Select Metal feature
+        id: features
+        run: python3 tools/ci/backend_feature.py metal | tee -a "$GITHUB_OUTPUT"
+
+      - name: cargo build
+        run: cargo build --workspace --all-targets --locked ${{ steps.features.outputs.args }}

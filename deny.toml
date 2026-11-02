@@ -1,0 +1,55 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
+# Run locally with `cargo deny check`. CI runs it on every PR and push to `main`
+# (.github/workflows/ci.yml, job "cargo-deny (licenses, advisories)").
+
+[graph]
+# Check every feature combination, so optional GPU backends are covered too.
+all-features = true
+
+[advisories]
+# Any RustSec advisory (vulnerability, unsound, notice) for a crate in Cargo.lock fails the check.
+# Unmaintained-crate notices fail only for direct dependencies of workspace crates: we can replace
+# those ourselves, while transitive ones (for example inside Burn) are outside our control.
+unmaintained = "workspace"
+yanked = "deny"
+# Ignoring an advisory needs an entry here with the advisory id and a reason, reviewed by the owner.
+ignore = []
+
+[licenses]
+# Only licenses compatible with MIT distribution (ADR-0010). Copyleft (GPL, LGPL, AGPL, MPL, ...)
+# is not allowed. Adding a license here needs the owner's approval.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+]
+confidence-threshold = 0.9
+# The allow list is written ahead of the dependencies that need it.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Workspace crates are `publish = false`; their own MIT license is set in the workspace Cargo.toml.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between workspace crates have no version requirement; that is fine.
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io. Git or other registries need an explicit entry here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
