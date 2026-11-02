@@ -16,7 +16,7 @@ name: macOS
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/m0-ci] # TEMPORARY: verify once before merge, removed in the next commit
   workflow_dispatch:
 
 permissions:
