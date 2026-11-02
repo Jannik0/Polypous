@@ -1,0 +1,152 @@
+# Main CI for Polypous (docs/testing-strategy.md §5, issue #3).
+#
+# Runs on every PR and every push to `main`. The job names below are used as required status
+# checks in branch protection: do not rename them without updating the protection rules.
+#
+#   Lint & test (Linux)
+#   Lint & test (Windows)
+#   cargo-deny (licenses, advisories)
+#   Dependency boundary
+#   Vulkan tests (Linux, lavapipe)
+#
+# The macOS build lives in macos.yml and does not run on PRs (it costs 10x minutes).
+#
+# Toolchain: always the one pinned in rust-toolchain.toml (`rustup toolchain install` without
+# arguments reads it).
+#
+# Backend features: `polypous-backend` gets its `cpu` / `vulkan` features in issue #2.
+# tools/ci/backend_feature.py checks whether a feature exists and the jobs fall back to the
+# default features (with a warning annotation) until it does, so no workflow change is needed
+# when #2 lands.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per PR / branch. A new push cancels the superseded run, except on `main`, where every
+# commit gets a complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint-test:
+    name: Lint & test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: Windows
+            os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Select CPU feature set
+        id: features
+        run: |
+          py=$(command -v python3 || command -v python)
+          "$py" tools/ci/backend_feature.py cpu | tee -a "$GITHUB_OUTPUT"
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked ${{ steps.features.outputs.args }} -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --locked ${{ steps.features.outputs.args }}
+
+  deny:
+    name: cargo-deny (licenses, advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Checks advisories, bans, licenses and sources as configured in deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+
+  boundary:
+    name: Dependency boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Test the boundary check script
+        run: python3 -m unittest discover -s tools/ci -p 'test_*.py' -v
+
+      # ADR-0007: Burn/CubeCL only in polypous-backend and polypous-quant.
+      # CLAUDE.md: polypous-ir, -formats and -polyp have no GPU dependency.
+      - name: Check dependency boundary
+        run: python3 tools/ci/check_dependency_boundary.py
+
+  vulkan-lavapipe:
+    name: Vulkan tests (Linux, lavapipe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Use only Mesa's software Vulkan driver (lavapipe); there is no GPU on hosted runners.
+      VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Install Mesa lavapipe
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends mesa-vulkan-drivers vulkan-tools
+
+      - name: Check lavapipe Vulkan device
+        run: vulkaninfo --summary
+
+      - name: Select Vulkan feature
+        id: features
+        run: python3 tools/ci/backend_feature.py vulkan | tee -a "$GITHUB_OUTPUT"
+
+      # `--include-ignored` also runs the `#[ignore = "gpu"]` tests; with only the `vulkan`
+      # feature compiled in, the only GPU device they find is lavapipe.
+      - name: cargo test --features polypous-backend/vulkan
+        if: steps.features.outputs.available == 'true'
+        run: cargo test --workspace --locked ${{ steps.features.outputs.args }} -- --include-ignored
+
+      - name: Skip Vulkan tests (feature not available yet)
+        if: steps.features.outputs.available != 'true'
+        run: echo "polypous-backend has no 'vulkan' feature yet (issue #2). Lavapipe is set up; tests are skipped."
