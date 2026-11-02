@@ -27,3 +27,4 @@ on the project over time.
 | [0008](0008-wrapper-friendly-api.md) | Wrapper-friendly Rust API, C ABI later | Accepted |
 | [0009](0009-reference-based-testing.md) | Testing against reference implementations | Accepted |
 | [0010](0010-mit-license.md) | MIT license | Accepted |
+| [0011](0011-use-burn-dispatch-for-backend-selection.md) | Use Burn's runtime `Dispatch` backend for backend selection | Proposed |

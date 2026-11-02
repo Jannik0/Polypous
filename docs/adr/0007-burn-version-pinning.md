@@ -24,4 +24,106 @@ Burn is pre-1.0, and its API changes between releases. Letting Burn types spread
 
 ## Follow-up notes
 
-- *(M0: record the chosen Burn/CubeCL versions and Rust toolchain here.)*
+### M0 pin (2026-11-02, issue #2)
+
+- **Burn `=0.22.1`** (released 2026-10-20) and **CubeCL `=0.11.3`** (2026-10-22), the latest stable
+  releases. Burn 0.22.1 requires `cubecl ^0.11.1`, so 0.11.3 is the version Burn itself resolves to.
+  `0.23.0-pre.1` / `0.12.0-pre.1` exist but are pre-releases and were not considered.
+- **Rust toolchain 1.99.1**, pinned in `rust-toolchain.toml` (MSRV `rust-version = "1.99"`). Burn
+  0.22.1 builds with it.
+- The `=` pin covers the top-level `burn` and `cubecl` crates. Their sub-crates (`burn-core`,
+  `burn-cubecl`, `cubecl-cuda`, `cudarc`, `wgpu`, …) use caret requirements and are held by the
+  committed `Cargo.lock`. Running `cargo update` on them is part of an upgrade task, not routine work.
+- `cubecl` is an optional dependency of `polypous-backend` (enabled by the GPU features). It is not
+  used in code yet. It makes the exact CubeCL pin part of dependency resolution, so `polypous-quant`
+  later gets the same CubeCL as Burn.
+- Burn is used with `default-features = false`. Only `std` plus one backend feature per Polypous
+  feature are enabled. Burn's default features would pull in `optim`/`autodiff`, which are enabled
+  later when training needs them.
+
+**Feature mapping (`polypous-backend`)**
+
+| Polypous feature | Burn feature | Burn backend / runtime |
+|---|---|---|
+| `cpu` (default) | `flex` | `burn-flex`: pure-Rust CPU backend. Burn's own `cpu` feature is the CubeCL CPU runtime (MLIR/LLVM), much heavier, not used. `ndarray` is deprecated in Burn 0.22 |
+| `cuda` | `cuda` | CubeCL CUDA runtime (`cubecl-cuda` 0.11.3 → `cudarc` 0.19.10) |
+| `vulkan` | `vulkan` | CubeCL wgpu runtime (`wgpu` 30) pinned to Vulkan, SPIR-V code generation |
+| `metal` | `metal` | CubeCL wgpu runtime pinned to Metal, MSL code generation |
+
+**CUDA requirements (from source, not yet verified on hardware)**
+
+- *Build:* **no CUDA toolkit needed, but network access (or a pre-filled cache) is.**
+  - `cubecl-cuda` 0.11 always depends on `cubecl-llvm` (`cubecl-cuda-0.11.3/Cargo.toml`,
+    `[dependencies.cubecl-llvm]`), whose build dependency `tracel-llvm-bundler` downloads a prebuilt
+    LLVM 23.1 bundle (~45 MB `.tar.xz`) from `github.com/tracel-ai/tracel-llvm/releases` and checks
+    its SHA-256 (`tracel-llvm-bundler-23.1.0-4/build.rs:76-170`, `src/config.rs:11-16`). The
+    archive is cached in `~/.cache/tracel/`, unpacked into the platform's local data directory
+    (`~/.local/share/tracel/` on Linux, `%LOCALAPPDATA%\tracel\` on Windows), and linked **statically**
+    (`src/llvm_sys.rs:49-66`, `llvm-config --link-static`). The download uses `ureq` with its own
+    root certificates, so it fails behind TLS-intercepting proxies (it did in the cloud session,
+    `InvalidCertificate(UnknownIssuer)`). Workaround: download both files with `curl` into
+    `~/.cache/tracel/` under the names `tracel-llvm-23.1.0-4-<platform>.tar.xz` and
+    `tracel-llvm-23.1.0-4-<platform>.checksums.json` and build with
+    `TRACEL_LLVM_BUNDLER_SKIP_CHECKSUM_DOWNLOAD=1`. The archive hash is still checked.
+  - cudarc's build script runs `nvcc --version` and, if that fails, uses the bindings for the
+    newest CUDA version it knows, 13.4 (`cudarc-0.19.10/build.rs:11-31, 158-171`). With `nvcc` 13.2 on
+    `PATH` it uses the 13.2 bindings. `CUDARC_CUDA_VERSION=13020` forces them (`build.rs:57-70`).
+    cudarc supports CUDA 11.4–13.4.
+- *Kernel compilation:* by default CubeCL 0.11 compiles CUDA kernels **with its bundled LLVM to PTX**,
+  not with NVRTC (`cubecl-cuda-0.11.3/src/compiler.rs:11-31`: `CudaBackend::Llvm` unless the `cpp`
+  feature, exposed as `cubecl/cuda-cpp`, is on; Polypous does not enable it). The PTX version is
+  chosen from the **driver** version, for example PTX 9.2 for a CUDA 13.2 driver
+  (`cubecl-llvm-0.11.3/src/nvptx/ptx_version.rs:18-43`). NVRTC is only called on the C++ path
+  (`cubecl-cuda-0.11.3/src/compute/context.rs:319-460`).
+- *Runtime:* only the **NVIDIA driver** (`libcuda.so` / `nvcuda.dll`), loaded with `libloading` on
+  first use rather than linked (cudarc `fallback-dynamic-loading`, `cubecl-cuda-0.11.3/Cargo.toml`;
+  `cudarc-0.19.10/src/driver/sys/mod.rs`, `culib()`). The CUDA Toolkit is not needed to run
+  (from the source above; to be confirmed on the reference machine).
+- *Missing driver:* device enumeration checks for `libcuda` first and returns no devices if it is
+  missing (`cubecl-cuda-0.11.3/src/runtime.rs:463-477`). Checked in the cloud session (Linux, no
+  CUDA): the `cuda` build of `burn_smoke` starts and reports no CUDA device. But device
+  initialization `unwrap()`s driver calls (`runtime.rs:70-72`), so a driver that is present but
+  broken panics. Device probing (#4) must isolate such panics.
+- **Open, needs the reference machine:** that the CUDA backend runs with the CUDA 13.2 driver/toolkit
+  on the RTX 3060 (Windows and Debian), and that it runs without NVRTC on `PATH`. Use
+  `crates/polypous-backend/examples/burn_smoke.rs`.
+
+- *Binary size:* because LLVM is linked statically, a `cuda` build is large. The debug build of the
+  `burn_smoke` example is about 1 GB on Linux (no stripping, debug info). Release size is not measured yet.
+
+**Vulkan requirements (from source)**
+
+- A Vulkan loader and an ICD for the GPU (the normal driver install). wgpu 30 needs Vulkan ≥ 1.1 or
+  `VK_KHR_get_physical_device_properties2`.
+- For CubeCL's SPIR-V path the device needs Vulkan 1.1 (SPIR-V ≥ 1.3), `vulkanMemoryModel` with
+  device scope and `bufferDeviceAddress` (`cubecl-wgpu-0.11.3/src/backend/vulkan/features.rs:315-327`).
+  Devices without them fall back to WGSL through wgpu/naga (`cubecl-wgpu-0.11.3/src/backend/vulkan.rs:380-386`).
+  Vulkan 1.3 drivers give SPIR-V 1.6. Current NVIDIA and Intel Iris Xe drivers report Vulkan 1.3 or
+  newer (to be confirmed on the reference machine with `vulkaninfo --summary`). Mesa lavapipe in the
+  cloud session reports 1.4.318.
+- Checked in the cloud session on lavapipe: `burn_smoke` runs a 2×2 matmul correctly, and with no
+  Vulkan ICD available (`VK_DRIVER_FILES=/nonexistent.json`) it starts and reports no Vulkan device.
+- No Vulkan SDK needed to build or run. The SDK only adds validation layers.
+
+**Licenses of the new dependencies**
+
+Everything Burn pulls in is under permissive licenses, with these exceptions (checked with
+`cargo metadata` and `cargo tree -i`):
+
+- `colored` 3.1.1 (**MPL-2.0**), always: `burn-tensor`'s `std` feature enables it, and Polypous needs `std`.
+- `buildid` 1.1.0 (**MPL-2.0**, via `cubecl-runtime`) with `vulkan`/`cuda`/`metal`, and
+  `option-ext` 0.2.0 (**MPL-2.0**, via `dirs-sys`) with `cuda`.
+- `webpki-roots` (CDLA-Permissive-2.0) and LLVM (Apache-2.0 WITH LLVM-exception), both permissive.
+
+MPL-2.0 is weak, file-level copyleft. Using unmodified MPL crates in an MIT program is generally
+considered compatible, but ADR-0010 does not mention MPL, and the planned `deny.toml` (issue #3)
+rejects it. **The owner decides** whether to allow MPL-2.0 for these crates (for example with
+cargo-deny `exceptions`). Without that, Burn cannot be used.
+
+**Router evaluation (ADR-0003)**
+
+Burn 0.22 has a runtime-dispatched backend: `burn::Tensor<D, K>` has no backend type parameter, and
+the backend is chosen by `burn::Device` (an enum over the compiled-in backends, generated dispatch,
+cross-backend `to_device` through host memory). This covers what ADR-0003 plans to build by hand, so
+the result is [ADR-0011](0011-use-burn-dispatch-for-backend-selection.md) (**Proposed**). Until the
+owner decides, ADR-0003 stands, and the feature wiring above serves both options.
