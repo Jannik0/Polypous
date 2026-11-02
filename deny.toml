@@ -43,7 +43,7 @@ ignore = true
 
 [bans]
 multiple-versions = "warn"
-wildcard-dependencies = "deny"
+wildcards = "deny"
 # Path dependencies between workspace crates have no version requirement; that is fine.
 allow-wildcard-paths = true
 
