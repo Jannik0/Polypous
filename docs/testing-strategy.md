@@ -68,16 +68,16 @@ helper scripts in [`tools/ci/`](../tools/ci/). The toolchain is always the one i
 | `cargo-deny (licenses, advisories)` | `ci.yml` | every PR, push to `main` | `cargo deny check` with [`deny.toml`](../deny.toml): MIT-compatible licenses only ([ADR-0010](adr/0010-mit-license.md)), RustSec advisories, crates.io only |
 | `Dependency boundary` | `ci.yml` | every PR, push to `main` | `tools/ci/check_dependency_boundary.py` (and its tests): Burn/CubeCL only in `polypous-backend`/`polypous-quant` ([ADR-0007](adr/0007-burn-version-pinning.md)); no GPU dependency, direct or transitive, in `polypous-ir`/`-formats`/`-polyp` |
 | `Vulkan tests (Linux, lavapipe)` | `ci.yml` | every PR, push to `main` | `cargo test --workspace --features polypous-backend/vulkan -- --include-ignored` on Mesa lavapipe (software Vulkan) |
-| `Build (macOS, Metal)` | `macos.yml` | push to `main`, manual dispatch | `cargo build --workspace --all-targets --features polypous-backend/metal` (build only, no Mac hardware) |
+| `Build (macOS, Metal)` | `macos.yml` | push to `main`, manual dispatch, PRs touching `crates/polypous-backend/**`, `crates/polypous-quant/**`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | `cargo build --workspace --all-targets --features polypous-backend/metal` (build only, no Mac hardware) |
 
 - **Minutes budget.** The repository is private on the free plan, where macOS minutes count 10×.
-  The macOS job therefore does not run on PRs (so it cannot be a required check); trigger it by
-  hand for PRs that touch Metal paths. Superseded runs on PR branches are cancelled. Cargo caching
-  (`Swatinem/rust-cache`) keeps a no-change run at roughly 10 minutes or less.
-- **Backend features.** Until `polypous-backend` has the `cpu`, `vulkan` and `metal` features
-  (issue #2), the jobs use the default features and show a warning annotation; the Vulkan job sets
-  up lavapipe and checks that it is visible but skips the tests. `tools/ci/backend_feature.py`
-  switches to the features automatically once they exist.
+  The macOS job therefore runs only on PRs that touch the backend crates or the dependency set (so it
+  cannot be a required check); trigger it by hand for other branches if needed. Superseded runs on PR
+  branches are cancelled. Cargo caching (`Swatinem/rust-cache`) keeps a no-change run at roughly
+  10 minutes or less.
+- **Backend features.** `tools/ci/backend_feature.py` selects the `cpu`, `vulkan` and `metal`
+  features of `polypous-backend` when they exist, and falls back to the default features with a
+  warning annotation otherwise.
 - **Actions** are pinned to full commit SHAs with a version comment. Update them deliberately.
 - Nightly on T1 (self-hosted runner, optional, later): GPU and model reference tests.
 

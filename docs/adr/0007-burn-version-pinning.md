@@ -115,15 +115,13 @@ Everything Burn pulls in is under permissive licenses, with these exceptions (ch
   `option-ext` 0.2.0 (**MPL-2.0**, via `dirs-sys`) with `cuda`.
 - `webpki-roots` (CDLA-Permissive-2.0) and LLVM (Apache-2.0 WITH LLVM-exception), both permissive.
 
-MPL-2.0 is weak, file-level copyleft. Using unmodified MPL crates in an MIT program is generally
-considered compatible, but ADR-0010 does not mention MPL, and the planned `deny.toml` (issue #3)
-rejects it. **The owner decides** whether to allow MPL-2.0 for these crates (for example with
-cargo-deny `exceptions`). Without that, Burn cannot be used.
+Decision: the three MPL-2.0 crates are allowed as per-crate `exceptions` in `deny.toml`, because
+Polypous uses them unmodified ([ADR-0012](0012-mpl-for-unmodified-dependencies.md)).
 
 **Router evaluation (ADR-0003)**
 
 Burn 0.22 has a runtime-dispatched backend: `burn::Tensor<D, K>` has no backend type parameter, and
 the backend is chosen by `burn::Device` (an enum over the compiled-in backends, generated dispatch,
 cross-backend `to_device` through host memory). This covers what ADR-0003 plans to build by hand, so
-the result is [ADR-0011](0011-use-burn-dispatch-for-backend-selection.md) (**Proposed**). Until the
-owner decides, ADR-0003 stands, and the feature wiring above serves both options.
+the result is [ADR-0011](0011-use-burn-dispatch-for-backend-selection.md), **accepted** on 2026-11-02.
+`polypous-backend` builds on `burn::Tensor` + `burn::Device`; ADR-0003's goals and rules still apply.

@@ -1,7 +1,7 @@
 # Spec: Device Discovery and Tiered Placement
 
 **Status:** Draft. Device discovery in M0, placement in M4. **Crates:** `polypous-backend`, `polypous-runtime`
-**Decisions:** [ADR-0003](../adr/0003-runtime-backend-selection.md), [ADR-0004](../adr/0004-tiered-placement.md)
+**Decisions:** [ADR-0003](../adr/0003-runtime-backend-selection.md), [ADR-0004](../adr/0004-tiered-placement.md), [ADR-0011](../adr/0011-use-burn-dispatch-for-backend-selection.md)
 
 Goal: **if a model can run on this machine at all, it runs, with no configuration.** As many blocks
 as fit go on the GPU, the next ones in CPU RAM, and the rest are streamed from disk.
@@ -10,7 +10,13 @@ as fit go on the GPU, the next ones in CPU RAM, and the rest are streamed from d
 
 At `Engine` creation Polypous enumerates devices for every compiled-in backend and **probes** each:
 initialize, allocate a small buffer, run a tiny kernel, compare the result. A failing probe marks the
-device unavailable with a reason, and never aborts.
+device unavailable with a reason, and never aborts. Burn/CubeCL may panic during device
+initialization (for example a CUDA driver that is installed but broken), so each probe isolates
+panics (`catch_unwind` or a separate thread) ([ADR-0011](../adr/0011-use-burn-dispatch-for-backend-selection.md)).
+
+Enumeration builds on Burn's `Device::enumerate_physical`, which also reports device identity (PCI
+address, adapter LUID) for CubeCL devices. Polypous never uses Burn's `Device::default()`: its
+priority order and probing rules are the ones in this section.
 
 Each device reports:
 
@@ -32,7 +38,7 @@ Each device reports:
 5. none, so CPU only
 
 If several devices share a rank, choose the one with the most dedicated memory. A physical GPU
-reachable via both CUDA and Vulkan counts once, and CUDA wins. On the reference machine this picks the
+reachable via both CUDA and Vulkan counts once (matched by device identity), and CUDA wins. On the reference machine this picks the
 RTX 3060 via CUDA and ignores the Intel iGPU.
 
 Apps can override: force a backend or device, disable GPU, set memory budgets.

@@ -1,9 +1,9 @@
 # ADR-0011: Use Burn's runtime `Dispatch` backend for backend selection
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-02)
 - **Date:** 2026-11-02
 - **Deciders:** project owner (+ authoring agent)
-- **Supersedes / Superseded by:** would supersede part of [ADR-0003](0003-runtime-backend-selection.md) (how the `BackendKind` enum dispatch is built), not its goals
+- **Supersedes / Superseded by:** supersedes part of [ADR-0003](0003-runtime-backend-selection.md) (how the `BackendKind` enum dispatch is built), not its goals
 
 ## Context
 
