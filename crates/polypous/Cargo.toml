@@ -1,0 +1,22 @@
+[package]
+name = "polypous"
+description = "Public facade: `Engine`, `Model`, `Session`, `Pipeline`, `Trainer`, events, errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+polypous-ir.workspace = true
+polypous-formats.workspace = true
+polypous-polyp.workspace = true
+polypous-backend.workspace = true
+polypous-quant.workspace = true
+polypous-runtime.workspace = true
+polypous-train.workspace = true
+polypous-pipelines.workspace = true
+
+[lints]
+workspace = true

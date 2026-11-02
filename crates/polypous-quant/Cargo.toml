@@ -1,0 +1,15 @@
+[package]
+name = "polypous-quant"
+description = "Quantized tensor representation, GGUF block formats, dequantization, quantized matmul/matvec kernels (CubeCL for GPUs, SIMD Rust for CPU)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+polypous-backend.workspace = true
+
+[lints]
+workspace = true
