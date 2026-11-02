@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Large test fixtures and downloaded models are fetched on demand, never committed
+/fixtures/cache/
+*.gguf
+*.safetensors
+!/fixtures/small/**/*.safetensors
+
+# Python reference tooling
+__pycache__/
+*.pyc
+.venv/
+/tools/reference/.venv/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local, per-machine settings
+.claude/settings.local.json
+.env

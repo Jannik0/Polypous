@@ -1,0 +1,152 @@
+# Spec: Device Discovery and Tiered Placement
+
+**Status:** Draft. Device discovery in M0, placement in M4. **Crates:** `polypous-backend`, `polypous-runtime`
+**Decisions:** [ADR-0003](../adr/0003-runtime-backend-selection.md), [ADR-0004](../adr/0004-tiered-placement.md)
+
+Goal: **if a model can run on this machine at all, it runs, with no configuration.** As many blocks
+as fit go on the GPU, the next ones in CPU RAM, and the rest are streamed from disk.
+
+## 1. Device discovery
+
+At `Engine` creation Polypous enumerates devices for every compiled-in backend and **probes** each:
+initialize, allocate a small buffer, run a tiny kernel, compare the result. A failing probe marks the
+device unavailable with a reason, and never aborts.
+
+Each device reports:
+
+| Field | Source |
+|---|---|
+| `backend` | `Cuda` / `Metal` / `Vulkan` / `Cpu` |
+| `name`, `vendor`, `driver` | Backend APIs |
+| `kind` | `Discrete` / `Integrated` / `Cpu` |
+| `dedicated_memory` | CUDA `cuMemGetInfo` total; Vulkan device-local heaps (excluding host-visible "shared" heaps on discrete GPUs); Metal `recommendedMaxWorkingSetSize` |
+| `free_memory` | Queried at plan time (CUDA `cuMemGetInfo`, Vulkan `VK_EXT_memory_budget` if available, else an estimate) |
+| `unified_memory` | true for integrated GPUs and Apple Silicon |
+| `capabilities` | f16 support, subgroup size, max buffer size, etc. |
+
+**Primary GPU selection** (only one GPU is used in v1):
+1. CUDA device (discrete NVIDIA)
+2. Metal device
+3. Vulkan discrete GPU
+4. Vulkan integrated GPU
+5. none, so CPU only
+
+If several devices share a rank, choose the one with the most dedicated memory. A physical GPU
+reachable via both CUDA and Vulkan counts once, and CUDA wins. On the reference machine this picks the
+RTX 3060 via CUDA and ignores the Intel iGPU.
+
+Apps can override: force a backend or device, disable GPU, set memory budgets.
+
+**Dynamic libraries:** GPU runtime libraries (CUDA driver/runtime, Vulkan loader) are loaded at
+runtime. If they are missing, that backend is unavailable and Polypous moves to the next option. It must never crash.
+
+## 2. Placement blocks
+
+The runtime splits an instantiated graph into **blocks**, the unit of placement:
+
+- each `repeat` iteration is one block
+- nodes before the first repeat form the **prologue** block (for example embeddings); nodes after the
+  last repeat form the **epilogue** block (final norm, output head)
+- a graph without repeats is a single block (small models, builder graphs)
+
+For each block the planner computes:
+
+| Quantity | How |
+|---|---|
+| `weight_bytes` | Sum of parameter storage sizes **in their stored format** (quantized size for GGUF) |
+| `state_bytes` | Size of state (KV cache) owned by the block at the session's `max_context` and `batch` |
+| `workspace_bytes` | Peak live activation size inside the block, from shape inference with concrete dims plus liveness analysis, + kernel scratch |
+| `compute_class` | `lookup` (embeddings), `dense` (matmul-heavy) or `light` |
+
+## 3. Budgets
+
+```
+gpu_budget  = free_vram  − reserve_gpu − max(workspace over GPU blocks) − transfer buffers
+cpu_budget  = available_ram − reserve_cpu − max(workspace over CPU blocks) − streaming staging
+reserve_gpu = max(512 MiB, 10% of dedicated)
+reserve_cpu = max(2 GiB, 15% of total RAM)
+```
+
+- **Discrete GPU:** VRAM and RAM are separate budgets. "Shared GPU memory" on Windows is ignored.
+- **Unified memory:** one budget, `available_ram − reserve_cpu`. GPU blocks are filled first from it,
+  then CPU blocks from what remains.
+- **Disk:** unlimited, but needs a **streaming staging area** in RAM of 2× the largest disk block
+  (double buffering).
+- If even the staging area plus the minimal working set does not fit in RAM, the model is
+  **unrunnable**, and the error reports the shortfall.
+
+## 4. Assignment algorithm (v1)
+
+1. Fill the GPU in **priority order** while blocks fit the remaining budget:
+   1. epilogue (output head is dense and used every step)
+   2. repeat blocks in execution order (0, 1, 2, …)
+   3. prologue, only if it is not purely `lookup` (embedding lookups are cheap on CPU and often large)
+2. Assign the remaining blocks to the CPU in the same order while they fit.
+3. Assign everything left to **Disk**.
+4. State follows its block: a GPU block's KV cache lives in VRAM, a CPU/Disk block's in RAM. State
+   is counted in step 1 and 2, so a long context reduces how many layers fit on the GPU.
+
+This keeps segments contiguous, so a forward pass crosses a tier boundary only a few times
+(for example CPU → GPU → CPU → Disk → GPU). Activations crossing a boundary are small (one hidden
+state), so transfer cost is negligible compared to weights.
+
+The algorithm is deterministic. The same inputs always produce the same plan, which keeps tests stable.
+
+## 5. Execution by tier
+
+| Tier | Weights | Compute |
+|---|---|---|
+| **Gpu** | Uploaded to VRAM at load | GPU backend |
+| **Cpu** | Memory-mapped and pre-touched at load (counted against the RAM budget) | CPU backend, quantized CPU kernels operate directly on mapped bytes where possible |
+| **Disk** | Memory-mapped, **not** pre-touched; may be evicted by the OS | CPU backend (v1). A background thread prefetches the next K disk blocks (`madvise(WILLNEED)` / `PrefetchVirtualMemory`, or explicit reads into the staging area) while the current block runs |
+
+Weights stay in their stored format in every tier. Whether disk blocks should instead be uploaded to
+the GPU for compute is open question Q2 in the [project brief](../project-brief.md#10-open-questions).
+
+## 6. Estimate (before loading)
+
+`engine.plan(source, options)` returns a `PlacementPlan` without loading weights:
+
+- per tier: block list, weight bytes, state bytes, workspace bytes
+- `peak_vram`, `peak_ram`, `disk_streamed_bytes_per_forward`
+- **speed estimate:** decode is memory-bound, so
+  `t_token ≈ Σ_tier bytes_read_per_token / bandwidth_tier` with bandwidth from a built-in table
+  per device class, refined by a quick measurement cached per machine (GPU memcpy, RAM memcpy, disk
+  sequential read)
+- warnings, for example "17 of 48 layers will stream from disk; expect about 0.4 tokens/s"
+
+Acceptance: estimated peak memory within ±25% of measured, on the reference machine.
+
+## 7. Failure handling and fallback
+
+| Situation | Behavior |
+|---|---|
+| Backend fails to initialize | Mark unavailable, use next GPU option or CPU only; warning event |
+| GPU allocation fails during load | Free that model's GPU allocations, reduce `gpu_budget` by 20%, re-plan, retry (max 3 times), then CPU+Disk |
+| Kernel launch or device-lost error during inference | Return a `BackendError`. The model is marked degraded and the app may reload (later: automatic CPU fallback for that block) |
+| RAM too small for staging + working set | `OutOfMemory` error with the required/available numbers |
+| Context exceeds the session's `max_context` | Pipeline policy (error, or truncate oldest) |
+
+KV cache and workspace are **allocated up front** when a session is created, so out-of-memory
+cannot happen in the middle of a generation.
+
+Every fallback emits an event and a `tracing` warning with the reason, so apps can tell users why
+something is slower than expected.
+
+## 8. Configuration (all optional)
+
+```jsonc
+{
+  "device": "auto",              // or "cpu", "cuda:0", "vulkan:1", "metal:0"
+  "gpu_memory_limit": null,      // bytes; overrides detected budget
+  "ram_memory_limit": null,
+  "allow_disk_streaming": true,
+  "max_context": 4096,
+  "prefetch_blocks": 2
+}
+```
+
+## 9. Out of scope for v1
+
+Splitting a model across several GPUs · pipeline/tensor parallelism · moving blocks between tiers
+while running · paging the KV cache to disk.
