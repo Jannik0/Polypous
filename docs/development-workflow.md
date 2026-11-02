@@ -25,7 +25,8 @@ one component, one spec section, one format reader. A task description contains:
 - Out of scope: <what not to do>
 ```
 
-Tasks are tracked as GitHub issues (once the repository is hosted) or in `docs/tasks/` until then.
+Tasks are tracked as **GitHub issues** at `Jannik0/Polypous`, grouped by milestone (`M0`, `M1`, …)
+and labeled `task`. An agent starting a task reads its issue first and links the PR to it (`Closes #N`).
 Tasks that touch different crates can run in parallel. Tasks that touch the same crate run one after another.
 
 ## 3. Lifecycle of a task

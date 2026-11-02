@@ -36,6 +36,9 @@ entry point. Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). The rul
 
 - Reference machine: Windows 11 / Debian dual boot, RTX 3060 Laptop (6 GB, CUDA + Vulkan), Intel iGPU,
   16 GB RAM. **No Metal hardware**, so Metal code is compile-checked only. See [docs/hardware-targets.md](docs/hardware-targets.md).
+- **Cloud sessions have no GPU** (4 vCPU, 16 GB RAM, Ubuntu). There you can run CPU tests and
+  Vulkan on lavapipe only, and you must say so in the PR. See [docs/dev-environment.md](docs/dev-environment.md#cloud-environments-for-agents).
+- Tasks are GitHub issues on `Jannik0/Polypous`. Read the issue for your task and reference it in the PR.
 - Setup instructions: [docs/dev-environment.md](docs/dev-environment.md).
 
 ## Commands
