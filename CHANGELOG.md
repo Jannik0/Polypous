@@ -8,3 +8,4 @@ All notable changes to Polypous are documented here. The format follows
 
 ### Added
 - Project brief, architecture, roadmap, specifications, ADRs and contributor/agent guides.
+- Cloud environment setup script (`tools/cloud/setup.sh`) and documentation for cloud agents.
