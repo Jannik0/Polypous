@@ -84,12 +84,14 @@ Burn is pre-1.0, and its API changes between releases. Letting Burn types spread
   CUDA): the `cuda` build of `burn_smoke` starts and reports no CUDA device. But device
   initialization `unwrap()`s driver calls (`runtime.rs:70-72`), so a driver that is present but
   broken panics. Device probing (#4) must isolate such panics.
-- **Open, needs the reference machine:** that the CUDA backend runs with the CUDA 13.2 driver/toolkit
-  on the RTX 3060 (Windows and Debian), and that it runs without NVRTC on `PATH`. Use
+- **Verified on the reference machine (Windows), see "Reference machine results" below:** the CUDA
+  backend runs on the RTX 3060 with driver 591.74 / CUDA 13.2, also with the CUDA toolkit removed
+  from `PATH` (no NVRTC reachable). Debian is still open. Use
   `crates/polypous-backend/examples/burn_smoke.rs`.
 
-- *Binary size:* because LLVM is linked statically, a `cuda` build is large. The debug build of the
-  `burn_smoke` example is about 1 GB on Linux (no stripping, debug info). Release size is not measured yet.
+- *Binary size:* because LLVM is linked statically, a `cuda` build is large. The `burn_smoke`
+  example with `cuda` is about 1 GB in debug on Linux (debug info inside the binary), and on Windows
+  137 MB in debug (debug info in a separate PDB) and **90 MB in release**.
 
 **Vulkan requirements (from source)**
 
@@ -104,6 +106,29 @@ Burn is pre-1.0, and its API changes between releases. Letting Burn types spread
 - Checked in the cloud session on lavapipe: `burn_smoke` runs a 2×2 matmul correctly, and with no
   Vulkan ICD available (`VK_DRIVER_FILES=/nonexistent.json`) it starts and reports no Vulkan device.
 - No Vulkan SDK needed to build or run. The SDK only adds validation layers.
+
+**Reference machine results (Windows 11, 2026-11-02)**
+
+Razer Blade 15 (2022): RTX 3060 Laptop (driver 591.74, CUDA toolkit 13.2, Vulkan 1.4.325) and
+Intel Iris Xe (driver 30.0.101.1298, Vulkan 1.2.201). Rust 1.99.1.
+
+| Check | Result |
+|---|---|
+| fmt, clippy `-D warnings` (default, `vulkan`, `cpu,vulkan,cuda`), tests | ✅ |
+| `burn_smoke cpu` (`flex`) | ✅ `[7.0, 10.0, 15.0, 22.0]` |
+| `burn_smoke vulkan 0`: RTX 3060 (Burn lists it first, as `DiscreteGpu(0)`) | ✅ correct result |
+| `burn_smoke vulkan 1`: Intel Iris Xe (`IntegratedGpu(0)`) | ❌ **process crash**: access violation `0xC0000005` inside Intel's Vulkan driver `igvk64.dll` 30.0.101.1298 (Windows event log). Not a Rust panic, so `catch_unwind` cannot contain it |
+| First `cuda` build on a normal network | ✅ the LLVM bundle downloaded without the workaround (2 min 12 s build) |
+| `burn_smoke cuda`: RTX 3060 | ✅ correct result |
+| `burn_smoke cuda` with the CUDA toolkit removed from `PATH` and `CUDA_PATH` unset (NVRTC not reachable) | ✅ correct result: only the driver is needed |
+| `cuda` release build size | 90 MB |
+
+Not checked yet: Debian (CUDA, `LD_DEBUG=libs`), a `cuda` build on a Windows machine without any
+NVIDIA driver (confirmed on Linux only), Metal (CI build only).
+
+**Consequence for device probing (#4):** a GPU driver can crash the whole process during device
+initialization. That can't be caught inside the process, so probing either has to run in a child
+process or has to avoid known-bad drivers. This needs a decision before #4 is implemented.
 
 **Licenses of the new dependencies**
 

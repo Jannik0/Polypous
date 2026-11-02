@@ -10,6 +10,7 @@
 //! ```text
 //! cargo run -p polypous-backend --example burn_smoke --features cuda -- cuda
 //! cargo run -p polypous-backend --example burn_smoke --features vulkan -- vulkan
+//! cargo run -p polypous-backend --example burn_smoke --features vulkan -- vulkan 1   # second device
 //! cargo run -p polypous-backend --example burn_smoke -- cpu
 //! ```
 //!
@@ -53,7 +54,16 @@ fn main() -> ExitCode {
         }
     };
     println!("enumerated {} device(s)", devices.len());
-    let Some(device) = devices.into_iter().next() else {
+    for (index, device) in devices.iter().enumerate() {
+        println!("  [{index}] {device:?}");
+    }
+    // Optional second argument: index of the device to use (default 0), for machines with several
+    // GPUs on one backend, such as an iGPU and a dGPU over Vulkan.
+    let index = std::env::args()
+        .nth(2)
+        .and_then(|arg| arg.parse::<usize>().ok())
+        .unwrap_or(0);
+    let Some(device) = devices.into_iter().nth(index) else {
         println!("OK: no `{backend}` device on this machine; the binary started and kept running");
         return ExitCode::SUCCESS;
     };
