@@ -9,3 +9,7 @@ All notable changes to Polypous are documented here. The format follows
 ### Added
 - Project brief, architecture, roadmap, specifications, ADRs and contributor/agent guides.
 - Cloud environment setup script (`tools/cloud/setup.sh`) and documentation for cloud agents.
+- Cargo workspace with empty skeleton crates (`polypous-ir`, `-formats`, `-polyp`, `-backend`, `-quant`,
+  `-runtime`, `-train`, `-pipelines`, `polypous`, and `polypous-cli` with the `polyp` binary), workspace
+  lints (`unsafe_code` denied, `unwrap_used`/`expect_used` warned outside tests) and the Rust toolchain
+  pinned to 1.99.1 in `rust-toolchain.toml`.
