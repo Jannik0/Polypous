@@ -117,10 +117,6 @@ jobs:
     name: Vulkan tests (Linux, lavapipe)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      # Use only Mesa's software Vulkan driver (lavapipe); there is no GPU on hosted runners.
-      VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -133,6 +129,13 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends mesa-vulkan-drivers vulkan-tools
+          # Use only Mesa's software Vulkan driver (lavapipe); hosted runners have no GPU.
+          # The ICD file name differs between Mesa versions, so look it up.
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n 1)
+          test -n "$icd" || { echo "::error::lavapipe ICD file not found"; ls -la /usr/share/vulkan/icd.d; exit 1; }
+          echo "lavapipe ICD: $icd"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
 
       - name: Check lavapipe Vulkan device
         run: vulkaninfo --summary
