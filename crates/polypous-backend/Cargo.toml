@@ -1,0 +1,15 @@
+[package]
+name = "polypous-backend"
+description = "Burn integration: `BackendKind` enum, device discovery/probing, `DynTensor` (dynamic rank + dtype), implementations of every IR op, cross-device transfer, autodiff wrapper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+polypous-ir.workspace = true
+
+[lints]
+workspace = true

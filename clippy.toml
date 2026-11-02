@@ -1,0 +1,4 @@
+# `unwrap_used` / `expect_used` are warnings in library code (see [workspace.lints] in Cargo.toml),
+# but allowed in tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

@@ -1,0 +1,16 @@
+[package]
+name = "polypous-train"
+description = "Training config, training loop, optimizers/schedulers via Burn, metrics, checkpoints, events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+polypous-runtime.workspace = true
+polypous-backend.workspace = true
+
+[lints]
+workspace = true

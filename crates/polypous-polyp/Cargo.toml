@@ -1,0 +1,16 @@
+[package]
+name = "polypous-polyp"
+description = "`.polyp` schema, parsing, validation, hyperparameter expression evaluation, match rules, weight-name mapping"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+polypous-ir.workspace = true
+polypous-formats.workspace = true
+
+[lints]
+workspace = true

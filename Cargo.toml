@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/polypous-ir",
+    "crates/polypous-formats",
+    "crates/polypous-polyp",
+    "crates/polypous-backend",
+    "crates/polypous-quant",
+    "crates/polypous-runtime",
+    "crates/polypous-train",
+    "crates/polypous-pipelines",
+    "crates/polypous",
+    "crates/polypous-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/Jannik0/Polypous"
+publish = false
+
+[workspace.dependencies]
+# Internal crates. Allowed edges follow docs/architecture.md §2 ("Depends on").
+polypous-ir = { path = "crates/polypous-ir" }
+polypous-formats = { path = "crates/polypous-formats" }
+polypous-polyp = { path = "crates/polypous-polyp" }
+polypous-backend = { path = "crates/polypous-backend" }
+polypous-quant = { path = "crates/polypous-quant" }
+polypous-runtime = { path = "crates/polypous-runtime" }
+polypous-train = { path = "crates/polypous-train" }
+polypous-pipelines = { path = "crates/polypous-pipelines" }
+polypous = { path = "crates/polypous" }
+
+[workspace.lints.rust]
+# Crates that need `unsafe` later opt out explicitly in their own Cargo.toml.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# Allowed in tests via clippy.toml.
+unwrap_used = "warn"
+expect_used = "warn"

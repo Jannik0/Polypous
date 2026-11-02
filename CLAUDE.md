@@ -45,7 +45,8 @@ entry point. Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). The rul
 
 ## Commands
 
-> The Cargo workspace is created in milestone M0. Until then these commands are the planned interface.
+> The workspace crates are skeletons for now. The GPU features, the CLI subcommands and the fixture
+> script arrive with later milestones; until then those commands are the planned interface.
 
 ```bash
 cargo fmt --all                                   # format
