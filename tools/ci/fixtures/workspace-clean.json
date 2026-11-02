@@ -1,0 +1,516 @@
+{
+  "packages": [
+    {
+      "name": "polypous",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-backend",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-formats",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-ir",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-pipelines",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-polyp",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-quant",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-runtime",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-train",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-backend",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-backend#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-ir",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-cli",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-cli#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-formats",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-formats#0.0.0",
+      "dependencies": []
+    },
+    {
+      "name": "polypous-ir",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-ir#0.0.0",
+      "dependencies": []
+    },
+    {
+      "name": "polypous-pipelines",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-pipelines#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-polyp",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-runtime",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-polyp",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-polyp#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-formats",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-ir",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-quant",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-quant#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-backend",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-runtime",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-runtime#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-backend",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-formats",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-ir",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-quant",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "polypous-train",
+      "version": "0.0.0",
+      "id": "path+file:///workspace/crates/polypous-train#0.0.0",
+      "dependencies": [
+        {
+          "name": "polypous-backend",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        },
+        {
+          "name": "polypous-runtime",
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "target": null
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "path+file:///workspace/crates/polypous-ir#0.0.0",
+    "path+file:///workspace/crates/polypous-formats#0.0.0",
+    "path+file:///workspace/crates/polypous-polyp#0.0.0",
+    "path+file:///workspace/crates/polypous-backend#0.0.0",
+    "path+file:///workspace/crates/polypous-quant#0.0.0",
+    "path+file:///workspace/crates/polypous-runtime#0.0.0",
+    "path+file:///workspace/crates/polypous-train#0.0.0",
+    "path+file:///workspace/crates/polypous-pipelines#0.0.0",
+    "path+file:///workspace/crates/polypous#0.0.0",
+    "path+file:///workspace/crates/polypous-cli#0.0.0"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "path+file:///workspace/crates/polypous#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_backend",
+            "pkg": "path+file:///workspace/crates/polypous-backend#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_formats",
+            "pkg": "path+file:///workspace/crates/polypous-formats#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_ir",
+            "pkg": "path+file:///workspace/crates/polypous-ir#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_pipelines",
+            "pkg": "path+file:///workspace/crates/polypous-pipelines#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_polyp",
+            "pkg": "path+file:///workspace/crates/polypous-polyp#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_quant",
+            "pkg": "path+file:///workspace/crates/polypous-quant#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_runtime",
+            "pkg": "path+file:///workspace/crates/polypous-runtime#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_train",
+            "pkg": "path+file:///workspace/crates/polypous-train#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-backend#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_ir",
+            "pkg": "path+file:///workspace/crates/polypous-ir#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-cli#0.0.0",
+        "deps": [
+          {
+            "name": "polypous",
+            "pkg": "path+file:///workspace/crates/polypous#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-formats#0.0.0",
+        "deps": []
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-ir#0.0.0",
+        "deps": []
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-pipelines#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_polyp",
+            "pkg": "path+file:///workspace/crates/polypous-polyp#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_runtime",
+            "pkg": "path+file:///workspace/crates/polypous-runtime#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-polyp#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_formats",
+            "pkg": "path+file:///workspace/crates/polypous-formats#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_ir",
+            "pkg": "path+file:///workspace/crates/polypous-ir#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-quant#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_backend",
+            "pkg": "path+file:///workspace/crates/polypous-backend#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-runtime#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_backend",
+            "pkg": "path+file:///workspace/crates/polypous-backend#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_formats",
+            "pkg": "path+file:///workspace/crates/polypous-formats#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_ir",
+            "pkg": "path+file:///workspace/crates/polypous-ir#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_quant",
+            "pkg": "path+file:///workspace/crates/polypous-quant#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/polypous-train#0.0.0",
+        "deps": [
+          {
+            "name": "polypous_backend",
+            "pkg": "path+file:///workspace/crates/polypous-backend#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "polypous_runtime",
+            "pkg": "path+file:///workspace/crates/polypous-runtime#0.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "root": null
+  },
+  "version": 1
+}
