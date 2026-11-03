@@ -17,20 +17,29 @@ cpu = ["burn/flex"]
 # CubeCL CUDA runtime. The NVIDIA driver is loaded at runtime (cudarc dynamic loading), and kernels
 # are compiled to PTX with a bundled LLVM, so no CUDA toolkit is needed to build or run. The first
 # build downloads that LLVM bundle (see docs/dev-environment.md).
-cuda = ["burn/cuda", "dep:cubecl"]
+cuda = ["burn/cuda", "dep:cubecl", "cubecl/cuda", "dep:cudarc"]
 # CubeCL wgpu runtime pinned to Vulkan, with SPIR-V code generation.
-vulkan = ["burn/vulkan", "dep:cubecl"]
+vulkan = ["burn/vulkan", "dep:cubecl", "cubecl/vulkan"]
 # CubeCL wgpu runtime pinned to Metal (MSL). macOS only.
-metal = ["burn/metal", "dep:cubecl"]
+metal = ["burn/metal", "dep:cubecl", "cubecl/metal"]
 
 [dependencies]
 polypous-ir.workspace = true
 burn = { workspace = true, features = ["std"] }
-# Not used in code yet. Declared so that the exact CubeCL pin (ADR-0007) is part of dependency
-# resolution and matches the CubeCL version Burn uses. `polypous-quant` uses it for its kernels.
+# The exact CubeCL pin (ADR-0007), the same CubeCL Burn uses. Device discovery reads memory, identity
+# and capabilities from a device's CubeCL client (src/device); `polypous-quant` uses it for kernels.
+# The runtime features above are the ones Burn already enables, so they add no crates.
 cubecl = { workspace = true, optional = true }
+# CUDA driver API, already in the tree through cubecl-cuda (same version and loading mode, so no new
+# crates). Used only for facts Burn/CubeCL don't expose: free memory and whether a device is integrated.
+cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "fallback-dynamic-loading", "cuda-version-from-build-system"], optional = true }
+# Device info types are serialized as JSON lines by the prober process (ADR-0013, #14).
+serde = { version = "1.0.229", features = ["derive"] }
 # Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file through Burn.
 thiserror = "2.0.21"
+
+[dev-dependencies]
+serde_json = "1.0.154"
 
 [lints]
 workspace = true

@@ -45,6 +45,36 @@ Each device reports:
 | `capabilities` | f16 support, subgroup size, max buffer size, etc. |
 | `status` | `available`, or `unavailable` with a reason (`crashed during probe`, `probe timed out`, `probe failed: …`, `library missing`) and whether the probe ran isolated |
 
+**Implementation (M0, issue #4; `polypous_backend::device`).** The building blocks the prober runs:
+
+- `list_devices()` / `list_backend_devices(backend)`: device ids from Burn's `Device::enumerate`
+  per compiled-in backend, without opening devices. A missing runtime library means no devices.
+  (`Device::enumerate_physical` skips devices without a card identity, such as the CPU and
+  lavapipe, so it is not used directly; the same identity data is used for matching, see below.)
+- `describe_device(id)`: opens the device (creates its CubeCL client, which loads the driver) and
+  reads the fields above. `enumerate_devices()` = list + describe.
+- `probe_device(id)`: `[[1,2],[3,4]] @ [[5,6],[7,8]] + 1` on the device, read back and compared
+  exactly with `[20, 23, 44, 51]` (small integers, exact in f32/tf32/f16).
+- None of them fails or panics. Errors and Rust panics (`catch_unwind`) become
+  `unavailable: probe failed: …`; the in-process functions report `isolated: false`, the prober
+  marks its results isolated. Calls are serialized by a process-wide lock.
+
+`DeviceInfo` fields, serialized with serde exactly as named (JSON lines of the prober protocol):
+
+| Field | Type / values | Notes |
+|---|---|---|
+| `id` | `{"backend":"cuda","index":0}`, `{"backend":"vulkan"\|"metal","adapter":"discrete_gpu"\|"integrated_gpu"\|"virtual_gpu"\|"cpu"\|"other","index":0}`, `{"backend":"cpu"}` | Addresses the device for `describe_device`/`probe_device`, stable within one boot. Index = CUDA ordinal, or index among adapters of that type (Burn's addressing) |
+| `backend` | `cuda` / `metal` / `vulkan` / `cpu` | `BackendKind` |
+| `name` | string | |
+| `vendor`, `driver` | string or null | Vendor from the PCI vendor id; driver from wgpu's adapter info (`driver` + `driver_info`) for Vulkan/Metal. CUDA reports no driver string yet |
+| `kind` | `discrete` / `integrated` / `cpu` / `other` | `cpu` includes Vulkan software rasterizers (lavapipe); `other` is a virtual or unclassified adapter |
+| `dedicated_memory` | bytes or null | From CubeCL's device properties: CUDA `cuDeviceTotalMem`; Vulkan the **largest `DEVICE_LOCAL` heap** (Windows' shared GPU memory is a host heap, never counted); Metal `recommendedMaxWorkingSetSize`. For integrated GPUs, the RAM share the driver exposes. `null` for the CPU (RAM comes from OS queries, §3) |
+| `free_memory` | bytes or null | CUDA `cuMemGetInfo` at discovery; null elsewhere until M4 |
+| `unified_memory` | bool | true unless `kind` is `discrete` |
+| `identity` | `{"pci_bus_id","luid","registry_id"}`, each nullable | PCI address `0000:01:00.0`; Windows LUID as 16 hex digits (changes on reboot, never a cache key); macOS registry id. Two devices are the same card if their PCI ids match, else their LUIDs, else their registry ids (CubeCL's rule, as in `enumerate_physical`). Empty for the CPU and software rasterizers |
+| `capabilities` | `f16`, `bf16`, `subgroup_size_min`, `subgroup_size_max`, `max_buffer_size`, `max_shared_memory`, `compute_units` | Missing values are null/false |
+| `status` | `{"state":"not_probed"}`, `{"state":"available","isolated":bool}`, `{"state":"unavailable","reason":{"code":"crashed_during_probe"\|"probe_timed_out"\|"probe_failed","message"\|"library_missing","library"},"isolated":bool}` | `not_probed` after `describe_device`; the probe sets the rest |
+
 **Primary GPU selection** (only one GPU is used in v1):
 1. CUDA device (discrete NVIDIA)
 2. Metal device
@@ -52,8 +82,12 @@ Each device reports:
 4. Vulkan integrated GPU
 5. none, so CPU only
 
-If several devices share a rank, choose the one with the most dedicated memory. A physical GPU
-reachable via both CUDA and Vulkan counts once (matched by device identity), and CUDA wins. On the reference machine this picks the
+Only devices whose probe passed count. Vulkan software rasterizers and virtual/unclassified
+adapters are never the primary GPU (the CPU backend is faster than lavapipe). If several devices
+share a rank, choose the one with the most dedicated memory (unknown counts as 0), then the
+earlier one in the list. A physical GPU
+reachable via both CUDA and Vulkan counts once (matched by device identity), and CUDA wins; if
+only its CUDA probe failed, its Vulkan device is used. On the reference machine this picks the
 RTX 3060 via CUDA and ignores the Intel iGPU.
 
 Apps can override: force a backend or device, disable GPU, set memory budgets.
