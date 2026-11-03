@@ -5,3 +5,5 @@
 //!
 //! Together with `polypous-quant`, the only crate allowed to use Burn (ADR-0007). See
 //! `docs/architecture.md` §2.
+
+pub mod device;
