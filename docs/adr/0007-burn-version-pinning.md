@@ -139,7 +139,7 @@ NVIDIA driver (confirmed on Linux only), Metal (CI build only).
 
 **Consequence for device probing (#4):** a GPU driver can crash the whole process during device
 initialization. That can't be caught inside the process, and casual users often run old drivers.
-[ADR-0013](0013-crash-safe-device-probing.md) (Proposed) addresses this.
+[ADR-0013](0013-crash-safe-device-probing.md) (accepted) moves probing into a separate prober process.
 
 **Licenses of the new dependencies**
 

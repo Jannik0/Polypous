@@ -10,9 +10,23 @@ as fit go on the GPU, the next ones in CPU RAM, and the rest are streamed from d
 
 At `Engine` creation Polypous enumerates devices for every compiled-in backend and **probes** each:
 initialize, allocate a small buffer, run a tiny kernel, compare the result. A failing probe marks the
-device unavailable with a reason, and never aborts. Burn/CubeCL may panic during device
-initialization (for example a CUDA driver that is installed but broken), so each probe isolates
-panics (`catch_unwind` or a separate thread) ([ADR-0011](../adr/0011-use-burn-dispatch-for-backend-selection.md)).
+device unavailable with a reason, and never aborts.
+
+**Crash safety** ([ADR-0013](../adr/0013-crash-safe-device-probing.md)): GPU drivers can crash or
+hang the process natively, which no in-process mechanism can catch. Therefore:
+
+- Enumeration and probing run in a separate **prober process** that reports one JSON line per device.
+  If it crashes or hangs on a device (timeout per device, default 60 s), that device is marked
+  `crashed during probe` / `probe timed out`, and the prober is restarted for the remaining devices.
+- Results are kept in a **probe cache** keyed by device identity, backend, driver fingerprint (from
+  OS sources that don't load GPU drivers) and Polypous version. A normal start starts no prober.
+- The prober is the tiny `polypous-probe` executable on top of the shared library (M7), the app
+  re-launched through `polypous::probe::run_prober_if_requested()`, or `polyp probe --json` (M0–M6).
+- **Fallback** when no prober can be started: in-process probing in GPU priority order, with a
+  crash journal so the app crashes at most once per device and driver version. Rust panics are
+  caught with `catch_unwind` on both paths ([ADR-0011](../adr/0011-use-burn-dispatch-for-backend-selection.md)).
+- Apps can run the probe themselves at any time through the API ([public-api.md §1](public-api.md#1-shape-of-the-api-illustrative)).
+- The app process initializes only devices that passed the probe, and only when needed.
 
 Enumeration builds on Burn's `Device::enumerate_physical`, which also reports device identity (PCI
 address, adapter LUID) for CubeCL devices. Polypous never uses Burn's `Device::default()`: its
@@ -29,6 +43,7 @@ Each device reports:
 | `free_memory` | Queried at plan time (CUDA `cuMemGetInfo`, Vulkan `VK_EXT_memory_budget` if available, else an estimate) |
 | `unified_memory` | true for integrated GPUs and Apple Silicon |
 | `capabilities` | f16 support, subgroup size, max buffer size, etc. |
+| `status` | `available`, or `unavailable` with a reason (`crashed during probe`, `probe timed out`, `probe failed: …`, `library missing`) and whether the probe ran isolated |
 
 **Primary GPU selection** (only one GPU is used in v1):
 1. CUDA device (discrete NVIDIA)

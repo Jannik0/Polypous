@@ -23,3 +23,6 @@ All notable changes to Polypous are documented here. The format follows
 - ADR-0011 (accepted): use Burn's runtime `Dispatch` backend for backend selection; supersedes part of ADR-0003.
 - ADR-0012: MPL-2.0 allowed for unmodified dependencies, per crate (`colored`, `buildid`, `option-ext`
   as `deny.toml` exceptions).
+- ADR-0013: device probing runs in a separate prober process with a probe cache, crash and hang
+  recovery, and an in-process fallback. Apps can re-run the probe through the API (`probe_devices`,
+  `Engine::refresh_devices`) or pass in their own report.
