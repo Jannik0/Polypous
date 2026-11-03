@@ -1,10 +1,11 @@
 # macOS build-only job: compile-checks the Metal backend (docs/testing-strategy.md §4, §5).
 #
-# Triggers: pushes to `main` and manual dispatch only, NOT pull requests. The repository is
-# private on GitHub's free plan, where macOS runner minutes count 10x. To check a PR branch, run it
-# by hand ("Run workflow" in the Actions tab, or
+# Triggers: pushes to `main`, manual dispatch, and only those pull requests that touch the backend
+# crates or the dependency set (paths below). The repository is private on GitHub's free plan, where
+# macOS runner minutes count 10x. To check any other branch, run it by hand ("Run workflow" in the
+# Actions tab, or
 # `gh api -X POST repos/Jannik0/Polypous/actions/workflows/macos.yml/dispatches -f ref=<branch>`).
-# Because it does not run on PRs, its job cannot be a required status check.
+# Because it does not run on every PR, its job cannot be a required status check.
 #
 # Job name (stable): Build (macOS, Metal)
 #
@@ -17,6 +18,14 @@ name: macOS
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - "crates/polypous-backend/**"
+      - "crates/polypous-quant/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/macos.yml"
   workflow_dispatch:
 
 permissions:

@@ -19,7 +19,7 @@ on the project over time.
 |---|---|---|
 | [0001](0001-build-on-burn.md) | Build on Burn | Accepted |
 | [0002](0002-runtime-graph-ir-interpreter.md) | Runtime graph IR executed by an interpreter | Accepted |
-| [0003](0003-runtime-backend-selection.md) | Runtime backend selection via enum dispatch | Accepted |
+| [0003](0003-runtime-backend-selection.md) | Runtime backend selection via enum dispatch | Accepted, superseded in part by 0011 |
 | [0004](0004-tiered-placement.md) | Tiered GPU → CPU → disk placement | Accepted |
 | [0005](0005-native-quantized-kernels.md) | Native kernels for GGUF quantization formats | Accepted |
 | [0006](0006-polyp-files-are-data-only.md) | `.polyp` files are data only | Accepted |
@@ -27,3 +27,5 @@ on the project over time.
 | [0008](0008-wrapper-friendly-api.md) | Wrapper-friendly Rust API, C ABI later | Accepted |
 | [0009](0009-reference-based-testing.md) | Testing against reference implementations | Accepted |
 | [0010](0010-mit-license.md) | MIT license | Accepted |
+| [0011](0011-use-burn-dispatch-for-backend-selection.md) | Use Burn's runtime `Dispatch` backend for backend selection | Accepted |
+| [0012](0012-mpl-for-unmodified-dependencies.md) | MPL-2.0 allowed for unmodified dependencies, per crate | Accepted |

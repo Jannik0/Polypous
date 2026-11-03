@@ -15,4 +15,11 @@ All notable changes to Polypous are documented here. The format follows
   pinned to 1.99.1 in `rust-toolchain.toml`.
 - CI on GitHub Actions: fmt, clippy and CPU tests on Linux and Windows, `cargo deny` (licenses and
   advisories, `deny.toml`), a dependency-boundary check (`tools/ci/check_dependency_boundary.py`),
-  Vulkan tests on Mesa lavapipe, and a macOS build-only job for Metal (on `main` and manual dispatch).
+  Vulkan tests on Mesa lavapipe, and a macOS build-only job for Metal (on `main`, manual dispatch, and
+  PRs that touch the backend crates or the dependency set).
+- Burn pinned to `=0.22.1` and CubeCL to `=0.11.3` as workspace dependencies, used only by
+  `polypous-backend`. Backend features `cpu` (default, Burn's pure-Rust `flex` backend), `cuda`,
+  `vulkan` and `metal`. `burn_smoke` example to check a backend on a given machine.
+- ADR-0011 (accepted): use Burn's runtime `Dispatch` backend for backend selection; supersedes part of ADR-0003.
+- ADR-0012: MPL-2.0 allowed for unmodified dependencies, per crate (`colored`, `buildid`, `option-ext`
+  as `deny.toml` exceptions).

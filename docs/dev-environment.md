@@ -1,7 +1,9 @@
 # Development Environment
 
 Setup for the reference machine (Windows 11 + Debian dual boot, RTX 3060 Laptop). Exact versions
-are pinned in M0 (`rust-toolchain.toml`, [ADR-0007](adr/0007-burn-version-pinning.md)).
+are pinned in M0: Rust 1.99.1 in `rust-toolchain.toml`, Burn 0.22.1 and CubeCL 0.11.3 in the workspace
+`Cargo.toml` ([ADR-0007](adr/0007-burn-version-pinning.md), which also lists the sources for the GPU
+requirements below).
 
 ## Required (all platforms)
 
@@ -16,8 +18,38 @@ are pinned in M0 (`rust-toolchain.toml`, [ADR-0007](adr/0007-burn-version-pinnin
 | Backend | Windows | Debian |
 |---|---|---|
 | **Vulkan** | Comes with NVIDIA/Intel drivers. [Vulkan SDK](https://vulkan.lunarg.com/) for validation layers is recommended | `mesa-vulkan-drivers`, `vulkan-tools` (`vulkaninfo`); NVIDIA proprietary driver for the dGPU. Validation layers: `vulkan-validationlayers` |
-| **CUDA** | NVIDIA driver + CUDA Toolkit (version per Burn's CUDA backend requirements, recorded in M0) | NVIDIA driver + CUDA Toolkit from NVIDIA's Debian repository |
+| **CUDA** | NVIDIA driver. CUDA Toolkit 11.4–13.4 optional (only `nvcc` is used, at build time; reference machine: 13.2) | NVIDIA driver; CUDA Toolkit 11.4–13.4 from NVIDIA's Debian repository optional, as on Windows |
 | **Metal** | — | — (macOS only, not available on the reference machine) |
+
+**Vulkan requirements:** a Vulkan loader and the GPU driver's ICD, Vulkan ≥ 1.1. For the fast
+SPIR-V path the device also needs `vulkanMemoryModel` (device scope) and `bufferDeviceAddress`
+(standard in Vulkan 1.2+ drivers). Other devices fall back to WGSL. Nothing Vulkan-specific is
+needed to *build* with `--features vulkan`.
+
+**CUDA requirements:**
+
+- *Build:* no CUDA toolkit needed. But the first `--features cuda` build **downloads a prebuilt LLVM
+  bundle (~45 MB) from GitHub** (`tracel-llvm-bundler`, used by CubeCL to compile CUDA kernels) and
+  links it statically. Behind a TLS-intercepting proxy that download fails. Pre-fill the cache as
+  described in [ADR-0007's follow-up notes](adr/0007-burn-version-pinning.md#follow-up-notes).
+  If `nvcc` is on `PATH`, cudarc uses bindings for its version, otherwise the newest supported one
+  (13.4). `CUDARC_CUDA_VERSION=13020` selects the 13.2 bindings without `nvcc`.
+- *Run:* only the NVIDIA driver (`libcuda.so` / `nvcuda.dll`), loaded at runtime. Kernels are
+  compiled to PTX with the bundled LLVM, so NVRTC and the rest of the CUDA Toolkit are not needed
+  to run (from the source; still to be confirmed on the reference machine). Toolkit versions 11.4–13.4 are supported.
+- Without a driver, a `cuda` build starts and finds no CUDA devices (checked on Linux without
+  CUDA; Windows not checked yet). Whether the CUDA backend works with CUDA 13.2 still has to be
+  verified on the reference machine, see ADR-0007's follow-up notes.
+
+Smoke test for a backend (runs a 2×2 matmul on the first device found, or reports that there is none):
+
+```bash
+cargo run -p polypous-backend --example burn_smoke --features cuda -- cuda
+```
+
+```bash
+cargo run -p polypous-backend --example burn_smoke --features vulkan -- vulkan
+```
 
 Check with:
 
@@ -41,7 +73,10 @@ Once M0 is done, `cargo run -p polypous-cli -- devices` shows what Polypous dete
 
 - `build-essential pkg-config libssl-dev` (if dependencies need them).
 - For Vulkan software-driver testing (as in CI): `mesa-vulkan-drivers` provides lavapipe. Select it with
-  `VK_ICD_FILENAMES` / `VK_DRIVER_FILES` pointing at `lvp_icd.*.json`.
+  `VK_ICD_FILENAMES` / `VK_DRIVER_FILES` pointing at `lvp_icd.*.json` (for example
+  `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`).
+- A first `--features vulkan` or `--features cuda` build compiles wgpu/CubeCL and takes several
+  minutes (about 3.5 min for `vulkan` on a 4-vCPU cloud VM). The default `cpu` build is much lighter.
 
 ## Python reference environment
 

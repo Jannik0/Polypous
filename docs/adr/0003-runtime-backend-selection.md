@@ -1,6 +1,6 @@
 # ADR-0003: Runtime backend selection via enum dispatch
 
-- **Status:** Accepted
+- **Status:** Accepted, superseded in part by [ADR-0011](0011-use-burn-dispatch-for-backend-selection.md) (Burn's runtime dispatch replaces the hand-written enum dispatch; the goals and rules below still apply)
 - **Date:** 2026-11-02
 
 ## Context

@@ -45,7 +45,7 @@ Planned Cargo workspace under `crates/`:
 | `polypous-ir` | Graph IR data model, op catalog (opset), validation, symbolic shape inference, JSON (de)serialization, versioning/migration | — |
 | `polypous-formats` | Memory-mapped safetensors (single + sharded) and GGUF readers; tensor metadata; lazy tensor views; GGUF metadata KV access | — |
 | `polypous-polyp` | `.polyp` schema, parsing, validation, hyperparameter expression evaluation, match rules, weight-name mapping | `ir`, `formats` |
-| `polypous-backend` | Burn integration: `BackendKind` enum, device discovery/probing, `DynTensor` (dynamic rank + dtype), implementations of every IR op, cross-device transfer, autodiff wrapper | `ir`, `burn` |
+| `polypous-backend` | Burn integration on `burn::Tensor` + `burn::Device` (Burn's runtime dispatch, ADR-0011): `BackendKind` value type, device discovery/probing, `DynTensor` (dynamic rank + dtype), implementations of every IR op, cross-device transfer, autodiff | `ir`, `burn` |
 | `polypous-quant` | Quantized tensor representation, GGUF block formats, dequantization, quantized matmul/matvec kernels (CubeCL for GPUs, SIMD Rust for CPU) | `backend`, `cubecl` |
 | `polypous-runtime` | Graph interpreter, executable plan compilation, placement planner, weight residency (resident / streamed), prefetching, KV/state management | `ir`, `backend`, `quant`, `formats` |
 | `polypous-train` | Training config, training loop, optimizers/schedulers via Burn, metrics, checkpoints, events | `runtime`, `backend` |
@@ -126,13 +126,13 @@ training config JSON ─► polypous-train: build DynamicModel (parameters initi
 |---|---|
 | Build on Burn, keep Burn out of the public API | [0001](adr/0001-build-on-burn.md), [0007](adr/0007-burn-version-pinning.md) |
 | Runtime graph IR, executed by an interpreter | [0002](adr/0002-runtime-graph-ir-interpreter.md) |
-| Choose the backend at runtime via enum dispatch | [0003](adr/0003-runtime-backend-selection.md) |
+| Choose the backend at runtime, using Burn's runtime dispatch | [0003](adr/0003-runtime-backend-selection.md), [0011](adr/0011-use-burn-dispatch-for-backend-selection.md) |
 | Tiered GPU → CPU → disk placement | [0004](adr/0004-tiered-placement.md) |
 | Native kernels for GGUF quantization formats | [0005](adr/0005-native-quantized-kernels.md) |
 | `.polyp` files contain data only | [0006](adr/0006-polyp-files-are-data-only.md) |
 | Rust API designed for wrapping, C ABI later | [0008](adr/0008-wrapper-friendly-api.md) |
 | Testing against reference implementations | [0009](adr/0009-reference-based-testing.md) |
-| MIT license | [0010](adr/0010-mit-license.md) |
+| MIT license; MPL-2.0 only for unmodified dependencies, per crate | [0010](adr/0010-mit-license.md), [0012](adr/0012-mpl-for-unmodified-dependencies.md) |
 
 ## 7. Cross-cutting concerns
 

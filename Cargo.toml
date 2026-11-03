@@ -33,6 +33,11 @@ polypous-train = { path = "crates/polypous-train" }
 polypous-pipelines = { path = "crates/polypous-pipelines" }
 polypous = { path = "crates/polypous" }
 
+# Burn and CubeCL: exact pins (ADR-0007). Only `polypous-backend` and `polypous-quant` may use these.
+# Default features are off so that each crate opts into backends through its own cargo features.
+burn = { version = "=0.22.1", default-features = false }
+cubecl = { version = "=0.11.3", default-features = false }
+
 [workspace.lints.rust]
 # Crates that need `unsafe` later opt out explicitly in their own Cargo.toml.
 unsafe_code = "deny"

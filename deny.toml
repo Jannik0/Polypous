@@ -37,6 +37,17 @@ confidence-threshold = 0.9
 # The allow list is written ahead of the dependencies that need it.
 unused-allowed-license = "allow"
 
+# MPL-2.0 is allowed per crate only, for unmodified dependencies (ADR-0012). A new MPL crate fails
+# this check and needs the owner's approval and an entry here.
+exceptions = [
+    # Via burn-tensor's `std` feature (always on).
+    { crate = "colored", allow = ["MPL-2.0"] },
+    # Via cubecl-runtime (`cuda`, `vulkan`, `metal`).
+    { crate = "buildid", allow = ["MPL-2.0"] },
+    # Via dirs-sys (`cuda`).
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+]
+
 [licenses.private]
 # Workspace crates are `publish = false`; their own MIT license is set in the workspace Cargo.toml.
 ignore = true
