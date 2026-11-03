@@ -52,7 +52,11 @@ Tasks that touch different crates can run in parallel. Tasks that touch the same
 - `main` is always green. Work happens on `feature/<short-name>`, `fix/<short-name>` or `docs/<short-name>` branches.
 - Conventional-style commit subjects: `ir: add repeat block validation`, `quant: Q4_K dequant CPU kernel`.
   The prefix is the crate short name, or `docs`, `ci`, `tools`.
-- Squash-merge PRs.
+- Squash-merge PRs (enforced by the `main` ruleset). The squash commit message is the PR title and
+  description only; remove any `Co-authored-by` lines GitHub suggests. With the CLI:
+  `gh pr merge <n> --squash --subject "<title> (#<n>)" --body "<description>"`.
+- No agent attribution anywhere (see [CLAUDE.md](../CLAUDE.md#conventions)), and only the owner's
+  GitHub no-reply address as git identity.
 
 ## 6. Parallel agents
 

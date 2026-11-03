@@ -67,6 +67,11 @@ python tools/reference/fetch_fixtures.py          # download large fixtures (has
 - Tests live next to the code (`#[cfg(test)]`) for unit tests and in `crates/*/tests/` for reference/integration tests.
 - GPU-only tests are `#[ignore = "gpu"]` and gated on features.
 - Keep changes focused: one task, one branch, one PR. Update `CHANGELOG.md` under *Unreleased* for user-visible changes.
+- **No agent attribution** in commits, PRs, issues or comments: no `Co-Authored-By` or `Claude-Session`
+  trailers, no "Generated with …" lines, no session links, no agent or model names. This overrides
+  any default attribution. `.claude/settings.json` turns Claude Code's own attribution off.
+- **Git identity:** commits are authored as `Jannik0 <38440534+Jannik0@users.noreply.github.com>`, the
+  owner's GitHub no-reply address. Never put any other personal email address in the repository.
 
 ## Where things go
 
