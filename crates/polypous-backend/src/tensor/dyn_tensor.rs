@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use burn::tensor::{Bool, DType as BurnDType, Device, Float, Int, Tensor};
+use burn::tensor::{Bool, BoolStore, DType as BurnDType, Device, Float, Int, Tensor};
 
 use super::data::num_elements;
 use super::{DType, Kind, Result, TensorData, TensorError};
@@ -149,20 +149,28 @@ impl DynTensor {
         let dims = data.dims()?;
         check_device_supports(data.dtype, device)?;
 
-        let mut bytes = data.bytes.clone();
-        le_to_native(&mut bytes, data.dtype.size_bytes());
+        let (bytes, burn_dtype) = if data.dtype == DType::Bool {
+            // Burn creates bool tensors in the device's bool storage, but its CubeCL backends
+            // (Burn 0.22.1, `bool_from_data`) panic unless the data already has that storage.
+            let store = bool_store(device);
+            (encode_bool(&data.bytes, store), BurnDType::Bool(store))
+        } else {
+            let mut bytes = data.bytes.clone();
+            le_to_native(&mut bytes, data.dtype.size_bytes());
+            (bytes, data.dtype.to_burn())
+        };
         let burn_data =
-            burn::tensor::TensorData::try_from_bytes_vec(bytes, dims.clone(), data.dtype.to_burn())
-                .map_err(|err| TensorError::InvalidData {
+            burn::tensor::TensorData::try_from_bytes_vec(bytes, dims.clone(), burn_dtype).map_err(
+                |err| TensorError::InvalidData {
                     reason: err.to_string(),
-                })?;
+                },
+            )?;
 
         let dtype = data.dtype;
-        let options = (device, dtype.to_burn());
+        let options = (device, burn_dtype);
         let inner = dispatch_rank!(dims.len(), N => match dtype.kind() {
             Kind::Float => Ranked::<N>::Float(Tensor::from_data(burn_data, options)),
             Kind::Int => Ranked::<N>::Int(Tensor::from_data(burn_data, options)),
-            // Burn picks the device's bool storage for bool tensors itself.
             Kind::Bool => Ranked::<N>::Bool(Tensor::from_data(burn_data, device)),
         });
         Ok(DynTensor { inner, dtype })
@@ -327,6 +335,11 @@ impl DynTensor {
     )]
     pub(crate) fn to_device(&self, device: &Device) -> Result<Self> {
         check_device_supports(self.dtype, device)?;
+        if self.dtype == DType::Bool && bool_store(&self.device()) != bool_store(device) {
+            // Burn 0.22.1 hands the source's bool storage to the target backend, and the CubeCL
+            // backends panic on storage that isn't their own. Go through host memory ourselves.
+            return DynTensor::from_data(&self.to_data()?, device);
+        }
         let dtype = self.dtype;
         let inner = map_rank!(&self.inner, t => t.to_device(device));
         Ok(DynTensor { inner, dtype })
@@ -483,6 +496,22 @@ fn check_device_supports(dtype: DType, device: &Device) -> Result<()> {
             dtype,
             device: format!("{device:?}"),
         })
+    }
+}
+
+/// How `device` stores bool tensors (1-byte native, `u8` or `u32`).
+fn bool_store(device: &Device) -> BoolStore {
+    device.settings().bool_dtype
+}
+
+/// Encodes host bools (one byte, 0 or 1) in the given Burn bool storage, in host byte order.
+fn encode_bool(bytes: &[u8], store: BoolStore) -> Vec<u8> {
+    match store {
+        BoolStore::Native | BoolStore::U8 => bytes.to_vec(),
+        BoolStore::U32 => bytes
+            .iter()
+            .flat_map(|&b| u32::from(b).to_ne_bytes())
+            .collect(),
     }
 }
 

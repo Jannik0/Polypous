@@ -424,13 +424,14 @@ fn errors_have_readable_messages() {
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
 fn gpu_devices() -> Vec<Device> {
     use burn::tensor::DeviceType;
-    let mut types = Vec::new();
-    #[cfg(feature = "cuda")]
-    types.push(DeviceType::Cuda);
-    #[cfg(feature = "vulkan")]
-    types.push(DeviceType::Vulkan);
-    #[cfg(feature = "metal")]
-    types.push(DeviceType::Metal);
+    let types = [
+        #[cfg(feature = "cuda")]
+        DeviceType::Cuda,
+        #[cfg(feature = "vulkan")]
+        DeviceType::Vulkan,
+        #[cfg(feature = "metal")]
+        DeviceType::Metal,
+    ];
     types
         .into_iter()
         .flat_map(|t| Device::enumerate(t).into_vec())
@@ -495,10 +496,14 @@ fn cpu_to_gpu_to_cpu() {
         let a = tensor(DType::F32, &[2, 2], &[1., 2., 3., 4.], gpu);
         let b = tensor(DType::F32, &[2, 2], &[1., 2., 3., 4.], &host);
         assert!(matches!(
-            a.clone().add(b),
+            a.add(b),
             Err(TensorError::DeviceMismatch { op: "add", .. })
         ));
-        let cast = a.cast(DType::I32).unwrap().cast(DType::Bool).unwrap();
-        assert_eq!(cast.into_data().unwrap().bytes, vec![1, 1, 1, 1]);
+        // float → int rounds toward zero on the GPU too.
+        let f = tensor(DType::F32, &[4], &[-1.5, 0.0, 2.75, 3.0], gpu);
+        let i = f.cast(DType::I32).unwrap();
+        assert_eq!(decode(&i.to_data().unwrap()), vec![-1., 0., 2., 3.]);
+        let b = i.cast(DType::Bool).unwrap();
+        assert_eq!(b.to_data().unwrap().bytes, vec![1, 0, 1, 1]);
     }
 }
