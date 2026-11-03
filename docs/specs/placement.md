@@ -10,7 +10,13 @@ as fit go on the GPU, the next ones in CPU RAM, and the rest are streamed from d
 
 At `Engine` creation Polypous enumerates devices for every compiled-in backend and **probes** each:
 initialize, allocate a small buffer, run a tiny kernel, compare the result. A failing probe marks the
-device unavailable with a reason, and never aborts.
+device unavailable with a reason, and never aborts. Burn/CubeCL may panic during device
+initialization (for example a CUDA driver that is installed but broken), so each probe isolates
+panics (`catch_unwind` or a separate thread) ([ADR-0011](../adr/0011-use-burn-dispatch-for-backend-selection.md)).
+
+Enumeration builds on Burn's `Device::enumerate_physical`, which also reports device identity (PCI
+address, adapter LUID) for CubeCL devices. Polypous never uses Burn's `Device::default()`: its
+priority order and probing rules are the ones in this section.
 
 **Crash safety** ([ADR-0013](../adr/0013-crash-safe-device-probing.md)): GPU drivers can crash or
 hang the process natively, which no in-process mechanism can catch. Therefore:
