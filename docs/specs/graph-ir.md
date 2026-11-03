@@ -67,6 +67,13 @@ with no dependency on Burn.
 | `bool` | Masks |
 | `float` (params only) | "Any float or quantized storage": the actual storage dtype comes from the weight file (`f16`, `q4_k`, …). Compute dtype is chosen by the runtime |
 
+Value tensors have **rank 1 to 6**; scalars are rank-1 tensors of shape `[1]`.
+
+Not every device supports every dtype. On Vulkan, for example, `bf16` depends on device
+extensions (Mesa lavapipe has none). The backend reports support per device. Placing or creating
+a value of a dtype that its device doesn't support is an error, never a silent conversion. The
+runtime casts explicitly where the graph or the compute dtype choice asks for it.
+
 Quantized formats are **storage dtypes of parameters, not value dtypes.** Ops that accept quantized
 parameters (`nn.linear`, `nn.embedding`, …) say so in the op catalog. See [quantization.md](quantization.md).
 

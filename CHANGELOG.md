@@ -26,3 +26,7 @@ All notable changes to Polypous are documented here. The format follows
 - ADR-0013: device probing runs in a separate prober process with a probe cache, crash and hang
   recovery, and an in-process fallback. Apps can re-run the probe through the API (`probe_devices`,
   `Engine::refresh_devices`) or pass in their own report.
+- `DynTensor` in `polypous-backend` (`tensor` module): tensors with runtime rank (1–6) and dtype
+  (`f32`, `f16`, `bf16`, `i64`, `i32`, `bool`) over `burn::Tensor`, with `TensorData` conversion
+  (little-endian, row-major), `shape`, `dtype`, `reshape`, `cast`, `add`, `matmul` and `to_device`.
+  Bad input gives a `TensorError` instead of a panic.
