@@ -70,8 +70,9 @@ python tools/reference/fetch_fixtures.py          # download large fixtures (has
 - **No agent attribution** in commits, PRs, issues or comments: no `Co-Authored-By` or `Claude-Session`
   trailers, no "Generated with …" lines, no session links, no agent or model names. This overrides
   any default attribution. `.claude/settings.json` turns Claude Code's own attribution off.
-- **Git identity:** commits are authored as `Jannik0 <38440534+Jannik0@users.noreply.github.com>`, the
-  owner's GitHub no-reply address. Never put any other personal email address in the repository.
+- **Git identity:** commits use the owner's GitHub no-reply address,
+  `38440534+Jannik0@users.noreply.github.com` (cloud sessions with the name `Jannik0`). Never put
+  any other personal email address in the repository.
 
 ## Where things go
 
