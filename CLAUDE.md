@@ -67,6 +67,12 @@ python tools/reference/fetch_fixtures.py          # download large fixtures (has
 - Tests live next to the code (`#[cfg(test)]`) for unit tests and in `crates/*/tests/` for reference/integration tests.
 - GPU-only tests are `#[ignore = "gpu"]` and gated on features.
 - Keep changes focused: one task, one branch, one PR. Update `CHANGELOG.md` under *Unreleased* for user-visible changes.
+- **Attribution:** commits written by an agent end with exactly `Co-Authored-By: Claude <noreply@anthropic.com>`.
+  Never mention the **model name** (no "Claude Opus …") or a **session link** (`Claude-Session`
+  trailers, claude.ai/code URLs) in commits, PRs, issues or comments. `.claude/settings.json` sets
+  Claude Code's attribution accordingly.
+- **Email addresses:** the only personal address in the repository is the owner's GitHub no-reply
+  address, `38440534+Jannik0@users.noreply.github.com`. Never add any other personal email address.
 
 ## Where things go
 
