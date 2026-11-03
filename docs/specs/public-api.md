@@ -64,6 +64,10 @@ outcome.export("model.graph.json", "model.safetensors")?;
    a config struct must be equivalent to one taking its JSON.
 4. **Tensors** cross the boundary as `TensorData { dtype, shape: Vec<u64>, bytes: Vec<u8> }`
    (little-endian, row-major). There are no Burn types, and no zero-copy promises, in the public API.
+   Element encodings: IEEE 754 for `f32`/`f16`, bfloat16 for `bf16`, two's complement for
+   `i64`/`i32`, and one byte per element for `bool` (`0` false, `1` true; any other byte is an
+   error). `bytes.len()` must equal the product of `shape` times the element size; a dimension may
+   be `0`. Malformed data is an `InvalidInput` error, never a panic.
 5. **Blocking calls + callbacks + cancellation.** Long operations block the calling thread, report
    through a callback, and take a `CancellationToken`. No async runtime is required. Wrappers call
    them from a worker thread.

@@ -30,3 +30,7 @@ All notable changes to Polypous are documented here. The format follows
   `DeviceInfo` (memory excluding Windows' shared GPU memory, PCI/LUID identity to match one GPU
   across CUDA and Vulkan, capabilities, probe status; serde JSON with stable `snake_case` names),
   `enumerate_devices`, `describe_device`, `probe_device` (panics caught) and `select_primary_gpu`.
+- `DynTensor` in `polypous-backend` (`tensor` module): tensors with runtime rank (1–6) and dtype
+  (`f32`, `f16`, `bf16`, `i64`, `i32`, `bool`) over `burn::Tensor`, with `TensorData` conversion
+  (little-endian, row-major), `shape`, `dtype`, `reshape`, `cast`, `add`, `matmul` and `to_device`.
+  Bad input gives a `TensorError` instead of a panic.

@@ -7,3 +7,6 @@
 //! `docs/architecture.md` §2.
 
 pub mod device;
+pub mod tensor;
+
+pub use tensor::{DType, DynTensor, TensorData, TensorError};
