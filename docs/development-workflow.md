@@ -56,6 +56,8 @@ Tasks that touch different crates can run in parallel. Tasks that touch the same
   description. GitHub adds `Co-authored-by: Claude <noreply@anthropic.com>` for agent-authored
   commits; keep it.
 - Attribution names Claude, never the model, and never links a session (see [CLAUDE.md](../CLAUDE.md#conventions)).
+  Before merging, check the PR title and description for a model name or a `claude.ai/code` link and
+  remove it, because the description becomes the squash commit message on `main`.
 
 ## 6. Parallel agents
 
