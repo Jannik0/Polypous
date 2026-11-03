@@ -29,6 +29,8 @@ burn = { workspace = true, features = ["std"] }
 # Not used in code yet. Declared so that the exact CubeCL pin (ADR-0007) is part of dependency
 # resolution and matches the CubeCL version Burn uses. `polypous-quant` uses it for its kernels.
 cubecl = { workspace = true, optional = true }
+# Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file through Burn.
+thiserror = "2.0.21"
 
 [lints]
 workspace = true

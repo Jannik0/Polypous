@@ -4483,6 +4483,7 @@ dependencies = [
  "burn",
  "cubecl",
  "polypous-ir",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
