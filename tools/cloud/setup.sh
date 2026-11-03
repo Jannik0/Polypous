@@ -15,8 +15,3 @@ rustup component add rustfmt clippy
 
 # cargo-deny (ADR-0010) is deliberately not installed here: building it from source would
 # push the script past the caching limit. CI runs it on every PR.
-
-# Commits are authored with the owner's GitHub no-reply address, not an agent identity
-# (CLAUDE.md, "Conventions"). Otherwise GitHub adds the agent as co-author when squash-merging.
-git config --global user.name "Jannik0"
-git config --global user.email "38440534+Jannik0@users.noreply.github.com"
