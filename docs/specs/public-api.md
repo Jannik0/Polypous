@@ -9,10 +9,17 @@ write themselves. The Rust API must therefore be easy to wrap. Every public item
 ## 1. Shape of the API (illustrative)
 
 ```rust
-use polypous::{Engine, EngineConfig, ModelSource, LoadOptions, CancellationToken};
+use polypous::{Engine, EngineConfig, ModelSource, LoadOptions, CancellationToken, ProbeOptions};
 
-let engine = Engine::new(EngineConfig::default())?;          // device discovery + probes
+let engine = Engine::new(EngineConfig::default())?;          // device discovery: probe cache, else prober process
 for d in engine.devices() { println!("{d:?}"); }
+
+// Optional: probe again at any time, e.g. a "Re-scan hardware" button (ADR-0013).
+let report = engine.refresh_devices(
+    ProbeOptions { force: true, ..Default::default() },      // ignore the cache
+    &CancellationToken::new(),
+    |event| println!("{event:?}"),                           // ProbeStarted, DeviceProbed, ...
+)?;
 
 // Optional: inspect before loading.
 let plan = engine.plan(&ModelSource::path("llama-3-8b.Q4_K_M.gguf"), &LoadOptions::default())?;
@@ -96,6 +103,22 @@ typedef void (*pp_event_cb)(void* user, const char* event_json);
 - `pp_cancel` is created and triggered by the caller from any thread.
 - The header is generated with `cbindgen`. ABI changes bump `pp_abi_version`.
 
+### 1.1 Device probing ([ADR-0013](../adr/0013-crash-safe-device-probing.md))
+
+| Item | Purpose |
+|---|---|
+| `polypous::probe::probe_devices(options, cancel, on_event) -> ProbeReport` | Run the probe without an `Engine` (prober process, cache, recovery) |
+| `Engine::refresh_devices(options, cancel, on_event) -> ProbeReport` | Probe again and update a running engine's device list. Loaded models keep their placement |
+| `polypous::probe::run_prober_if_requested()` | First line of `main` in Rust apps that link Polypous statically: lets Polypous use the app itself as the prober. Returns normally when the process was not started as a prober |
+| `ProbeOptions` | `force` (ignore the cache), `devices` (subset), `isolation` (`auto` \| `out_of_process` \| `in_process`), `timeout_per_device` |
+| `ProbeEvent` | `ProbeStarted`, `DeviceEnumerated`, `DeviceProbed`, `ProbeFinished` |
+| `ProbeReport` | Devices with status and reason, whether probing was isolated, cache hits. Plain JSON data |
+| `EngineConfig::probe_report` | Use a report the app produced itself; Polypous then starts no prober |
+| `EngineConfig::prober_path`, `EngineConfig::probe_cache_dir` | Where the prober executable and the probe cache are |
+
+C ABI (M7): `pp_probe_devices`, `pp_engine_refresh_devices`, and the entry point the tiny
+`polypous-probe` executable calls.
+
 ## 4. Events and threading
 
 - Polypous runs heavy work on its own thread pool. The calling thread blocks until the operation
@@ -112,6 +135,8 @@ Wrappers are out of scope for this repository, but must be easy to write. A guid
 - selecting backends via cargo features when building, so CUDA support does not require a CUDA
   installation on end-user machines (libraries load at runtime, with fallback)
 - shipping `.polyp` files: built-ins are embedded, and extras are registered at runtime
+- shipping the `polypous-probe` executable next to the Polypous library, signed like the app and
+  outside the `asar` archive ([ADR-0013](../adr/0013-crash-safe-device-probing.md))
 
 ## 6. Stability
 
