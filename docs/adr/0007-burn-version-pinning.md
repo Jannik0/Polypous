@@ -123,12 +123,23 @@ Intel Iris Xe (driver 30.0.101.1298, Vulkan 1.2.201). Rust 1.99.1.
 | `burn_smoke cuda` with the CUDA toolkit removed from `PATH` and `CUDA_PATH` unset (NVRTC not reachable) | ✅ correct result: only the driver is needed |
 | `cuda` release build size | 90 MB |
 
+**Rerun after driver updates (2026-11-03):** Intel Iris Xe driver 32.0.101.7092 (Vulkan 1.4.323)
+and NVIDIA driver 617.42 (Vulkan 1.4.351).
+
+| Check | Result |
+|---|---|
+| `burn_smoke vulkan 0`: RTX 3060 | ✅ correct result |
+| `burn_smoke vulkan 1`: Intel Iris Xe, 3 runs | ✅ correct result every time, no crash events |
+| `burn_smoke cuda`, also with the CUDA toolkit removed from `PATH` | ✅ correct result |
+
+So the crash was a bug in the old Intel driver, not in Burn or Polypous.
+
 Not checked yet: Debian (CUDA, `LD_DEBUG=libs`), a `cuda` build on a Windows machine without any
 NVIDIA driver (confirmed on Linux only), Metal (CI build only).
 
 **Consequence for device probing (#4):** a GPU driver can crash the whole process during device
-initialization. That can't be caught inside the process, so probing either has to run in a child
-process or has to avoid known-bad drivers. This needs a decision before #4 is implemented.
+initialization. That can't be caught inside the process, and casual users often run old drivers.
+[ADR-0013](0013-crash-safe-device-probing.md) (Proposed) addresses this.
 
 **Licenses of the new dependencies**
 
