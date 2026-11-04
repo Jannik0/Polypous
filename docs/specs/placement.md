@@ -65,7 +65,7 @@ Each device reports:
 |---|---|---|
 | `id` | `{"backend":"cuda","index":0}`, `{"backend":"vulkan"\|"metal","adapter":"discrete_gpu"\|"integrated_gpu"\|"virtual_gpu"\|"cpu"\|"other","index":0}`, `{"backend":"cpu"}` | Addresses the device for `describe_device`/`probe_device`, stable within one boot. Index = CUDA ordinal, or index among adapters of that type (Burn's addressing) |
 | `backend` | `cuda` / `metal` / `vulkan` / `cpu` | `BackendKind` |
-| `name` | string | |
+| `name` | string | GPUs: the backend's adapter name. CPU: `model name` from `/proc/cpuinfo` on Linux; on Windows the registry value `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString` (the marketing name, for example `12th Gen Intel(R) Core(TM) i7-12800H`), else `PROCESSOR_IDENTIFIER`; elsewhere `CPU (<arch>)`. Surrounding whitespace is trimmed |
 | `vendor`, `driver` | string or null | Vendor from the PCI vendor id; driver from wgpu's adapter info (`driver` + `driver_info`) for Vulkan/Metal. CUDA reports no driver string yet |
 | `kind` | `discrete` / `integrated` / `cpu` / `other` | `cpu` includes Vulkan software rasterizers (lavapipe); `other` is a virtual or unclassified adapter |
 | `dedicated_memory` | bytes or null | From CubeCL's device properties: CUDA `cuDeviceTotalMem`; Vulkan the **largest `DEVICE_LOCAL` heap** (Windows' shared GPU memory is a host heap, never counted); Metal `recommendedMaxWorkingSetSize`. For integrated GPUs, the RAM share the driver exposes. `null` for the CPU (RAM comes from OS queries, §3) |
@@ -74,6 +74,15 @@ Each device reports:
 | `identity` | `{"pci_bus_id","luid","registry_id"}`, each nullable | PCI address `0000:01:00.0`; Windows LUID as 16 hex digits (changes on reboot, never a cache key); macOS registry id. Two devices are the same card if their PCI ids match, else their LUIDs, else their registry ids (CubeCL's rule, as in `enumerate_physical`). Empty for the CPU and software rasterizers |
 | `capabilities` | `f16`, `bf16`, `subgroup_size_min`, `subgroup_size_max`, `max_buffer_size`, `max_shared_memory`, `compute_units` | Missing values are null/false |
 | `status` | `{"state":"not_probed"}`, `{"state":"available","isolated":bool}`, `{"state":"unavailable","reason":{"code":"crashed_during_probe"\|"probe_timed_out"\|"probe_failed","message"\|"library_missing","library"},"isolated":bool}` | `not_probed` after `describe_device`; the probe sets the rest |
+
+**`Engine::new` (M0, issue #6; `polypous::Engine`).** Until the prober process (#14) exists, the
+engine discovers devices **in process**: it lists the devices of every compiled-in backend, sorts
+them into **probe order** (CUDA, Metal, Vulkan discrete, Vulkan integrated, other Vulkan adapters,
+Vulkan software rasterizers, CPU; the backend's order within each group), then describes and probes
+each one (a device that could not be opened is not probed). The list keeps that order, and the
+facade marks the result of `select_primary_gpu` as `primary` (public-api.md §1.2). A native driver
+crash still takes the process down until #14; there is no crash journal yet. The discovery step is
+one function from the config to the device list, so #14 replaces it without changing the engine.
 
 **Primary GPU selection** (only one GPU is used in v1):
 1. CUDA device (discrete NVIDIA)
