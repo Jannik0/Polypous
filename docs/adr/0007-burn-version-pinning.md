@@ -78,7 +78,7 @@ Burn is pre-1.0, and its API changes between releases. Letting Burn types spread
 - *Runtime:* only the **NVIDIA driver** (`libcuda.so` / `nvcuda.dll`), loaded with `libloading` on
   first use rather than linked (cudarc `fallback-dynamic-loading`, `cubecl-cuda-0.11.3/Cargo.toml`;
   `cudarc-0.19.10/src/driver/sys/mod.rs`, `culib()`). The CUDA Toolkit is not needed to run
-  (from the source above; to be confirmed on the reference machine).
+  (confirmed on the reference machine on Windows and Debian, see below).
 - *Missing driver:* device enumeration checks for `libcuda` first and returns no devices if it is
   missing (`cubecl-cuda-0.11.3/src/runtime.rs:463-477`). Checked in the cloud session (Linux, no
   CUDA): the `cuda` build of `burn_smoke` starts and reports no CUDA device. But device
@@ -86,12 +86,13 @@ Burn is pre-1.0, and its API changes between releases. Letting Burn types spread
   broken panics. Device probing (#4) must isolate such panics.
 - **Verified on the reference machine (Windows), see "Reference machine results" below:** the CUDA
   backend runs on the RTX 3060 with driver 591.74 / CUDA 13.2, also with the CUDA toolkit removed
-  from `PATH` (no NVRTC reachable). Debian is still open. Use
+  from `PATH` (no NVRTC reachable), and on Debian with driver 615.71.10 (`LD_DEBUG=libs` shows only
+  `libcuda.so` from the driver, no NVRTC or `cudart`). Use
   `crates/polypous-backend/examples/burn_smoke.rs`.
 
 - *Binary size:* because LLVM is linked statically, a `cuda` build is large. The `burn_smoke`
-  example with `cuda` is about 1 GB in debug on Linux (debug info inside the binary), and on Windows
-  137 MB in debug (debug info in a separate PDB) and **90 MB in release**.
+  example with `cuda` is about 1 GB in debug on Linux (debug info inside the binary; test binaries
+  about 1.2 GB), and on Windows 137 MB in debug (debug info in a separate PDB) and **90 MB in release**.
 
 **Vulkan requirements (from source)**
 
@@ -134,8 +135,32 @@ and NVIDIA driver 617.42 (Vulkan 1.4.351).
 
 So the crash was a bug in the old Intel driver, not in Burn or Polypous.
 
-Not checked yet: Debian (CUDA, `LD_DEBUG=libs`), a `cuda` build on a Windows machine without any
-NVIDIA driver (confirmed on Linux only), Metal (CI build only).
+**Reference machine results (Debian 13, 2026-11-04)**
+
+Debian 13.7, kernel 6.12.115, NVIDIA driver 615.71.10 (open kernel module), Mesa 25.0.7 (ANV for
+the Iris Xe, llvmpipe with LLVM 19.1.7), Vulkan loader 1.4.309, CUDA toolkit 13.4 installed but not
+on `PATH`. Rust 1.99.1. Tested at commit `6f0bd20`.
+
+| Check | Result |
+|---|---|
+| fmt, clippy `-D warnings`, `cargo test --workspace` | ✅ |
+| `burn_smoke cuda`: RTX 3060, also with the toolkit hidden | ✅ correct result. `LD_DEBUG=libs`: only `libcuda.so` from the driver, no `libnvrtc`/`libcudart`, although the toolkit's lib dirs are in `ld.so.conf.d` |
+| `burn_smoke vulkan 0`: RTX 3060 / `vulkan 1`: Iris Xe | ✅ correct result |
+| `burn_smoke vulkan 2`: lavapipe (llvmpipe), 3 runs | ❌ **process crash** (SIGSEGV), also with lavapipe as the only ICD. Not a Rust panic |
+| Device discovery and DynTensor GPU tests (`cuda,vulkan`, `--include-ignored`) | ❌ crash on lavapipe; ✅ all pass with lavapipe hidden by `VK_DRIVER_FILES` |
+
+Device discovery with lavapipe hidden: RTX 3060 through CUDA (5.72 GiB; Windows 6.00 GiB) and
+Vulkan (6.00 GiB, the device-local heap in `vulkaninfo`; Windows 5.85 GiB) with the same PCI id
+`0000:01:00.0`, no LUID on Linux. Iris Xe with its own PCI id `0000:00:02.0`, 7.66 GiB, unified. The
+primary GPU is `cuda:0`. The dtype support matches Windows: CUDA has bf16, Vulkan doesn't.
+
+Lavapipe on Ubuntu's Mesa 25.2.8 (CI, cloud sessions) works, so this looks like a Mesa 25.0 /
+LLVM 19 bug. No backtrace yet (needs root for `dmesg`, and `gdb`). Like the old Intel driver on
+Windows, it shows that a stock install can crash the process during probing: a second real-hardware
+case for ADR-0013.
+
+Not checked yet: a `cuda` build on a Windows machine without any NVIDIA driver (confirmed on Linux
+only), Metal (CI build only).
 
 **Consequence for device probing (#4):** a GPU driver can crash the whole process during device
 initialization. That can't be caught inside the process, and casual users often run old drivers.

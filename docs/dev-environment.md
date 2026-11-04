@@ -33,13 +33,15 @@ needed to *build* with `--features vulkan`.
   links it statically. Behind a TLS-intercepting proxy that download fails. Pre-fill the cache as
   described in [ADR-0007's follow-up notes](adr/0007-burn-version-pinning.md#follow-up-notes).
   If `nvcc` is on `PATH`, cudarc uses bindings for its version, otherwise the newest supported one
-  (13.4). `CUDARC_CUDA_VERSION=13020` selects the 13.2 bindings without `nvcc`.
+  (13.4). `CUDARC_CUDA_VERSION=13020` selects the 13.2 bindings without `nvcc`. NVIDIA's Debian
+  packages install the toolkit under `/usr/local/cuda-<version>` without putting `nvcc` on `PATH`,
+  so set `CUDARC_CUDA_VERSION` when the installed toolkit is not 13.4.
 - *Run:* only the NVIDIA driver (`libcuda.so` / `nvcuda.dll`), loaded at runtime. Kernels are
   compiled to PTX with the bundled LLVM, so NVRTC and the rest of the CUDA Toolkit are not needed
-  to run (from the source; still to be confirmed on the reference machine). Toolkit versions 11.4–13.4 are supported.
+  to run (confirmed on the reference machine on Windows and Debian, see ADR-0007's follow-up
+  notes). Toolkit versions 11.4–13.4 are supported.
 - Without a driver, a `cuda` build starts and finds no CUDA devices (checked on Linux without
-  CUDA; Windows not checked yet). Whether the CUDA backend works with CUDA 13.2 still has to be
-  verified on the reference machine, see ADR-0007's follow-up notes.
+  CUDA; Windows not checked yet).
 
 Smoke test for a backend (runs a 2×2 matmul on the first device found, or reports that there is none):
 
@@ -71,12 +73,22 @@ Once M0 is done, `cargo run -p polypous-cli -- devices` shows what Polypous dete
 
 ## Debian notes
 
-- `build-essential pkg-config libssl-dev` (if dependencies need them).
-- For Vulkan software-driver testing (as in CI): `mesa-vulkan-drivers` provides lavapipe. Select it with
-  `VK_ICD_FILENAMES` / `VK_DRIVER_FILES` pointing at `lvp_icd.*.json` (for example
-  `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`).
+- `build-essential pkg-config`, and `vulkan-tools` for `vulkaninfo`. (`libssl-dev` is not needed:
+  nothing in `Cargo.lock` links OpenSSL.)
+- `mesa-vulkan-drivers` provides the Intel driver (ANV) **and** lavapipe (llvmpipe), and Vulkan always
+  lists lavapipe next to the real GPUs (as `vulkan:cpu:0`). **On Debian 13 (Mesa 25.0.7, LLVM 19)
+  lavapipe crashes the process (SIGSEGV) on its first compute work**, so GPU tests that touch every
+  device crash on a stock install. Until the prober process (#14) isolates this, hide lavapipe for
+  GPU tests:
+  `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/intel_icd.json`.
+  (Mesa 25.2.8 lavapipe on Ubuntu, as in CI and the cloud sessions, works.)
+- For Vulkan software-driver testing (as in CI), select lavapipe alone with `VK_DRIVER_FILES`
+  pointing at `lvp_icd.*.json` (for example `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`).
 - A first `--features vulkan` or `--features cuda` build compiles wgpu/CubeCL and takes several
   minutes (about 3.5 min for `vulkan` on a 4-vCPU cloud VM). The default `cpu` build is much lighter.
+- **Disk space:** each debug test binary with `cuda` or `vulkan` is about 1.2 GB on Linux (debug info
+  inside the binary), and every feature set builds its own. Running the CPU, GPU and smoke checks
+  filled `target/` with about 17 GB. Plan for 20 GB, or run `cargo clean` between feature sets.
 
 ## Python reference environment
 
