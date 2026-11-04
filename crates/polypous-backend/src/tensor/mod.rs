@@ -34,8 +34,20 @@
 //!
 //! Burn panics on invalid shapes, mixed devices and dtypes a backend can't handle. Every public
 //! function checks these first (shape rules, `Device::supports_dtype`) and returns a
-//! [`TensorError`]. Device-taking functions are crate-internal until the device API of issue #4
-//! exists, so that no Burn type appears in the public API (ADR-0007).
+//! [`TensorError`].
+//!
+//! # Devices
+//!
+//! The public API addresses devices by [`DeviceId`](crate::device::DeviceId), as returned by
+//! [`list_devices`](crate::device::list_devices), so no Burn type appears in it (ADR-0007).
+//! `from_data`, `to_device` and `device` map ids to Burn devices with the crate-internal mapping of
+//! the `device` module; the `burn::Device` variants (`from_data_burn`, `to_device_burn`,
+//! `burn_device`) are crate-internal. An id whose backend is not compiled in, or that addresses no
+//! device Burn's enumeration lists, is a [`TensorError::DeviceUnavailable`] and never reaches Burn,
+//! which would panic on it (`device/resolve.rs`). Each tensor stores the [`DeviceId`] of its device,
+//! so `device()` returns exactly the id it was created with.
+//!
+//! [`DeviceId`]: crate::device::DeviceId
 
 mod data;
 mod dtype;
