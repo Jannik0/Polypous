@@ -2,6 +2,11 @@
 //!
 //! These run in CI with the default (`cpu`) features, and in the lavapipe job with `vulkan`
 //! compiled in. They probe devices in the test's child process, not in a prober process (#14).
+//!
+//! `polyp devices` always uses the default config, so software rasterizers (lavapipe, …) are
+//! listed as skipped. The GPU test of the engine itself opts in to them only with the test-only
+//! environment variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1` (the CI lavapipe job sets it); the
+//! library never reads environment variables.
 
 use std::process::Command;
 
@@ -132,5 +137,58 @@ fn devices_marks_a_primary_gpu_when_one_is_usable() {
         .count();
     // A usable GPU means exactly one primary; none (CPU only, or lavapipe only) means zero.
     assert_eq!(primaries, usize::from(usable_gpu));
+    // The CLI keeps the default: software rasterizers are listed, not probed.
+    for device in devices
+        .iter()
+        .filter(|device| is_software_rasterizer(device))
+    {
+        assert_eq!(
+            device["status"],
+            serde_json::json!({
+                "state": "unavailable",
+                "reason": {"code": "software_rasterizer_skipped"},
+                "isolated": false
+            }),
+            "{device}"
+        );
+        eprintln!("skipped {}: software rasterizer", device["id"]);
+    }
     eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+}
+
+/// A Vulkan or Metal adapter of type `cpu` in the device JSON.
+fn is_software_rasterizer(device: &Value) -> bool {
+    (device["backend"] == "vulkan" || device["backend"] == "metal")
+        && device["id"]["adapter"] == "cpu"
+}
+
+/// `Engine::new` with `software_rasterizers` from `POLYPOUS_TEST_SOFTWARE_VULKAN=1`: skipped
+/// without it, opened and probed with it, never the primary GPU either way.
+#[test]
+#[ignore = "gpu"]
+fn engine_skips_software_rasterizers_unless_opted_in() {
+    let opt_in = std::env::var("POLYPOUS_TEST_SOFTWARE_VULKAN").is_ok_and(|v| v == "1");
+    let mut config = polypous::EngineConfig::default();
+    config.software_rasterizers = opt_in;
+    let engine = polypous::Engine::new(config).expect("engine");
+    let devices: Vec<Value> = engine
+        .devices()
+        .iter()
+        .map(|device| serde_json::to_value(device).expect("DeviceInfo serializes"))
+        .collect();
+    let software: Vec<&Value> = devices
+        .iter()
+        .filter(|device| is_software_rasterizer(device))
+        .collect();
+    eprintln!(
+        "software_rasterizers={opt_in}: {} software rasterizer(s)",
+        software.len()
+    );
+    for device in software {
+        let skipped = device["status"]["reason"]["code"] == "software_rasterizer_skipped";
+        eprintln!("{}: {}", device["id"], device["status"]);
+        assert_eq!(skipped, !opt_in, "{device}");
+        assert_ne!(device["status"]["state"], "not_probed");
+        assert_eq!(device["primary"], false);
+    }
 }

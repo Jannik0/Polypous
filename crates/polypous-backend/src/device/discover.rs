@@ -120,10 +120,74 @@ pub fn describe_device(id: DeviceId) -> DeviceInfo {
     }
 }
 
-/// Lists and describes the devices of every compiled-in backend (placement.md §1). Never fails
-/// or panics; see [`list_devices`] and [`describe_device`].
+/// Options for device discovery ([`enumerate_devices_with`]; placement.md §1).
+///
+/// JSON: an object, `{}` for the defaults, for example `{"software_rasterizers":true}`. Unknown
+/// fields are rejected.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EnumerateOptions {
+    /// Whether to open and probe software rasterizers ([`DeviceId::is_software_rasterizer`]:
+    /// lavapipe, SwiftShader, … through Vulkan or Metal). Default `false`: they are listed with
+    /// the status unavailable / [`UnavailableReason::SoftwareRasterizerSkipped`] and never opened,
+    /// because they are never the primary GPU and some (lavapipe with Mesa 25.0 on Debian 13)
+    /// crash the process on their first compute work.
+    pub software_rasterizers: bool,
+}
+
+impl EnumerateOptions {
+    /// Whether discovery with these options lists `id` without opening it. Such a device is
+    /// described by [`skipped_device`] instead of [`describe_device`] and is not probed.
+    pub fn skips(&self, id: DeviceId) -> bool {
+        id.is_software_rasterizer() && !self.software_rasterizers
+    }
+}
+
+/// The description of a device that discovery lists but does not open
+/// ([`EnumerateOptions::skips`]): what is known from `id` alone, with the status unavailable /
+/// [`UnavailableReason::SoftwareRasterizerSkipped`], `isolated: false`. Opens nothing.
+pub fn skipped_device(id: DeviceId) -> DeviceInfo {
+    DeviceInfo {
+        status: DeviceStatus::Unavailable {
+            reason: UnavailableReason::SoftwareRasterizerSkipped,
+            isolated: false,
+        },
+        ..placeholder(id)
+    }
+}
+
+/// Lists and describes the devices of every compiled-in backend with the default
+/// [`EnumerateOptions`] (placement.md §1): software rasterizers are listed but not opened. Never
+/// fails or panics; see [`enumerate_devices_with`].
 pub fn enumerate_devices() -> Vec<DeviceInfo> {
-    list_devices().into_iter().map(describe_device).collect()
+    enumerate_devices_with(&EnumerateOptions::default())
+}
+
+/// Lists the devices of every compiled-in backend ([`list_devices`]) and describes each one
+/// ([`describe_device`]), except those `options` skip, which get [`skipped_device`]. Never fails
+/// or panics.
+///
+/// Explicit [`describe_device`] / [`probe_device`](super::probe_device) calls are not affected by
+/// the options: they open the device they are given.
+pub fn enumerate_devices_with(options: &EnumerateOptions) -> Vec<DeviceInfo> {
+    describe_listed(list_devices(), options, describe_device)
+}
+
+/// [`enumerate_devices_with`] on a given id list, with the describe step injected (tests).
+fn describe_listed(
+    ids: Vec<DeviceId>,
+    options: &EnumerateOptions,
+    describe: impl Fn(DeviceId) -> DeviceInfo,
+) -> Vec<DeviceInfo> {
+    ids.into_iter()
+        .map(|id| {
+            if options.skips(id) {
+                skipped_device(id)
+            } else {
+                describe(id)
+            }
+        })
+        .collect()
 }
 
 /// A description from the id alone, for devices that could not be opened.
@@ -509,6 +573,7 @@ mod gpu {
 
 #[cfg(test)]
 mod tests {
+    use super::super::info::AdapterKind;
     use super::*;
 
     #[test]
@@ -548,9 +613,154 @@ mod tests {
         }
     }
 
+    fn vulkan(adapter: AdapterKind, index: usize) -> DeviceId {
+        DeviceId::Vulkan { adapter, index }
+    }
+
+    /// The device list of the reference machine on Debian 13 with stock Mesa: lavapipe is listed
+    /// next to the real GPUs (docs/dev-environment.md, Debian notes).
+    fn debian_reference_ids() -> Vec<DeviceId> {
+        vec![
+            DeviceId::Cuda { index: 0 },
+            vulkan(AdapterKind::DiscreteGpu, 0),
+            vulkan(AdapterKind::IntegratedGpu, 0),
+            vulkan(AdapterKind::Cpu, 0),
+            DeviceId::Cpu,
+        ]
+    }
+
+    /// A describe step that records which devices it opened.
+    fn recording_describe(
+        opened: &std::cell::RefCell<Vec<DeviceId>>,
+    ) -> impl Fn(DeviceId) -> DeviceInfo + '_ {
+        move |id| {
+            opened.borrow_mut().push(id);
+            placeholder(id)
+        }
+    }
+
+    #[test]
+    fn software_rasterizers_are_skipped_by_default() {
+        let options = EnumerateOptions::default();
+        assert!(!options.software_rasterizers);
+        let opened = std::cell::RefCell::new(Vec::new());
+        let devices = describe_listed(
+            debian_reference_ids(),
+            &options,
+            recording_describe(&opened),
+        );
+
+        // Listed in the same order, but lavapipe was not opened.
+        let ids: Vec<DeviceId> = devices.iter().map(|info| info.id).collect();
+        assert_eq!(ids, debian_reference_ids());
+        assert!(!opened.borrow().contains(&vulkan(AdapterKind::Cpu, 0)));
+        assert_eq!(opened.borrow().len(), 4);
+
+        let lavapipe = &devices[3];
+        assert_eq!(lavapipe.backend, BackendKind::Vulkan);
+        assert_eq!(lavapipe.kind, DeviceKind::Cpu);
+        assert_eq!(lavapipe.name, "vulkan:cpu:0");
+        assert!(lavapipe.unified_memory);
+        assert!(lavapipe.identity.is_empty());
+        assert_eq!(
+            lavapipe.status,
+            DeviceStatus::Unavailable {
+                reason: UnavailableReason::SoftwareRasterizerSkipped,
+                isolated: false,
+            }
+        );
+        assert_eq!(skipped_device(lavapipe.id), *lavapipe);
+        assert_eq!(
+            serde_json::to_value(&lavapipe.status).unwrap(),
+            serde_json::json!({
+                "state": "unavailable",
+                "reason": {"code": "software_rasterizer_skipped"},
+                "isolated": false
+            })
+        );
+        // The other devices went through the describe step unchanged.
+        assert!(
+            devices
+                .iter()
+                .filter(|info| info.id != lavapipe.id)
+                .all(|info| info.status == DeviceStatus::NotProbed)
+        );
+    }
+
+    #[test]
+    fn software_rasterizers_are_opened_when_opted_in() {
+        let options = EnumerateOptions {
+            software_rasterizers: true,
+        };
+        let opened = std::cell::RefCell::new(Vec::new());
+        let devices = describe_listed(
+            debian_reference_ids(),
+            &options,
+            recording_describe(&opened),
+        );
+        assert_eq!(*opened.borrow(), debian_reference_ids());
+        assert!(
+            devices
+                .iter()
+                .all(|info| info.status == DeviceStatus::NotProbed)
+        );
+    }
+
+    #[test]
+    fn only_software_rasterizers_are_skipped() {
+        let default = EnumerateOptions::default();
+        let opt_in = EnumerateOptions {
+            software_rasterizers: true,
+        };
+        for id in [
+            vulkan(AdapterKind::Cpu, 0),
+            DeviceId::Metal {
+                adapter: AdapterKind::Cpu,
+                index: 0,
+            },
+        ] {
+            assert!(default.skips(id), "{id}");
+            assert!(!opt_in.skips(id), "{id}");
+        }
+        for id in [
+            DeviceId::Cpu,
+            DeviceId::Cuda { index: 0 },
+            vulkan(AdapterKind::DiscreteGpu, 0),
+            vulkan(AdapterKind::IntegratedGpu, 0),
+            vulkan(AdapterKind::VirtualGpu, 0),
+            vulkan(AdapterKind::Other, 0),
+        ] {
+            assert!(!default.skips(id), "{id}");
+            assert!(!opt_in.skips(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn options_json_is_stable() {
+        assert_eq!(
+            serde_json::to_string(&EnumerateOptions::default()).unwrap(),
+            r#"{"software_rasterizers":false}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<EnumerateOptions>("{}").unwrap(),
+            EnumerateOptions::default()
+        );
+        assert!(
+            serde_json::from_str::<EnumerateOptions>(r#"{"software_rasterizers":true}"#)
+                .unwrap()
+                .software_rasterizers
+        );
+        assert!(serde_json::from_str::<EnumerateOptions>(r#"{"software":true}"#).is_err());
+    }
+
     #[cfg(feature = "cpu")]
     #[test]
     fn cpu_is_enumerated_and_described() {
+        assert!(
+            enumerate_devices()
+                .iter()
+                .any(|info| info.id == DeviceId::Cpu && info.status == DeviceStatus::NotProbed)
+        );
         assert_eq!(
             list_backend_devices(BackendKind::Cpu),
             Ok(vec![DeviceId::Cpu])

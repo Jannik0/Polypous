@@ -1,7 +1,9 @@
 //! Device discovery for `Engine::new` (placement.md §1, ADR-0013).
 //!
 //! For now discovery runs **in the app process**: enumerate every compiled-in backend, then
-//! describe and probe each device, in GPU priority order. A broken GPU driver can therefore still
+//! describe and probe each device, in GPU priority order. Software rasterizers (lavapipe, …) are
+//! listed but not opened unless [`EngineConfig::software_rasterizers`] is set; the rule is the
+//! backend's [`EnumerateOptions`](backend::EnumerateOptions). A broken GPU driver can still
 //! crash the process natively. The prober process, the probe cache and the crash journal (#14)
 //! replace [`in_process`] behind the [`Discovery`] type without changing the engine.
 
@@ -52,11 +54,20 @@ fn probe_order(mut ids: Vec<DeviceId>) -> Vec<DeviceId> {
     ids
 }
 
-/// Enumerates, describes and probes every device of every compiled-in backend in this process.
+/// The backend's discovery options for an engine config.
+fn enumerate_options(config: &EngineConfig) -> backend::EnumerateOptions {
+    backend::EnumerateOptions {
+        software_rasterizers: config.software_rasterizers,
+    }
+}
+
+/// Enumerates, describes and probes every device of every compiled-in backend in this process,
+/// except devices the config skips (software rasterizers by default), which are listed without
+/// being opened.
 ///
 /// Never fails: a backend whose enumeration fails is logged and skipped, and a device that cannot
 /// be opened or fails its probe is reported as unavailable with the reason.
-pub(crate) fn in_process(_config: &EngineConfig) -> Vec<DeviceInfo> {
+pub(crate) fn in_process(config: &EngineConfig) -> Vec<DeviceInfo> {
     let started = Instant::now();
     let mut ids = Vec::new();
     for backend_kind in BackendKind::compiled_in() {
@@ -76,10 +87,7 @@ pub(crate) fn in_process(_config: &EngineConfig) -> Vec<DeviceInfo> {
         }
     }
 
-    let devices: Vec<DeviceInfo> = probe_order(ids)
-        .into_iter()
-        .map(describe_and_probe)
-        .collect();
+    let devices = discover_listed(ids, &enumerate_options(config), describe_and_probe);
     tracing::debug!(
         count = devices.len(),
         elapsed_ms = started.elapsed().as_millis(),
@@ -87,6 +95,30 @@ pub(crate) fn in_process(_config: &EngineConfig) -> Vec<DeviceInfo> {
         "device discovery finished (in process)"
     );
     devices
+}
+
+/// Sorts `ids` into probe order, then describes and probes each one with `open`, except the
+/// devices `options` skip, which get the backend's skipped description without being opened.
+fn discover_listed(
+    ids: Vec<DeviceId>,
+    options: &backend::EnumerateOptions,
+    mut open: impl FnMut(DeviceId) -> DeviceInfo,
+) -> Vec<DeviceInfo> {
+    probe_order(ids)
+        .into_iter()
+        .map(|id| {
+            if options.skips(id) {
+                let info = backend::skipped_device(id);
+                tracing::info!(
+                    device = %id,
+                    "software rasterizer listed but not opened (set software_rasterizers to probe it)"
+                );
+                info
+            } else {
+                open(id)
+            }
+        })
+        .collect()
 }
 
 /// Describes one device and, if it could be opened, probes it.
@@ -163,6 +195,94 @@ mod tests {
                 DeviceId::Cpu,
             ]
         );
+    }
+
+    /// The reference machine on Debian 13 with stock Mesa, in the backend's listing order.
+    fn debian_reference_ids() -> Vec<DeviceId> {
+        vec![
+            DeviceId::Cuda { index: 0 },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::DiscreteGpu,
+                index: 0,
+            },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::IntegratedGpu,
+                index: 0,
+            },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::Cpu,
+                index: 0,
+            },
+            DeviceId::Cpu,
+        ]
+    }
+
+    /// Runs `discover_listed` with an open step that records what it opened and reports every
+    /// opened device as available.
+    fn discover(config: &EngineConfig) -> (Vec<DeviceInfo>, Vec<DeviceId>) {
+        let mut opened = Vec::new();
+        let devices = discover_listed(debian_reference_ids(), &enumerate_options(config), |id| {
+            opened.push(id);
+            DeviceInfo {
+                status: DeviceStatus::Available { isolated: false },
+                ..backend::skipped_device(id)
+            }
+        });
+        (devices, opened)
+    }
+
+    #[test]
+    fn software_rasterizers_are_listed_but_not_opened_by_default() {
+        let lavapipe = DeviceId::Vulkan {
+            adapter: AdapterKind::Cpu,
+            index: 0,
+        };
+        let (devices, opened) = discover(&EngineConfig::default());
+        assert!(!opened.contains(&lavapipe));
+        assert_eq!(opened.len(), 4);
+        let ids: Vec<DeviceId> = devices.iter().map(|device| device.id).collect();
+        assert_eq!(ids, probe_order(debian_reference_ids()));
+        let skipped = devices
+            .iter()
+            .find(|device| device.id == lavapipe)
+            .expect("lavapipe is listed");
+        assert_eq!(*skipped, backend::skipped_device(lavapipe));
+
+        // Through the facade: the reason is converted, and the primary GPU is still the RTX via
+        // CUDA.
+        let converted = crate::device::device_list(devices);
+        let skipped = converted
+            .iter()
+            .find(|device| {
+                device.backend == crate::BackendKind::Vulkan
+                    && device.kind == crate::DeviceKind::Cpu
+            })
+            .expect("lavapipe is listed");
+        assert_eq!(
+            serde_json::to_value(&skipped.status).unwrap(),
+            serde_json::json!({
+                "state": "unavailable",
+                "reason": {"code": "software_rasterizer_skipped"},
+                "isolated": false
+            })
+        );
+        assert!(!skipped.primary);
+        let primary = converted.iter().find(|device| device.primary).unwrap();
+        assert_eq!(primary.id, crate::DeviceId::Cuda { index: 0 });
+    }
+
+    #[test]
+    fn software_rasterizers_are_probed_when_opted_in() {
+        let config = EngineConfig {
+            software_rasterizers: true,
+        };
+        let (devices, opened) = discover(&config);
+        assert_eq!(opened, probe_order(debian_reference_ids()));
+        assert!(devices.iter().all(|device| device.status.is_available()));
+        // Probed and available, but still never the primary GPU.
+        let converted = crate::device::device_list(devices);
+        let primary = converted.iter().find(|device| device.primary).unwrap();
+        assert_eq!(primary.id, crate::DeviceId::Cuda { index: 0 });
     }
 
     #[cfg(feature = "cpu")]

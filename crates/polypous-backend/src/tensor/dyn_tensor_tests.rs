@@ -1,5 +1,6 @@
 //! Tests for [`DynTensor`]. CPU tests use Burn's `flex` backend; the GPU test is
-//! `#[ignore = "gpu"]` and runs on every GPU device that `list_devices()` returns.
+//! `#[ignore = "gpu"]` and runs on every GPU device that `list_devices()` returns, except software
+//! rasterizers unless `POLYPOUS_TEST_SOFTWARE_VULKAN=1` is set.
 // The tests need a CPU device: Burn's `flex` backend, the default `cpu` feature.
 #![cfg(feature = "cpu")]
 
@@ -538,6 +539,17 @@ fn gpu_devices() -> Vec<DeviceId> {
         .collect()
 }
 
+/// Discovery options for the GPU tests: software rasterizers (lavapipe, …) are skipped as in
+/// discovery's default, unless the test-only environment variable
+/// `POLYPOUS_TEST_SOFTWARE_VULKAN=1` is set (the CI lavapipe job sets it).
+#[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
+fn gpu_test_options() -> crate::device::EnumerateOptions {
+    crate::device::EnumerateOptions {
+        software_rasterizers: std::env::var("POLYPOUS_TEST_SOFTWARE_VULKAN")
+            .is_ok_and(|v| v == "1"),
+    }
+}
+
 /// CPU → GPU → CPU for every dtype and rank, plus ops on the GPU, on every GPU device that
 /// `list_devices()` returns. A dtype the GPU doesn't support must fail with `UnsupportedDType`,
 /// not panic.
@@ -545,11 +557,23 @@ fn gpu_devices() -> Vec<DeviceId> {
 #[test]
 #[ignore = "gpu"]
 fn cpu_to_gpu_to_cpu() {
-    let devices = gpu_devices();
+    let listed = gpu_devices();
     assert!(
-        !devices.is_empty(),
+        !listed.is_empty(),
         "no GPU device found for the compiled-in GPU backends"
     );
+    let options = gpu_test_options();
+    let (skipped, devices): (Vec<DeviceId>, Vec<DeviceId>) =
+        listed.into_iter().partition(|&id| options.skips(id));
+    for id in &skipped {
+        eprintln!(
+            "skipped {id}: software rasterizer (set POLYPOUS_TEST_SOFTWARE_VULKAN=1 to test it)"
+        );
+    }
+    if devices.is_empty() {
+        eprintln!("every GPU device is a skipped software rasterizer; nothing to test");
+        return;
+    }
     let host = cpu();
     for &gpu in &devices {
         let supported = supported_dtypes(gpu);
