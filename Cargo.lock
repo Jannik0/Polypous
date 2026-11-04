@@ -4474,6 +4474,10 @@ dependencies = [
  "polypous-quant",
  "polypous-runtime",
  "polypous-train",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -4487,6 +4491,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "windows-registry",
 ]
 
 [[package]]
@@ -4494,6 +4499,9 @@ name = "polypous-cli"
 version = "0.0.0"
 dependencies = [
  "polypous",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6849,6 +6857,17 @@ checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
  "windows-core",
  "windows-link",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link",
+ "windows-result",
+ "windows-strings",
 ]
 
 [[package]]

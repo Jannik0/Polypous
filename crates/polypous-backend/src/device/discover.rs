@@ -230,27 +230,55 @@ fn describe_cpu() -> Result<DeviceInfo, String> {
     })
 }
 
-/// The CPU's model name from the OS, without loading any driver.
+/// The CPU's model name from the OS, without loading any driver. Surrounding whitespace is
+/// removed (Intel pads the Windows registry value); an empty name counts as unknown.
 fn cpu_name() -> Option<String> {
-    let name = if cfg!(target_os = "linux") {
-        // Read at most 64 KiB: /proc/cpuinfo is small, but don't trust its size.
-        use std::io::Read;
-        let mut text = String::new();
-        std::fs::File::open("/proc/cpuinfo")
-            .ok()?
-            .take(64 * 1024)
-            .read_to_string(&mut text)
-            .ok()?;
-        text.lines()
-            .find(|line| line.starts_with("model name"))
-            .and_then(|line| line.split_once(':'))
-            .map(|(_, value)| value.trim().to_string())
-    } else if cfg!(windows) {
-        std::env::var("PROCESSOR_IDENTIFIER").ok()
-    } else {
-        None
-    };
-    name.filter(|name| !name.is_empty())
+    os_cpu_name()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
+/// Linux: the first `model name` line of `/proc/cpuinfo`.
+#[cfg(target_os = "linux")]
+fn os_cpu_name() -> Option<String> {
+    // Read at most 64 KiB: /proc/cpuinfo is small, but don't trust its size.
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open("/proc/cpuinfo")
+        .ok()?
+        .take(64 * 1024)
+        .read_to_string(&mut text)
+        .ok()?;
+    text.lines()
+        .find(|line| line.starts_with("model name"))
+        .and_then(|line| line.split_once(':'))
+        .map(|(_, value)| value.to_string())
+}
+
+/// Windows: the marketing name from the registry (for example
+/// `12th Gen Intel(R) Core(TM) i7-12800H`), else `PROCESSOR_IDENTIFIER`
+/// (`Intel64 Family 6 Model 154 …`).
+#[cfg(windows)]
+fn os_cpu_name() -> Option<String> {
+    windows_registry_cpu_name()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| std::env::var("PROCESSOR_IDENTIFIER").ok())
+}
+
+/// `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString`.
+#[cfg(windows)]
+fn windows_registry_cpu_name() -> Option<String> {
+    windows_registry::LOCAL_MACHINE
+        .open(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        .ok()?
+        .get_string("ProcessorNameString")
+        .ok()
+}
+
+/// Other systems: unknown (the caller falls back to `CPU (<arch>)`).
+#[cfg(not(any(target_os = "linux", windows)))]
+fn os_cpu_name() -> Option<String> {
+    None
 }
 
 /// CubeCL devices (CUDA, Vulkan, Metal).
@@ -535,5 +563,16 @@ mod tests {
         assert!(info.identity.is_empty());
         assert_eq!(info.status, DeviceStatus::NotProbed);
         assert!(!info.name.is_empty());
+    }
+
+    /// The Windows CI runner and the reference machine have the registry value; the name must be
+    /// the marketing name, not `PROCESSOR_IDENTIFIER`'s "Intel64 Family 6 Model …".
+    #[cfg(windows)]
+    #[test]
+    fn windows_cpu_name_comes_from_the_registry() {
+        let registry = windows_registry_cpu_name().expect("ProcessorNameString exists");
+        let name = cpu_name().expect("a CPU name");
+        assert_eq!(name, registry.trim());
+        assert!(!name.contains(" Family "), "{name}");
     }
 }
