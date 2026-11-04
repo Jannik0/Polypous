@@ -17,6 +17,9 @@ All notable changes to Polypous are documented here. The format follows
   advisories, `deny.toml`), a dependency-boundary check (`tools/ci/check_dependency_boundary.py`),
   Vulkan tests on Mesa lavapipe, and a macOS build-only job for Metal (on `main`, manual dispatch, and
   PRs that touch the backend crates or the dependency set).
+- CI job "PR title and description" (`tools/ci/check_pr_text.py`): fails a PR whose title or
+  description contains a Claude Code session link, a `Claude-Session` trailer or a model name, or an
+  agent-authored PR whose description does not end with the fixed Claude Code footer.
 - Burn pinned to `=0.22.1` and CubeCL to `=0.11.3` as workspace dependencies, used only by
   `polypous-backend`. Backend features `cpu` (default, Burn's pure-Rust `flex` backend), `cuda`,
   `vulkan` and `metal`. `burn_smoke` example to check a backend on a given machine.

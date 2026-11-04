@@ -1,0 +1,40 @@
+# Attribution check for PR titles and descriptions (CLAUDE.md "Conventions",
+# docs/development-workflow.md §5).
+#
+# The squash commit message on `main` is the PR title and description, so a session link or a model
+# name in them ends up in the history for good. Cloud harnesses add one despite the rules, so this
+# job fails the PR instead of relying on reviewers. The patterns live in tools/ci/check_pr_text.py.
+#
+# Runs again when the title or description is edited (`edited`), so fixing the text clears it.
+#
+# Job name (stable, for the required status checks of the `main` ruleset):
+#   PR title and description
+
+name: PR text
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-text:
+    name: PR title and description
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Title and body come in through env, never through `${{ }}` in the script, so their text
+      # cannot be run as shell code (script injection).
+      - name: Check for session links, model names and the footer
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 tools/ci/check_pr_text.py
