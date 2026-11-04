@@ -20,8 +20,10 @@
 mod discover;
 mod info;
 mod probe;
+mod resolve;
 mod select;
 
+pub(crate) use discover::device_id_of;
 pub use discover::{
     EnumerationError, describe_device, enumerate_devices, list_backend_devices, list_devices,
 };
@@ -30,4 +32,5 @@ pub use info::{
     PhysicalIdentity, UnavailableReason,
 };
 pub use probe::probe_device;
+pub(crate) use resolve::resolve_device;
 pub use select::{group_physical_devices, select_primary_gpu};

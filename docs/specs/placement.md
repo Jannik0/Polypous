@@ -59,6 +59,13 @@ Each device reports:
   `unavailable: probe failed: …`; the in-process functions report `isolated: false`, the prober
   marks its results isolated. Calls are serialized by a process-wide lock.
 
+Tensors address devices by the same ids (issue #19): `DynTensor::from_data(&data, id)`,
+`DynTensor::to_device(id)` and `DynTensor::device()`. An id is usable if its backend is compiled in
+and `list_backend_devices` lists it (ids found once are remembered for the process); anything else
+is `TensorError::DeviceUnavailable`, never a panic. `from_data(&data, id)?.device() == id` for every
+id that `list_devices()` returns. Whether the device passed its probe is not checked there: that is
+the `Engine`'s decision (#14).
+
 `DeviceInfo` fields, serialized with serde exactly as named (JSON lines of the prober protocol):
 
 | Field | Type / values | Notes |
