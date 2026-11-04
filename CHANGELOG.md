@@ -37,3 +37,7 @@ All notable changes to Polypous are documented here. The format follows
   (`f32`, `f16`, `bf16`, `i64`, `i32`, `bool`) over `burn::Tensor`, with `TensorData` conversion
   (little-endian, row-major), `shape`, `dtype`, `reshape`, `cast`, `add`, `matmul` and `to_device`.
   Bad input gives a `TensorError` instead of a panic.
+- `DynTensor::from_data`, `to_device` and `device` are public and take or return a `DeviceId` from
+  `list_devices()`. A device whose backend is not compiled in, or that doesn't exist, gives the new
+  `TensorError::DeviceUnavailable` instead of a panic. Device names in `TensorError` messages are
+  `DeviceId` texts such as `vulkan:discrete_gpu:0`.

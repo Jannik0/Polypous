@@ -8,6 +8,7 @@ use burn::tensor::{Bool, BoolStore, DType as BurnDType, Device, Float, Int, Tens
 
 use super::data::num_elements;
 use super::{DType, Kind, Result, TensorData, TensorError};
+use crate::device::{DeviceId, device_id_of, resolve_device};
 
 /// Highest supported rank.
 const MAX_RANK: usize = 6;
@@ -122,7 +123,8 @@ macro_rules! dispatch_rank {
 ///
 /// It wraps a `burn::Tensor`, so the device it was created on selects the backend (ADR-0011). No
 /// Burn type appears in its public API (ADR-0007): data goes in and out as [`TensorData`], and
-/// the device-taking functions are crate-internal until the device API (issue #4) exists.
+/// devices are addressed by [`DeviceId`], as returned by
+/// [`list_devices`](crate::device::list_devices).
 ///
 /// Operations check dtypes, shapes and devices first and return a [`TensorError`] instead of
 /// letting Burn panic. Cloning is cheap: Burn tensors share their buffer.
@@ -130,6 +132,8 @@ macro_rules! dispatch_rank {
 pub struct DynTensor {
     inner: Inner,
     dtype: DType,
+    /// The id of the Burn device `inner` lives on, mapped once when the tensor is created.
+    device: DeviceId,
 }
 
 impl DynTensor {
@@ -138,16 +142,20 @@ impl DynTensor {
 
     /// Uploads host data to `device`.
     ///
-    /// Fails if the data is malformed, the rank is not 1–6, or the device's backend doesn't
+    /// Fails if the data is malformed, the rank is not 1–6, the device is not available (its
+    /// backend is not compiled in, or no such device exists), or the device's backend doesn't
     /// support the dtype.
-    #[cfg_attr(
-        not(all(test, feature = "cpu")),
-        expect(dead_code, reason = "used once the device API (issue #4) exists")
-    )]
-    pub(crate) fn from_data(data: &TensorData, device: &Device) -> Result<Self> {
+    pub fn from_data(data: &TensorData, device: DeviceId) -> Result<Self> {
+        Self::from_data_burn(data, &resolve(device)?)
+    }
+
+    /// [`DynTensor::from_data`] on a Burn device. The device must have a [`DeviceId`] (one of
+    /// [`resolve_device`]'s results always has).
+    pub(crate) fn from_data_burn(data: &TensorData, device: &Device) -> Result<Self> {
         data.validate()?;
         let dims = data.dims()?;
-        check_device_supports(data.dtype, device)?;
+        let id = id_of(device)?;
+        check_device_supports(data.dtype, device, id)?;
 
         let (bytes, burn_dtype) = if data.dtype == DType::Bool {
             // Burn creates bool tensors in the device's bool storage, but its CubeCL backends
@@ -173,7 +181,11 @@ impl DynTensor {
             Kind::Int => Ranked::<N>::Int(Tensor::from_data(burn_data, options)),
             Kind::Bool => Ranked::<N>::Bool(Tensor::from_data(burn_data, device)),
         });
-        Ok(DynTensor { inner, dtype })
+        Ok(DynTensor {
+            inner,
+            dtype,
+            device: id,
+        })
     }
 
     /// Reads the tensor back into host memory.
@@ -229,7 +241,12 @@ impl DynTensor {
     }
 
     /// The device the tensor lives on.
-    pub(crate) fn device(&self) -> Device {
+    pub fn device(&self) -> DeviceId {
+        self.device
+    }
+
+    /// The Burn device the tensor lives on.
+    pub(crate) fn burn_device(&self) -> Device {
         with_rank!(&self.inner, t => t.device())
     }
 
@@ -250,7 +267,11 @@ impl DynTensor {
         let inner = with_rank!(self.inner, t => {
             dispatch_rank!(shape.len(), N => t.reshape::<N>(shape)?)
         });
-        Ok(DynTensor { inner, dtype })
+        Ok(DynTensor {
+            inner,
+            dtype,
+            device: self.device,
+        })
     }
 
     /// Converts the elements to `dtype`.
@@ -264,10 +285,13 @@ impl DynTensor {
         if dtype == self.dtype {
             return Ok(self);
         }
-        let device = self.device();
-        check_device_supports(dtype, &device)?;
+        check_device_supports(dtype, &self.burn_device(), self.device)?;
         let inner = map_rank!(self.inner, t => t.cast(dtype));
-        Ok(DynTensor { inner, dtype })
+        Ok(DynTensor {
+            inner,
+            dtype,
+            device: self.device,
+        })
     }
 
     /// Element-wise sum, with broadcasting.
@@ -293,9 +317,13 @@ impl DynTensor {
         if broadcast(&lhs, &rhs).is_none() {
             return Err(TensorError::ShapeMismatch { op: OP, lhs, rhs });
         }
-        let dtype = self.dtype;
+        let (dtype, device) = (self.dtype, self.device);
         let inner = zip_rank!(OP, self.inner, other.inner, a, b => a.add(b)?);
-        Ok(DynTensor { inner, dtype })
+        Ok(DynTensor {
+            inner,
+            dtype,
+            device,
+        })
     }
 
     /// Matrix product over the last two dimensions; leading dimensions are batch dimensions and
@@ -321,28 +349,39 @@ impl DynTensor {
         if !compatible {
             return Err(TensorError::ShapeMismatch { op: OP, lhs, rhs });
         }
-        let dtype = self.dtype;
+        let (dtype, device) = (self.dtype, self.device);
         let inner = zip_rank!(OP, self.inner, other.inner, a, b => a.matmul(b)?);
-        Ok(DynTensor { inner, dtype })
+        Ok(DynTensor {
+            inner,
+            dtype,
+            device,
+        })
     }
 
     /// Returns a copy of the tensor on `device`. Copies between backends go through host memory.
     ///
-    /// Fails if the target backend doesn't support the dtype.
-    #[cfg_attr(
-        not(all(test, feature = "cpu")),
-        expect(dead_code, reason = "used once the device API (issue #4) exists")
-    )]
-    pub(crate) fn to_device(&self, device: &Device) -> Result<Self> {
-        check_device_supports(self.dtype, device)?;
-        if self.dtype == DType::Bool && bool_store(&self.device()) != bool_store(device) {
+    /// Fails if the device is not available (see [`DynTensor::from_data`]) or its backend doesn't
+    /// support the dtype.
+    pub fn to_device(&self, device: DeviceId) -> Result<Self> {
+        self.to_device_burn(&resolve(device)?)
+    }
+
+    /// [`DynTensor::to_device`] on a Burn device. The device must have a [`DeviceId`].
+    pub(crate) fn to_device_burn(&self, device: &Device) -> Result<Self> {
+        let id = id_of(device)?;
+        check_device_supports(self.dtype, device, id)?;
+        if self.dtype == DType::Bool && bool_store(&self.burn_device()) != bool_store(device) {
             // Burn 0.22.1 hands the source's bool storage to the target backend, and the CubeCL
             // backends panic on storage that isn't their own. Go through host memory ourselves.
-            return DynTensor::from_data(&self.to_data()?, device);
+            return DynTensor::from_data_burn(&self.to_data()?, device);
         }
         let dtype = self.dtype;
         let inner = map_rank!(&self.inner, t => t.to_device(device));
-        Ok(DynTensor { inner, dtype })
+        Ok(DynTensor {
+            inner,
+            dtype,
+            device: id,
+        })
     }
 
     /// Checks dtype, rank and device of a binary operation's operands.
@@ -361,12 +400,12 @@ impl DynTensor {
                 rhs: other.shape(),
             });
         }
-        let (lhs, rhs) = (self.device(), other.device());
+        let (lhs, rhs) = (self.device, other.device);
         if lhs != rhs {
             return Err(TensorError::DeviceMismatch {
                 op,
-                lhs: format!("{lhs:?}"),
-                rhs: format!("{rhs:?}"),
+                lhs: lhs.to_string(),
+                rhs: rhs.to_string(),
             });
         }
         Ok(())
@@ -378,7 +417,7 @@ impl fmt::Debug for DynTensor {
         f.debug_struct("DynTensor")
             .field("dtype", &self.dtype)
             .field("shape", &self.shape())
-            .field("device", &self.device())
+            .field("device", &self.device)
             .finish()
     }
 }
@@ -486,15 +525,29 @@ impl<const D: usize> Ranked<D> {
     }
 }
 
+/// The Burn device for a public [`DeviceId`], or `DeviceUnavailable`. See `device/resolve.rs` for
+/// why unknown ids never reach Burn.
+fn resolve(id: DeviceId) -> Result<Device> {
+    resolve_device(id).map_err(|reason| TensorError::DeviceUnavailable { device: id, reason })
+}
+
+/// The [`DeviceId`] of a Burn device. Devices from [`resolve_device`] always have one; a Burn
+/// device of a kind Polypous doesn't use (for example Burn's default device) is an error.
+fn id_of(device: &Device) -> Result<DeviceId> {
+    device_id_of(device).ok_or_else(|| TensorError::Backend {
+        message: format!("{device:?} is not a device Polypous can address"),
+    })
+}
+
 /// Fails if `device`'s backend can't store or compute `dtype`. `bool` is always supported: Burn
 /// stores it in whatever form the device has.
-fn check_device_supports(dtype: DType, device: &Device) -> Result<()> {
+fn check_device_supports(dtype: DType, device: &Device, id: DeviceId) -> Result<()> {
     if dtype == DType::Bool || device.supports_dtype(dtype.to_burn()) {
         Ok(())
     } else {
         Err(TensorError::UnsupportedDType {
             dtype,
-            device: format!("{device:?}"),
+            device: id.to_string(),
         })
     }
 }
