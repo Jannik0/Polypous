@@ -34,3 +34,15 @@ All notable changes to Polypous are documented here. The format follows
   (`f32`, `f16`, `bf16`, `i64`, `i32`, `bool`) over `burn::Tensor`, with `TensorData` conversion
   (little-endian, row-major), `shape`, `dtype`, `reshape`, `cast`, `add`, `matmul` and `to_device`.
   Bad input gives a `TensorError` instead of a panic.
+- `polypous` facade: `Engine::new(EngineConfig::default())` discovers and probes devices (in process
+  until the prober process lands), `engine.devices()` / `engine.primary_gpu()` return the facade's own
+  serde device types (placement.md §1 fields plus `primary`), and `polypous::Error` with the stable
+  `ErrorKind`; panics at the API boundary become `Internal` errors. Backend features `cpu`, `cuda`,
+  `vulkan`, `metal` are forwarded through `polypous` and `polypous-cli`.
+- `polyp devices` prints a table of devices (backend, name, kind, dedicated memory, unified memory,
+  status) with the primary GPU marked; `polyp devices --json` prints the JSON documented in
+  public-api.md §1.2. Logs go to stderr (`RUST_LOG=polypous=debug` shows probe details).
+
+### Changed
+- On Windows the CPU device shows its marketing name from the registry (`ProcessorNameString`)
+  instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
