@@ -1,6 +1,7 @@
 //! Errors of the `tensor` module.
 
 use super::DType;
+use crate::device::DeviceId;
 
 /// Error from creating, converting or operating on a [`DynTensor`](super::DynTensor).
 ///
@@ -53,8 +54,18 @@ pub enum TensorError {
     UnsupportedDType {
         /// The dtype.
         dtype: DType,
-        /// The device, as a technical description.
+        /// The device, as its [`DeviceId`] text (for example `vulkan:discrete_gpu:0`).
         device: String,
+    },
+
+    /// The device can't be used: its backend is not compiled in, or the backend has no such
+    /// device (for example an index past the last GPU). Use an id from `list_devices()`.
+    #[error("device {device} is not available: {reason}")]
+    DeviceUnavailable {
+        /// The requested device.
+        device: DeviceId,
+        /// Why it can't be used.
+        reason: String,
     },
 
     /// The operands of an operation live on different devices. Move one with `to_device` first.
@@ -62,9 +73,9 @@ pub enum TensorError {
     DeviceMismatch {
         /// The operation.
         op: &'static str,
-        /// Device of the first operand.
+        /// Device of the first operand, as its [`DeviceId`] text.
         lhs: String,
-        /// Device of the second operand.
+        /// Device of the second operand, as its [`DeviceId`] text.
         rhs: String,
     },
 

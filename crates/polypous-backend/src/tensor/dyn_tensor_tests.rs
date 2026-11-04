@@ -1,17 +1,18 @@
 //! Tests for [`DynTensor`]. CPU tests use Burn's `flex` backend; the GPU test is
-//! `#[ignore = "gpu"]` and runs on every GPU device of the compiled-in GPU backends.
+//! `#[ignore = "gpu"]` and runs on every GPU device that `list_devices()` returns.
 // The tests need a CPU device: Burn's `flex` backend, the default `cpu` feature.
 #![cfg(feature = "cpu")]
 
-use burn::tensor::{Device, bf16, f16};
+use burn::tensor::{bf16, f16};
 
 use super::*;
+use crate::device::{AdapterKind, BackendKind, list_devices};
 
 /// Shapes used for the round-trip test: the first `rank` entries of `[2, 3, 1, 4, 2, 2]`.
 const DIMS: [u64; 6] = [2, 3, 1, 4, 2, 2];
 
-fn cpu() -> Device {
-    Device::flex()
+fn cpu() -> DeviceId {
+    DeviceId::Cpu
 }
 
 /// Encodes `values` as little-endian elements of `dtype`. Values must be exact in `dtype`.
@@ -50,7 +51,7 @@ fn data(dtype: DType, shape: &[u64], values: &[f64]) -> TensorData {
     TensorData::new(dtype, shape.to_vec(), encode(dtype, values)).unwrap()
 }
 
-fn tensor(dtype: DType, shape: &[u64], values: &[f64], device: &Device) -> DynTensor {
+fn tensor(dtype: DType, shape: &[u64], values: &[f64], device: DeviceId) -> DynTensor {
     DynTensor::from_data(&data(dtype, shape, values), device).unwrap()
 }
 
@@ -66,14 +67,15 @@ fn sample_values(dtype: DType, count: usize) -> Vec<f64> {
 }
 
 /// Every dtype the device supports, by asking Burn directly.
-fn supported_dtypes(device: &Device) -> Vec<DType> {
+fn supported_dtypes(device: DeviceId) -> Vec<DType> {
+    let device = resolve_device(device).unwrap();
     DType::ALL
         .into_iter()
         .filter(|dtype| *dtype == DType::Bool || device.supports_dtype(dtype.to_burn()))
         .collect()
 }
 
-fn round_trip_all(device: &Device) {
+fn round_trip_all(device: DeviceId) {
     for dtype in supported_dtypes(device) {
         for rank in 1..=DynTensor::MAX_RANK {
             let shape = &DIMS[..rank];
@@ -89,7 +91,7 @@ fn round_trip_all(device: &Device) {
             let output = t.into_data().unwrap();
             assert_eq!(
                 output, input,
-                "round trip of {dtype} rank {rank} on {device:?}"
+                "round trip of {dtype} rank {rank} on {device}"
             );
         }
     }
@@ -99,14 +101,14 @@ fn round_trip_all(device: &Device) {
 fn round_trip_every_dtype_and_rank_on_cpu() {
     let device = cpu();
     // flex supports every value dtype, so this covers all of them.
-    assert_eq!(supported_dtypes(&device), DType::ALL.to_vec());
-    round_trip_all(&device);
+    assert_eq!(supported_dtypes(device), DType::ALL.to_vec());
+    round_trip_all(device);
 }
 
 #[test]
 fn round_trip_empty_tensor() {
     let input = TensorData::new(DType::F32, vec![2, 0, 3], vec![]).unwrap();
-    let t = DynTensor::from_data(&input, &cpu()).unwrap();
+    let t = DynTensor::from_data(&input, cpu()).unwrap();
     assert_eq!(t.shape(), vec![2, 0, 3]);
     assert_eq!(t.into_data().unwrap(), input);
 }
@@ -122,7 +124,7 @@ fn round_trip_preserves_special_float_values() {
     ];
     let bytes = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     let input = TensorData::new(DType::F32, vec![5], bytes).unwrap();
-    let output = DynTensor::from_data(&input, &cpu())
+    let output = DynTensor::from_data(&input, cpu())
         .unwrap()
         .into_data()
         .unwrap();
@@ -132,7 +134,7 @@ fn round_trip_preserves_special_float_values() {
 /// `[[1, 2, 3], [4, 5, 6]] @ [[7, 8], [9, 10], [11, 12]] = [[58, 64], [139, 154]]`, computed by
 /// hand: 1·7 + 2·9 + 3·11 = 58, 1·8 + 2·10 + 3·12 = 64, 4·7 + 5·9 + 6·11 = 139,
 /// 4·8 + 5·10 + 6·12 = 154.
-fn check_matmul_2d(device: &Device, dtype: DType) {
+fn check_matmul_2d(device: DeviceId, dtype: DType) {
     let a = tensor(dtype, &[2, 3], &[1., 2., 3., 4., 5., 6.], device);
     let b = tensor(dtype, &[3, 2], &[7., 8., 9., 10., 11., 12.], device);
     let c = a.matmul(b).unwrap();
@@ -145,7 +147,7 @@ fn check_matmul_2d(device: &Device, dtype: DType) {
 fn matmul_2d_matches_hand_computed_result() {
     // All products and sums are small integers, exact in f16 and bf16 too.
     for dtype in [DType::F32, DType::F16, DType::BF16] {
-        check_matmul_2d(&cpu(), dtype);
+        check_matmul_2d(cpu(), dtype);
     }
 }
 
@@ -157,9 +159,9 @@ fn matmul_batched_with_broadcast() {
         DType::F32,
         &[2, 2, 2],
         &[1., 0., 0., 1., 2., 0., 0., 2.],
-        &device,
+        device,
     );
-    let b = tensor(DType::F32, &[1, 2, 2], &[1., 2., 3., 4.], &device);
+    let b = tensor(DType::F32, &[1, 2, 2], &[1., 2., 3., 4.], device);
     let c = a.matmul(b).unwrap();
     assert_eq!(c.shape(), vec![2, 2, 2]);
     assert_eq!(
@@ -172,8 +174,8 @@ fn matmul_batched_with_broadcast() {
 fn matmul_vector_shapes() {
     // [1, 3] @ [3, 1]: dot product 1·4 + 2·5 + 3·6 = 32.
     let device = cpu();
-    let a = tensor(DType::F32, &[1, 3], &[1., 2., 3.], &device);
-    let b = tensor(DType::F32, &[3, 1], &[4., 5., 6.], &device);
+    let a = tensor(DType::F32, &[1, 3], &[1., 2., 3.], device);
+    let b = tensor(DType::F32, &[3, 1], &[4., 5., 6.], device);
     let c = a.matmul(b).unwrap();
     assert_eq!(c.shape(), vec![1, 1]);
     assert_eq!(decode(&c.into_data().unwrap()), vec![32.]);
@@ -183,8 +185,8 @@ fn matmul_vector_shapes() {
 fn add_same_shape_and_broadcast() {
     let device = cpu();
     for dtype in [DType::F32, DType::F16, DType::BF16, DType::I64, DType::I32] {
-        let a = tensor(dtype, &[2, 3], &[1., 2., 3., 4., 5., 6.], &device);
-        let b = tensor(dtype, &[2, 3], &[10., 20., 30., 40., 50., 60.], &device);
+        let a = tensor(dtype, &[2, 3], &[1., 2., 3., 4., 5., 6.], device);
+        let b = tensor(dtype, &[2, 3], &[10., 20., 30., 40., 50., 60.], device);
         let c = a.clone().add(b).unwrap();
         assert_eq!(c.dtype(), dtype);
         assert_eq!(
@@ -193,7 +195,7 @@ fn add_same_shape_and_broadcast() {
         );
 
         // Row vector [1, 3] broadcast over both rows. All sums are exact in bf16 (< 256).
-        let row = tensor(dtype, &[1, 3], &[100., 120., 140.], &device);
+        let row = tensor(dtype, &[1, 3], &[100., 120., 140.], device);
         let c = a.add(row).unwrap();
         assert_eq!(c.shape(), vec![2, 3]);
         assert_eq!(
@@ -207,7 +209,7 @@ fn add_same_shape_and_broadcast() {
 fn reshape_keeps_row_major_order() {
     let device = cpu();
     let values: Vec<f64> = (0..24).map(f64::from).collect();
-    let t = tensor(DType::I32, &[2, 3, 4], &values, &device);
+    let t = tensor(DType::I32, &[2, 3, 4], &values, device);
     let r = t.reshape(&[4, 6]).unwrap();
     assert_eq!(r.shape(), vec![4, 6]);
     let r = r.reshape(&[1, 2, 1, 3, 2, 2]).unwrap();
@@ -219,7 +221,7 @@ fn reshape_keeps_row_major_order() {
 #[test]
 fn cast_between_dtypes() {
     let device = cpu();
-    let f = tensor(DType::F32, &[4], &[-1.5, 0.0, 2.75, 3.0], &device);
+    let f = tensor(DType::F32, &[4], &[-1.5, 0.0, 2.75, 3.0], device);
 
     let i = f.clone().cast(DType::I32).unwrap();
     assert_eq!(i.dtype(), DType::I32);
@@ -242,7 +244,7 @@ fn cast_between_dtypes() {
     assert_eq!(lb.to_data().unwrap().bytes, vec![1, 0, 1, 1]);
 
     // Same dtype: no-op.
-    let same = tensor(DType::I64, &[1], &[5.], &device)
+    let same = tensor(DType::I64, &[1], &[5.], device)
         .cast(DType::I64)
         .unwrap();
     assert_eq!(decode(&same.into_data().unwrap()), vec![5.]);
@@ -252,9 +254,35 @@ fn cast_between_dtypes() {
 fn to_device_on_same_backend_keeps_data() {
     let device = cpu();
     let input = data(DType::I64, &[2, 2], &[1., -2., 3., -4.]);
-    let t = DynTensor::from_data(&input, &device).unwrap();
-    let moved = t.to_device(&device).unwrap();
+    let t = DynTensor::from_data(&input, device).unwrap();
+    let moved = t.to_device(device).unwrap();
     assert_eq!(moved.into_data().unwrap(), input);
+}
+
+/// `from_data(&data, id)?.device() == id`, and the Burn device underneath maps back to `id`.
+fn assert_round_trips_device_id(id: DeviceId) {
+    let t = tensor(DType::F32, &[2], &[1., 2.], id);
+    assert_eq!(t.device(), id);
+    assert_eq!(device_id_of(&t.burn_device()), Some(id));
+    let moved = t.to_device(id).unwrap();
+    assert_eq!(moved.device(), id);
+    // Results of operations stay on the device.
+    let sum = moved.clone().add(moved).unwrap();
+    assert_eq!(sum.device(), id);
+    assert_eq!(
+        sum.reshape(&[1, 2])
+            .unwrap()
+            .cast(DType::I32)
+            .unwrap()
+            .device(),
+        id
+    );
+}
+
+#[test]
+fn device_id_round_trips_on_cpu() {
+    assert!(list_devices().contains(&DeviceId::Cpu));
+    assert_round_trips_device_id(DeviceId::Cpu);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -266,16 +294,16 @@ fn rank_zero_and_above_six_are_rejected() {
     let device = cpu();
     let seven = TensorData::new(DType::F32, vec![1; 7], vec![0; 4]).unwrap();
     assert_eq!(
-        DynTensor::from_data(&seven, &device).unwrap_err(),
+        DynTensor::from_data(&seven, device).unwrap_err(),
         TensorError::UnsupportedRank { rank: 7 }
     );
     let scalar = TensorData::new(DType::F32, vec![], vec![0; 4]).unwrap();
     assert_eq!(
-        DynTensor::from_data(&scalar, &device).unwrap_err(),
+        DynTensor::from_data(&scalar, device).unwrap_err(),
         TensorError::UnsupportedRank { rank: 0 }
     );
 
-    let t = tensor(DType::F32, &[1], &[1.], &device);
+    let t = tensor(DType::F32, &[1], &[1.], device);
     assert_eq!(
         t.clone().reshape(&[1; 7]).unwrap_err(),
         TensorError::UnsupportedRank { rank: 7 }
@@ -296,7 +324,7 @@ fn malformed_data_is_rejected() {
         bytes: vec![0; 15],
     };
     assert!(matches!(
-        DynTensor::from_data(&short, &device),
+        DynTensor::from_data(&short, device),
         Err(TensorError::InvalidData { .. })
     ));
     let bad_bool = TensorData {
@@ -305,7 +333,7 @@ fn malformed_data_is_rejected() {
         bytes: vec![0, 7],
     };
     assert!(matches!(
-        DynTensor::from_data(&bad_bool, &device),
+        DynTensor::from_data(&bad_bool, device),
         Err(TensorError::InvalidData { .. })
     ));
 }
@@ -313,8 +341,8 @@ fn malformed_data_is_rejected() {
 #[test]
 fn dtype_mismatch_is_rejected() {
     let device = cpu();
-    let a = tensor(DType::F32, &[2, 2], &[1.; 4], &device);
-    let b = tensor(DType::F16, &[2, 2], &[1.; 4], &device);
+    let a = tensor(DType::F32, &[2, 2], &[1.; 4], device);
+    let b = tensor(DType::F16, &[2, 2], &[1.; 4], device);
     let expected = |op| TensorError::DTypeMismatch {
         op,
         lhs: DType::F32,
@@ -327,12 +355,12 @@ fn dtype_mismatch_is_rejected() {
 #[test]
 fn shape_mismatch_is_rejected() {
     let device = cpu();
-    let a = tensor(DType::F32, &[2, 3], &[1.; 6], &device);
-    let b = tensor(DType::F32, &[3, 2], &[1.; 6], &device);
-    let c = tensor(DType::F32, &[2, 3], &[1.; 6], &device);
-    let v = tensor(DType::F32, &[6], &[1.; 6], &device);
-    let batched = tensor(DType::F32, &[2, 2, 3], &[1.; 12], &device);
-    let other_batch = tensor(DType::F32, &[3, 3, 2], &[1.; 18], &device);
+    let a = tensor(DType::F32, &[2, 3], &[1.; 6], device);
+    let b = tensor(DType::F32, &[3, 2], &[1.; 6], device);
+    let c = tensor(DType::F32, &[2, 3], &[1.; 6], device);
+    let v = tensor(DType::F32, &[6], &[1.; 6], device);
+    let batched = tensor(DType::F32, &[2, 2, 3], &[1.; 12], device);
+    let other_batch = tensor(DType::F32, &[3, 3, 2], &[1.; 18], device);
 
     // add: incompatible dims, different ranks.
     assert!(matches!(
@@ -374,7 +402,7 @@ fn shape_mismatch_is_rejected() {
 #[test]
 fn unsupported_operations_are_rejected() {
     let device = cpu();
-    let b = tensor(DType::Bool, &[2, 2], &[1., 0., 1., 0.], &device);
+    let b = tensor(DType::Bool, &[2, 2], &[1., 0., 1., 0.], device);
     assert_eq!(
         b.clone().add(b.clone()).unwrap_err(),
         TensorError::UnsupportedOperation {
@@ -389,13 +417,94 @@ fn unsupported_operations_are_rejected() {
             dtype: DType::Bool
         }
     );
-    let i = tensor(DType::I64, &[2, 2], &[1.; 4], &device);
+    let i = tensor(DType::I64, &[2, 2], &[1.; 4], device);
     assert_eq!(
         i.clone().matmul(i).unwrap_err(),
         TensorError::UnsupportedOperation {
             op: "matmul",
             dtype: DType::I64
         }
+    );
+}
+
+/// Ids whose backend isn't compiled in, and ids that address no device of a compiled-in backend
+/// (index past the last device, past CubeCL's `u16` range, or a second software adapter).
+fn unavailable_ids() -> Vec<DeviceId> {
+    let beyond = usize::from(u16::MAX) + 1;
+    let mut ids = vec![
+        DeviceId::Cuda { index: 4096 },
+        DeviceId::Cuda { index: beyond },
+        DeviceId::Cuda { index: usize::MAX },
+        DeviceId::Vulkan {
+            adapter: AdapterKind::Cpu,
+            index: 1,
+        },
+    ];
+    for adapter in [
+        AdapterKind::DiscreteGpu,
+        AdapterKind::IntegratedGpu,
+        AdapterKind::VirtualGpu,
+        AdapterKind::Other,
+    ] {
+        for index in [4096, beyond, usize::MAX] {
+            ids.push(DeviceId::Vulkan { adapter, index });
+            ids.push(DeviceId::Metal { adapter, index });
+        }
+    }
+    let listed = list_devices();
+    ids.retain(|id| !listed.contains(id));
+    ids
+}
+
+#[test]
+fn unavailable_devices_are_errors_not_panics() {
+    let input = data(DType::F32, &[2], &[1., 2.]);
+    let on_cpu = DynTensor::from_data(&input, cpu()).unwrap();
+    for id in unavailable_ids() {
+        let compiled_in = id.backend().is_compiled_in();
+        for result in [DynTensor::from_data(&input, id), on_cpu.to_device(id)] {
+            match result {
+                Err(TensorError::DeviceUnavailable { device, reason }) => {
+                    assert_eq!(device, id);
+                    if compiled_in {
+                        assert!(reason.starts_with("no such "), "{id}: {reason}");
+                    } else {
+                        assert_eq!(
+                            reason,
+                            format!("the {} backend is not compiled in", id.backend())
+                        );
+                    }
+                }
+                other => panic!("{id}: expected DeviceUnavailable, got {other:?}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn backend_not_compiled_in_message() {
+    let Some(backend) = BackendKind::ALL
+        .into_iter()
+        .find(|backend| !backend.is_compiled_in())
+    else {
+        return;
+    };
+    let id = match backend {
+        BackendKind::Cuda => DeviceId::Cuda { index: 0 },
+        BackendKind::Metal => DeviceId::Metal {
+            adapter: AdapterKind::IntegratedGpu,
+            index: 0,
+        },
+        BackendKind::Vulkan => DeviceId::Vulkan {
+            adapter: AdapterKind::DiscreteGpu,
+            index: 0,
+        },
+        BackendKind::Cpu => DeviceId::Cpu,
+    };
+    let err = DynTensor::from_data(&data(DType::F32, &[1], &[1.]), id).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("device {id} is not available: the {backend} backend is not compiled in")
     );
 }
 
@@ -420,26 +529,18 @@ fn errors_have_readable_messages() {
 // GPU
 // ---------------------------------------------------------------------------------------------
 
-/// Every device of every compiled-in GPU backend.
+/// Every device of every compiled-in GPU backend, from the public device list.
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
-fn gpu_devices() -> Vec<Device> {
-    use burn::tensor::DeviceType;
-    let types = [
-        #[cfg(feature = "cuda")]
-        DeviceType::Cuda,
-        #[cfg(feature = "vulkan")]
-        DeviceType::Vulkan,
-        #[cfg(feature = "metal")]
-        DeviceType::Metal,
-    ];
-    types
+fn gpu_devices() -> Vec<DeviceId> {
+    list_devices()
         .into_iter()
-        .flat_map(|t| Device::enumerate(t).into_vec())
+        .filter(|id| id.backend() != BackendKind::Cpu)
         .collect()
 }
 
-/// CPU → GPU → CPU for every dtype and rank, plus ops on the GPU, on every GPU device found.
-/// A dtype the GPU doesn't support must fail with `UnsupportedDType`, not panic.
+/// CPU → GPU → CPU for every dtype and rank, plus ops on the GPU, on every GPU device that
+/// `list_devices()` returns. A dtype the GPU doesn't support must fail with `UnsupportedDType`,
+/// not panic.
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
 #[test]
 #[ignore = "gpu"]
@@ -450,17 +551,17 @@ fn cpu_to_gpu_to_cpu() {
         "no GPU device found for the compiled-in GPU backends"
     );
     let host = cpu();
-    for gpu in &devices {
+    for &gpu in &devices {
         let supported = supported_dtypes(gpu);
         let names: Vec<&str> = supported.iter().map(|d| d.name()).collect();
-        eprintln!("{gpu:?}: supported dtypes {names:?}");
+        eprintln!("{gpu}: supported dtypes {names:?}");
 
         for dtype in DType::ALL {
             for rank in 1..=DynTensor::MAX_RANK {
                 let shape = &DIMS[..rank];
                 let count = shape.iter().product::<u64>() as usize;
                 let input = data(dtype, shape, &sample_values(dtype, count));
-                let on_cpu = DynTensor::from_data(&input, &host).unwrap();
+                let on_cpu = DynTensor::from_data(&input, host).unwrap();
 
                 if !supported.contains(&dtype) {
                     assert!(matches!(
@@ -475,30 +576,36 @@ fn cpu_to_gpu_to_cpu() {
                 }
 
                 let on_gpu = on_cpu.to_device(gpu).unwrap();
-                assert_eq!(&on_gpu.device(), gpu);
-                let back = on_gpu.to_device(&host).unwrap();
+                assert_eq!(on_gpu.device(), gpu);
+                assert_eq!(device_id_of(&on_gpu.burn_device()), Some(gpu));
+                let back = on_gpu.to_device(host).unwrap();
                 assert_eq!(back.device(), host);
                 assert_eq!(
                     back.into_data().unwrap(),
                     input,
-                    "{dtype} rank {rank} via {gpu:?}"
+                    "{dtype} rank {rank} via {gpu}"
                 );
             }
         }
 
         // Direct upload/readback and ops on the GPU itself.
         round_trip_all(gpu);
+        assert_round_trips_device_id(gpu);
         for dtype in [DType::F32, DType::F16, DType::BF16] {
             if supported.contains(&dtype) {
                 check_matmul_2d(gpu, dtype);
             }
         }
         let a = tensor(DType::F32, &[2, 2], &[1., 2., 3., 4.], gpu);
-        let b = tensor(DType::F32, &[2, 2], &[1., 2., 3., 4.], &host);
-        assert!(matches!(
-            a.add(b),
-            Err(TensorError::DeviceMismatch { op: "add", .. })
-        ));
+        let b = tensor(DType::F32, &[2, 2], &[1., 2., 3., 4.], host);
+        assert_eq!(
+            a.add(b).unwrap_err(),
+            TensorError::DeviceMismatch {
+                op: "add",
+                lhs: gpu.to_string(),
+                rhs: "cpu".into(),
+            }
+        );
         // float → int rounds toward zero on the GPU too.
         let f = tensor(DType::F32, &[4], &[-1.5, 0.0, 2.75, 3.0], gpu);
         let i = f.cast(DType::I32).unwrap();

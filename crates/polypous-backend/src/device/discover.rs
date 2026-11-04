@@ -166,7 +166,7 @@ fn device_type(backend: BackendKind) -> Option<DeviceType> {
 }
 
 /// Our id for a Burn device, if it belongs to a backend Polypous uses.
-fn device_id_of(device: &Device) -> Option<DeviceId> {
+pub(crate) fn device_id_of(device: &Device) -> Option<DeviceId> {
     #[allow(unused_imports)]
     use burn::backend::DispatchDevice;
     match device.as_dispatch() {
