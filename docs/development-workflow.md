@@ -58,6 +58,12 @@ Tasks that touch different crates can run in parallel. Tasks that touch the same
 - Attribution names Claude, never the model, and never links a session (see [CLAUDE.md](../CLAUDE.md#conventions)).
   Before merging, check the PR title and description for a model name or a `claude.ai/code` link and
   remove it, because the description becomes the squash commit message on `main`.
+  The **PR title and description** CI job ([`pr-text.yml`](../.github/workflows/pr-text.yml),
+  patterns in [`tools/ci/check_pr_text.py`](../tools/ci/check_pr_text.py)) fails a PR whose title or
+  description contains `claude.ai/code`, `Claude-Session` or a model name with a version
+  (`Opus`/`Sonnet`/`Haiku`/`Fable` + number). If the description mentions "Claude Code", it must also
+  end with exactly `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. It re-runs when
+  the description is edited, so fix the text instead of re-running the job.
 
 ## 6. Parallel agents
 
