@@ -12,8 +12,21 @@ publish.workspace = true
 name = "polyp"
 path = "src/main.rs"
 
+# Backend features (ADR-0003), forwarded through `polypous`. `cpu` is always available.
+[features]
+default = ["cpu"]
+cpu = ["polypous/cpu"]
+cuda = ["polypous/cuda"]
+vulkan = ["polypous/vulkan"]
+metal = ["polypous/metal"]
+
 [dependencies]
 polypous.workspace = true
+# `polyp devices --json`. MIT OR Apache-2.0; already in the lock file.
+serde_json = "1.0.154"
+# The CLI installs the log subscriber (`RUST_LOG`, to stderr). MIT; already in the lock file.
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [lints]
 workspace = true

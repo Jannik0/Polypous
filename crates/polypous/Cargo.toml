@@ -8,6 +8,14 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# Backend features (ADR-0003), forwarded to `polypous-backend`. `cpu` is always available.
+[features]
+default = ["cpu"]
+cpu = ["polypous-backend/cpu"]
+cuda = ["polypous-backend/cuda"]
+vulkan = ["polypous-backend/vulkan"]
+metal = ["polypous-backend/metal"]
+
 [dependencies]
 polypous-ir.workspace = true
 polypous-formats.workspace = true
@@ -17,6 +25,14 @@ polypous-quant.workspace = true
 polypous-runtime.workspace = true
 polypous-train.workspace = true
 polypous-pipelines.workspace = true
+# Configs, results and errors are serde data with a stable JSON form (public-api.md §2 rule 3).
+serde = { version = "1.0.229", features = ["derive"] }
+# `EngineConfig::from_json`. MIT OR Apache-2.0; already in the lock file.
+serde_json = "1.0.154"
+# Error type (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file.
+thiserror = "2.0.21"
+# Logging (public-api.md §2 rule 9). MIT; already in the lock file through Burn.
+tracing = "0.1.44"
 
 [lints]
 workspace = true

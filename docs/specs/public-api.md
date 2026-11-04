@@ -123,6 +123,67 @@ typedef void (*pp_event_cb)(void* user, const char* event_json);
 C ABI (M7): `pp_probe_devices`, `pp_engine_refresh_devices`, and the entry point the tiny
 `polypous-probe` executable calls.
 
+### 1.2 Engine, devices and errors (M0, issue #6)
+
+Implemented so far: `Engine::new`, `Engine::devices`, `Engine::primary_gpu`, `Engine::config`,
+`EngineConfig` (with `from_json`/`to_json`), the device types below and `Error`. The CLI's
+`polyp devices --json` prints exactly `Engine::devices()` as JSON.
+
+| Item | Behavior |
+|---|---|
+| `Engine::new(config) -> Result<Engine, Error>` | Discovers and probes every device of every compiled-in backend (placement.md §1; in process until #14), then marks the primary GPU. A failing device is reported as unavailable, never as an error. A panic becomes `Internal` |
+| `Engine` | `Arc` handle: `Clone + Send + Sync + 'static`, no generics or lifetimes. No `close()` yet: it holds no resources that need deterministic release until models can be loaded |
+| `engine.devices() -> Vec<DeviceInfo>` | All devices in probe order (GPU priority order, the CPU last), the primary GPU with `primary: true` |
+| `engine.primary_gpu() -> Option<DeviceInfo>` | The device with `primary: true`, or `None` (CPU only) |
+
+**`EngineConfig` JSON.** An object. It has no fields yet, so the defaults are `{}`. Unknown fields,
+and any JSON that is not an object, are an `InvalidInput` error (so a misspelled option never goes
+unnoticed). Later fields (`probe_report`, `prober_path`, `probe_cache_dir` with #14, placement
+options with M4) are optional with documented defaults, so `{}` stays valid.
+
+**Device JSON** (`DeviceInfo`, an array of them from `devices()`). The fields, names and values are
+those of the backend's `DeviceInfo` in [placement.md §1](placement.md#1-device-discovery), plus
+`primary`. The facade has its own types (`polypous::DeviceInfo`, `DeviceId`, `BackendKind`,
+`AdapterKind`, `DeviceKind`, `PhysicalIdentity`, `DeviceCapabilities`, `DeviceStatus`,
+`UnavailableReason`) and converts from `polypous_backend::device`, so the backend can change
+without changing this JSON.
+
+```jsonc
+{
+  "id": {"backend": "cuda", "index": 0},       // or {"backend":"vulkan"|"metal","adapter":"discrete_gpu"|"integrated_gpu"|"virtual_gpu"|"cpu"|"other","index":0}, {"backend":"cpu"}
+  "backend": "cuda",                           // "cuda" | "metal" | "vulkan" | "cpu"
+  "name": "NVIDIA GeForce RTX 3060 Laptop GPU",
+  "vendor": "NVIDIA",                          // string or null
+  "driver": null,                              // string or null
+  "kind": "discrete",                          // "discrete" | "integrated" | "cpu" | "other"
+  "dedicated_memory": 6441926656,              // bytes or null (null for the CPU)
+  "free_memory": 5939134464,                   // bytes or null
+  "unified_memory": false,
+  "identity": {"pci_bus_id": "0000:01:00.0", "luid": null, "registry_id": null},
+  "capabilities": {"f16": true, "bf16": true, "subgroup_size_min": 32, "subgroup_size_max": 32,
+                   "max_buffer_size": 6441926656, "max_shared_memory": 49152, "compute_units": 30},
+  "status": {"state": "available", "isolated": false},
+      // or {"state":"not_probed"}, {"state":"unavailable","reason":{"code":"probe_failed","message":"…"},"isolated":false};
+      // reason codes: crashed_during_probe, probe_timed_out, probe_failed (+message), library_missing (+library)
+  "primary": true                              // the primary GPU (placement.md §1); at most one device, none for CPU only
+}
+```
+
+Every field is always present (`null` when unknown). Readers must accept new fields and new enum
+values (the Rust types are `#[non_exhaustive]`).
+
+**Error JSON.** `{"kind":"invalid_input","message":"…","context":{"operation":"…","details":"…"}}`.
+`kind` is the `snake_case` name of an `ErrorKind` from §2 rule 7 (`invalid_input`, `invalid_graph`,
+`unsupported_model`, `unsupported_operation`, `io`, `out_of_memory`, `backend_unavailable`, `backend`,
+`cancelled`, `internal`). `message` is for end users. `context` fields are optional and omitted when
+absent: `operation` (the facade call that failed, for example `engine_new`) and `details` (the
+underlying error or panic message). More context fields (node id, file, tensor name, device) are
+added as needed.
+
+**Logging.** Discovery logs through `tracing` under the `polypous` target: per-device enumeration,
+description and probe results at `debug` (`RUST_LOG=polypous=debug`), unavailable devices at
+`warn`, the primary GPU at `info`.
+
 ## 4. Events and threading
 
 - Polypous runs heavy work on its own thread pool. The calling thread blocks until the operation

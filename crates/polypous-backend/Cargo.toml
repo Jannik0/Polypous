@@ -38,6 +38,12 @@ serde = { version = "1.0.229", features = ["derive"] }
 # Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file through Burn.
 thiserror = "2.0.21"
 
+# The CPU's marketing name from the registry (`describe_device` for the CPU). Safe wrapper over the
+# registry API (the workspace denies `unsafe`). MIT OR Apache-2.0; its dependencies (windows-link,
+# windows-result, windows-strings) are already in the lock file through Burn's tree.
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6.1"
+
 [dev-dependencies]
 serde_json = "1.0.154"
 
