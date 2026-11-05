@@ -638,3 +638,83 @@ fn cpu_to_gpu_to_cpu() {
         assert_eq!(b.to_data().unwrap().bytes, vec![1, 0, 1, 1]);
     }
 }
+
+/// Regression test for issue #26: enumerating Vulkan devices while another thread computes on a
+/// Vulkan GPU crashed the process (SIGSEGV in the Vulkan loader) on Debian 13 with stock Mesa.
+/// One thread computes on every listed Vulkan GPU in a loop; another lists devices and uploads to
+/// unlisted ids over and over. With the enumeration cached, the second thread never touches the
+/// Vulkan loader, so this must not crash.
+///
+/// Every GPU is opened before the second thread starts: the first use of a device still makes
+/// CubeCL create a temporary wgpu instance (placement.md §1, "When enumeration happens").
+#[cfg(feature = "vulkan")]
+#[test]
+#[ignore = "gpu"]
+fn enumerating_while_computing_on_vulkan_does_not_crash() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    let options = gpu_test_options();
+    let gpus: Vec<DeviceId> = gpu_devices()
+        .into_iter()
+        .filter(|id| id.backend() == BackendKind::Vulkan && !options.skips(*id))
+        .collect();
+    if gpus.is_empty() {
+        eprintln!("no Vulkan GPU to compute on; nothing to test");
+        return;
+    }
+    let unlisted: Vec<DeviceId> = unavailable_ids()
+        .into_iter()
+        .filter(|id| id.backend().is_compiled_in())
+        .collect();
+    assert!(!unlisted.is_empty());
+
+    let a = data(DType::F32, &[2, 2], &[1., 2., 3., 4.]);
+    let b = data(DType::F32, &[2, 2], &[5., 6., 7., 8.]);
+    for &gpu in &gpus {
+        DynTensor::from_data(&a, gpu).unwrap().into_data().unwrap();
+    }
+    let stop = AtomicBool::new(false);
+    let computed = AtomicUsize::new(0);
+    let enumerated = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !stop.load(Ordering::SeqCst) {
+                for &gpu in &gpus {
+                    let x = DynTensor::from_data(&a, gpu).unwrap();
+                    let y = DynTensor::from_data(&b, gpu).unwrap();
+                    let product = x.clone().matmul(y).unwrap().add(x).unwrap();
+                    assert_eq!(
+                        decode(&product.into_data().unwrap()),
+                        [20., 24., 46., 54.],
+                        "{gpu}"
+                    );
+                    computed.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        scope.spawn(|| {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(5) {
+                assert!(list_devices().contains(&gpus[0]));
+                for &id in &unlisted {
+                    assert!(
+                        matches!(
+                            DynTensor::from_data(&a, id),
+                            Err(TensorError::DeviceUnavailable { .. })
+                        ),
+                        "{id}"
+                    );
+                }
+                enumerated.fetch_add(1, Ordering::SeqCst);
+            }
+            stop.store(true, Ordering::SeqCst);
+        });
+    });
+    eprintln!(
+        "{} compute rounds on {gpus:?}, {} list/unlisted rounds",
+        computed.load(Ordering::SeqCst),
+        enumerated.load(Ordering::SeqCst)
+    );
+    assert!(computed.load(Ordering::SeqCst) > 0);
+}

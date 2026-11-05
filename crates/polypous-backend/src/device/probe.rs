@@ -2,10 +2,11 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use burn::tensor::Tensor;
+use burn::tensor::{Device, Tensor};
 
-use super::discover::{burn_device, lock_devices, panic_message};
+use super::discover::{lock_devices, panic_message};
 use super::info::{DeviceId, DeviceStatus, UnavailableReason};
+use super::resolve::resolve_device;
 
 /// `[[1, 2], [3, 4]] @ [[5, 6], [7, 8]] + 1`. Small integers, exact in every float format a
 /// backend might compute with (f32, tf32, f16), so a correct device gives exactly this.
@@ -21,10 +22,15 @@ const EXPECTED: [f32; 4] = [20.0, 23.0, 44.0, 51.0];
 /// driver crashes and hangs cannot be caught here: that is why the prober runs this in a separate
 /// process. A caught panic is still printed by the panic hook (to stderr).
 ///
+/// An id that [`list_backend_devices`](super::list_backend_devices) doesn't list fails without
+/// being opened (no driver is touched once the backend's list is cached).
+///
 /// The first probe of a GPU compiles kernels and can take seconds.
 pub fn probe_device(id: DeviceId) -> DeviceStatus {
+    // Checked before taking the device lock: enumeration takes it too.
+    let device = resolve_device(id);
     let _guard = lock_devices();
-    guarded(|| probe(id))
+    guarded(|| probe(&device?))
 }
 
 /// Runs a probe body, turning errors and panics into a status.
@@ -40,11 +46,9 @@ fn guarded(body: impl FnOnce() -> Result<(), String>) -> DeviceStatus {
     }
 }
 
-fn probe(id: DeviceId) -> Result<(), String> {
-    let device = burn_device(id)
-        .ok_or_else(|| format!("the {} backend is not compiled in", id.backend()))?;
-    let a = Tensor::<2>::from_floats([[1.0, 2.0], [3.0, 4.0]], &device);
-    let b = Tensor::<2>::from_floats([[5.0, 6.0], [7.0, 8.0]], &device);
+fn probe(device: &Device) -> Result<(), String> {
+    let a = Tensor::<2>::from_floats([[1.0, 2.0], [3.0, 4.0]], device);
+    let b = Tensor::<2>::from_floats([[5.0, 6.0], [7.0, 8.0]], device);
     let values = a
         .matmul(b)
         .add_scalar(1.0)

@@ -59,8 +59,18 @@ All notable changes to Polypous are documented here. The format follows
   as unavailable with the new reason code `software_rasterizer_skipped`. This keeps lavapipe on
   Debian 13 (Mesa 25.0.7) from crashing `polyp devices`, `Engine::new` and the GPU tests; the
   `VK_DRIVER_FILES` workaround is no longer needed for that. The GPU tests opt in with the test-only
-  variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, which the CI lavapipe job sets. On stock Debian the
-  backend GPU tests still need `--test-threads=1` until #26 (Vulkan enumeration racing with
-  compute) is fixed.
+  variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, which the CI lavapipe job sets.
+- Each backend's devices are enumerated at most once per process; `list_devices`,
+  `list_backend_devices`, `enumerate_devices*`, `DynTensor` device checks and `Engine` discovery reuse
+  the cached list, and unlisted ids fail against it. `describe_device` and `probe_device` reject ids
+  that aren't listed without opening them. Devices added after the first enumeration are not seen
+  until restart (placement.md §1, "When enumeration happens").
 - On Windows the CPU device shows its marketing name from the registry (`ProcessorNameString`)
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
+
+### Fixed
+- Listing devices, or using a `DynTensor` with an id that doesn't exist, while another thread
+  computed on a Vulkan GPU could crash the process with SIGSEGV in the Vulkan loader (Debian 13 with
+  stock Mesa, #26). The backend GPU tests no longer need `--test-threads=1` there. The first open of
+  each Vulkan device still enumerates once inside CubeCL; open devices before computing on other
+  threads (`Engine::new` does).

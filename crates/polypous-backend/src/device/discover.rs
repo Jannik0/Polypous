@@ -38,10 +38,11 @@ impl std::fmt::Display for EnumerationError {
 
 impl std::error::Error for EnumerationError {}
 
-/// Serializes everything that opens devices. CubeCL guards its own wgpu instances against
-/// concurrent creation (the Vulkan loader crashes when instances come and go on several threads at
-/// once), but [`describe_device`] creates one more for wgpu's adapter info, so device work here runs
-/// one call at a time.
+/// Serializes everything that enumerates or opens devices. CubeCL guards its own wgpu instances
+/// against concurrent creation (the Vulkan loader crashes when instances come and go on several
+/// threads at once), but the first enumeration of a backend creates one more for wgpu's adapter
+/// info, so device work here runs one call at a time. Compute doesn't take this lock; see
+/// [`ENUMERATED`] for how enumeration stays away from it.
 static DEVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Holds [`DEVICE_LOCK`]. The lock protects no data, so a poisoned lock is fine to take.
@@ -62,22 +63,111 @@ pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
+/// The successful enumeration of each backend, kept for the rest of the process (placement.md §1,
+/// "When enumeration happens").
+///
+/// # Why enumeration is cached
+///
+/// Enumerating Vulkan devices creates a temporary wgpu instance (Burn's `Device::enumerate` creates
+/// five, one per adapter type), so the Vulkan loader loads every installed ICD and unloads the
+/// device-less ones again (`dlclose`). That races with Vulkan compute on other threads: on Debian 13
+/// with stock Mesa the process crashes with SIGSEGV inside `libvulkan.so.1` (issue #26). Taking
+/// [`DEVICE_LOCK`] doesn't help, because compute never takes it. So each backend is enumerated at
+/// most once per process, and everything that needs the device list ([`list_backend_devices`],
+/// [`describe_device`], [`probe_device`](super::probe_device), the `DynTensor` device checks,
+/// the facade's discovery) reuses it. Only successful results are cached: a failed enumeration is
+/// retried on the next call.
+///
+/// Devices that appear later (a newly plugged-in eGPU) are not seen until the process restarts;
+/// CubeCL keeps a device's client for the whole process anyway. The cache holds hardware facts
+/// only, the same for every `Engine`, so it is not engine state (public-api.md §2 rule 9).
+static ENUMERATED: EnumerationCache = EnumerationCache::new();
+
+/// Per-backend device lists. A handful of entries; lookups are linear.
+pub(crate) struct EnumerationCache {
+    lists: std::sync::Mutex<Vec<(BackendKind, Vec<DeviceId>)>>,
+}
+
+impl EnumerationCache {
+    pub(crate) const fn new() -> Self {
+        Self {
+            lists: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn cached(&self, backend: BackendKind) -> Option<Vec<DeviceId>> {
+        // Entries are pushed whole, so a panic elsewhere can't leave one half-written.
+        self.lists
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(cached, _)| *cached == backend)
+            .map(|(_, ids)| ids.clone())
+    }
+
+    /// The cached list of `backend`, or the result of `enumerate`, which is cached if it
+    /// succeeded. `enumerate` runs under [`DEVICE_LOCK`], at most once per backend unless it
+    /// fails: a second thread that misses the cache waits for the first one's result.
+    pub(crate) fn list_with(
+        &self,
+        backend: BackendKind,
+        enumerate: impl FnOnce(BackendKind) -> Result<Vec<DeviceId>, EnumerationError>,
+    ) -> Result<Vec<DeviceId>, EnumerationError> {
+        if let Some(ids) = self.cached(backend) {
+            return Ok(ids);
+        }
+        let _guard = lock_devices();
+        if let Some(ids) = self.cached(backend) {
+            return Ok(ids);
+        }
+        let ids = enumerate(backend)?;
+        self.lists
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((backend, ids.clone()));
+        Ok(ids)
+    }
+}
+
+/// Number of real enumerations per backend in this process, in [`BackendKind::ALL`] order. Tests
+/// check that the cache keeps it at one.
+#[cfg(test)]
+pub(crate) static REAL_ENUMERATIONS: [std::sync::atomic::AtomicUsize; 4] =
+    [const { std::sync::atomic::AtomicUsize::new(0) }; 4];
+
 /// Lists the devices of one backend without opening them.
 ///
-/// A backend that is not compiled in, or whose runtime library is missing (no `libcuda`, no
-/// Vulkan loader or ICD), has no devices. A Burn panic during enumeration becomes an
-/// [`EnumerationError`].
+/// The backend is enumerated on the first successful call only; later calls return the same list
+/// without touching the driver (see [`ENUMERATED`] for why). A backend that is not compiled in, or
+/// whose runtime library is missing (no `libcuda`, no Vulkan loader or ICD), has no devices. A Burn
+/// panic during enumeration becomes an [`EnumerationError`] and is not cached.
 pub fn list_backend_devices(backend: BackendKind) -> Result<Vec<DeviceId>, EnumerationError> {
+    if device_type(backend).is_none() {
+        return Ok(Vec::new());
+    }
+    ENUMERATED.list_with(backend, enumerate_backend)
+}
+
+/// Enumerates one compiled-in backend through Burn. For Vulkan and Metal it also records wgpu's
+/// adapter info for [`describe_device`], so that no later call creates a wgpu instance of ours.
+/// Runs under [`DEVICE_LOCK`].
+fn enumerate_backend(backend: BackendKind) -> Result<Vec<DeviceId>, EnumerationError> {
+    #[cfg(test)]
+    if let Some(index) = BackendKind::ALL.iter().position(|&kind| kind == backend) {
+        REAL_ENUMERATIONS[index].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
     let Some(device_type) = device_type(backend) else {
         return Ok(Vec::new());
     };
-    let _guard = lock_devices();
     catch_unwind(AssertUnwindSafe(|| {
-        Device::enumerate(device_type)
+        let ids = Device::enumerate(device_type)
             .into_iter()
             .filter_map(|device| device_id_of(&device))
             .filter(|id| id.backend() == backend)
-            .collect()
+            .collect();
+        #[cfg(any(feature = "vulkan", feature = "metal"))]
+        gpu::wgpu_info::record_adapters(backend);
+        ids
     }))
     .map_err(|payload| EnumerationError {
         backend,
@@ -100,12 +190,17 @@ pub fn list_devices() -> Vec<DeviceId> {
 /// [`DeviceStatus::NotProbed`].
 ///
 /// Never panics: if opening the device fails (an error or a caught Burn panic), the result carries
-/// what is known from `id` and the status is unavailable with the reason. Opening a GPU loads its
-/// driver, which can crash the process natively; run it in the prober process (ADR-0013).
+/// what is known from `id` and the status is unavailable with the reason. An id that
+/// [`list_backend_devices`] doesn't list is not opened (no driver is touched once the backend's
+/// list is cached). Opening a GPU loads its driver, which can crash the process natively; run it
+/// in the prober process (ADR-0013).
 pub fn describe_device(id: DeviceId) -> DeviceInfo {
-    let _guard = lock_devices();
-    let result = catch_unwind(AssertUnwindSafe(|| describe(id)))
-        .unwrap_or_else(|payload| Err(format!("panic: {}", panic_message(&*payload))));
+    // Checked before taking the device lock: enumeration takes it too.
+    let result = super::resolve::resolve_device(id).and_then(|_| {
+        let _guard = lock_devices();
+        catch_unwind(AssertUnwindSafe(|| describe(id)))
+            .unwrap_or_else(|payload| Err(format!("panic: {}", panic_message(&*payload))))
+    });
     match result {
         Ok(info) => info,
         Err(message) => DeviceInfo {
@@ -506,10 +601,52 @@ mod gpu {
     }
 
     #[cfg(any(feature = "vulkan", feature = "metal"))]
-    mod wgpu_info {
+    pub(super) mod wgpu_info {
+        use std::sync::{Mutex, PoisonError};
+
         use cubecl::wgpu::wgpu;
 
+        use super::super::super::info::BackendKind;
         use super::{AdapterKind, DeviceInfo};
+
+        /// wgpu's adapter info per graphics API, read once with the backend's enumeration
+        /// ([`super::super::ENUMERATED`] explains why nothing enumerates twice).
+        static ADAPTERS: Mutex<Vec<(wgpu::Backend, Vec<wgpu::AdapterInfo>)>> =
+            Mutex::new(Vec::new());
+
+        /// Reads and keeps the adapter info of `backend`'s graphics API, if it has one. Called
+        /// once per backend, from its enumeration (under the device lock).
+        pub(in super::super) fn record_adapters(backend: BackendKind) {
+            let api = match backend {
+                #[cfg(feature = "vulkan")]
+                BackendKind::Vulkan => wgpu::Backend::Vulkan,
+                #[cfg(feature = "metal")]
+                BackendKind::Metal => wgpu::Backend::Metal,
+                _ => return,
+            };
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: api.into(),
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            });
+            let adapters = cubecl::future::block_on(instance.enumerate_adapters(api.into()))
+                .iter()
+                .map(wgpu::Adapter::get_info)
+                .collect();
+            // The list is replaced whole, so a panic elsewhere can't leave it half-written.
+            let mut cached = ADAPTERS.lock().unwrap_or_else(PoisonError::into_inner);
+            cached.retain(|(cached_api, _)| *cached_api != api);
+            cached.push((api, adapters));
+        }
+
+        fn recorded_adapters(api: wgpu::Backend) -> Vec<wgpu::AdapterInfo> {
+            ADAPTERS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .find(|(cached_api, _)| *cached_api == api)
+                .map(|(_, adapters)| adapters.clone())
+                .unwrap_or_default()
+        }
 
         fn adapter_kind(device_type: wgpu::DeviceType) -> AdapterKind {
             match device_type {
@@ -522,20 +659,17 @@ mod gpu {
         }
 
         /// Driver name/version (and vendor, PCI bus id, name where CubeCL had none) from wgpu's
-        /// adapter info. Burn/CubeCL keep the adapter info to themselves, so this lists the
-        /// adapters of `backend` again and picks the `index`-th of type `adapter`, the same
-        /// addressing CubeCL uses (cubecl-wgpu runtime.rs, `adapter_device_ids`).
+        /// adapter info. Burn/CubeCL keep the adapter info to themselves, so this uses the list
+        /// [`record_adapters`] read with the backend's enumeration and picks the `index`-th
+        /// adapter of type `adapter`, the same addressing CubeCL uses (cubecl-wgpu runtime.rs,
+        /// `adapter_device_ids`). Without a recorded list the fields stay as they are.
         pub(super) fn fill(
             backend: wgpu::Backend,
             adapter: AdapterKind,
             index: usize,
             info: &mut DeviceInfo,
         ) {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: backend.into(),
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            });
-            let adapters = cubecl::future::block_on(instance.enumerate_adapters(backend.into()));
+            let adapters = recorded_adapters(backend);
             // CubeCL gives every software adapter index 0.
             let index = if adapter == AdapterKind::Cpu {
                 0
@@ -544,7 +678,6 @@ mod gpu {
             };
             let Some(adapter_info) = adapters
                 .iter()
-                .map(wgpu::Adapter::get_info)
                 .filter(|candidate| adapter_kind(candidate.device_type) == adapter)
                 .nth(index)
             else {
@@ -584,6 +717,152 @@ mod tests {
         assert_eq!(panic_message(&*payload), "formatted 42");
         let payload = catch_unwind(|| std::panic::panic_any(7_u8)).unwrap_err();
         assert_eq!(panic_message(&*payload), "panic with a non-text payload");
+    }
+
+    /// An enumeration step that counts its calls and returns `result`.
+    fn counting(
+        calls: &std::cell::Cell<usize>,
+        result: Result<Vec<DeviceId>, EnumerationError>,
+    ) -> impl FnOnce(BackendKind) -> Result<Vec<DeviceId>, EnumerationError> + '_ {
+        move |_| {
+            calls.set(calls.get() + 1);
+            result
+        }
+    }
+
+    #[test]
+    fn enumeration_is_cached_per_backend() {
+        let cache = EnumerationCache::new();
+        let calls = std::cell::Cell::new(0);
+        let gpus = vec![
+            vulkan(AdapterKind::DiscreteGpu, 0),
+            vulkan(AdapterKind::IntegratedGpu, 0),
+        ];
+        for _ in 0..5 {
+            assert_eq!(
+                cache.list_with(BackendKind::Vulkan, counting(&calls, Ok(gpus.clone()))),
+                Ok(gpus.clone())
+            );
+        }
+        assert_eq!(calls.get(), 1);
+
+        // Each backend has its own entry; an empty list is a result too.
+        for _ in 0..3 {
+            assert_eq!(
+                cache.list_with(BackendKind::Cuda, counting(&calls, Ok(Vec::new()))),
+                Ok(Vec::new())
+            );
+        }
+        assert_eq!(calls.get(), 2);
+        assert_eq!(cache.cached(BackendKind::Vulkan), Some(gpus));
+    }
+
+    #[test]
+    fn failed_enumerations_are_not_cached() {
+        let cache = EnumerationCache::new();
+        let calls = std::cell::Cell::new(0);
+        let err = EnumerationError {
+            backend: BackendKind::Vulkan,
+            message: "panic: loader".into(),
+        };
+        for attempt in 1..=2 {
+            assert_eq!(
+                cache.list_with(BackendKind::Vulkan, counting(&calls, Err(err.clone()))),
+                Err(err.clone())
+            );
+            assert_eq!(calls.get(), attempt);
+        }
+        assert_eq!(cache.cached(BackendKind::Vulkan), None);
+
+        let gpus = vec![vulkan(AdapterKind::DiscreteGpu, 0)];
+        for _ in 0..3 {
+            assert_eq!(
+                cache.list_with(BackendKind::Vulkan, counting(&calls, Ok(gpus.clone()))),
+                Ok(gpus.clone())
+            );
+        }
+        assert_eq!(calls.get(), 3);
+    }
+
+    /// Unlisted ids fail against the cached list, many times, with one enumeration.
+    #[test]
+    fn unlisted_ids_fail_without_enumerating_again() {
+        let cache = EnumerationCache::new();
+        let calls = std::cell::Cell::new(0);
+        let gpus = vec![vulkan(AdapterKind::DiscreteGpu, 0)];
+        let unlisted = [
+            vulkan(AdapterKind::DiscreteGpu, 1),
+            vulkan(AdapterKind::IntegratedGpu, 3),
+            vulkan(AdapterKind::DiscreteGpu, usize::from(u16::MAX) + 1),
+        ];
+        for _ in 0..100 {
+            for id in unlisted {
+                let listed =
+                    cache.list_with(BackendKind::Vulkan, counting(&calls, Ok(gpus.clone())));
+                assert_eq!(
+                    super::super::resolve::check_listed(id, listed),
+                    Err("no such vulkan device (devices found: vulkan:discrete_gpu:0)".into())
+                );
+            }
+        }
+        assert_eq!(calls.get(), 1);
+    }
+
+    /// Two threads that miss the cache at the same time enumerate once.
+    #[test]
+    fn concurrent_first_calls_enumerate_once() {
+        let cache = EnumerationCache::new();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    cache.list_with(BackendKind::Cuda, |_| {
+                        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        Ok(vec![DeviceId::Cuda { index: 0 }])
+                    })
+                });
+            }
+        });
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// The real entry points (listing, describing, probing and `DynTensor` with listed and
+    /// unlisted ids) enumerate each backend at most once in this process, whatever other tests
+    /// run in parallel.
+    #[test]
+    fn public_calls_enumerate_each_backend_at_most_once() {
+        use crate::{DType, DynTensor, TensorData};
+        use std::sync::atomic::Ordering;
+
+        let data = TensorData::new(DType::F32, vec![1], 1f32.to_le_bytes().to_vec()).unwrap();
+        let unlisted = [
+            DeviceId::Cuda { index: 4096 },
+            vulkan(AdapterKind::DiscreteGpu, 4096),
+            vulkan(AdapterKind::Other, 4096),
+            DeviceId::Metal {
+                adapter: AdapterKind::IntegratedGpu,
+                index: 4096,
+            },
+        ];
+        for _ in 0..3 {
+            let _ = list_devices();
+            for backend in BackendKind::ALL {
+                let _ = list_backend_devices(backend);
+            }
+            for id in unlisted {
+                assert!(DynTensor::from_data(&data, id).is_err(), "{id}");
+                assert!(!describe_device(id).status.is_available(), "{id}");
+                assert!(!super::super::probe_device(id).is_available(), "{id}");
+            }
+        }
+        for (backend, count) in BackendKind::ALL.iter().zip(&REAL_ENUMERATIONS) {
+            let count = count.load(Ordering::SeqCst);
+            assert!(count <= 1, "{backend} enumerated {count} times");
+            if backend.is_compiled_in() && list_backend_devices(*backend).is_ok() {
+                assert_eq!(count, 1, "{backend}");
+            }
+        }
     }
 
     #[test]

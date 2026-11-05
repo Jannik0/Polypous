@@ -1,5 +1,6 @@
 //! From a [`DeviceId`] to the `burn::Device` that work runs on (placement.md §1), for the `tensor`
-//! module. Crate-internal: no Burn type leaves the crate (ADR-0007).
+//! module and the functions that open devices. Crate-internal: no Burn type leaves the crate
+//! (ADR-0007).
 //!
 //! # Why ids are checked against the enumeration
 //!
@@ -7,56 +8,40 @@
 //! CubeCL opens the device lazily, on the first tensor, and **panics** if it doesn't exist
 //! (cubecl-wgpu 0.11.3 `DeviceService::init`: "Unable to acquire wgpu device"; cubecl-cuda fails
 //! creating the context). CubeCL also clamps indices to `u16::MAX` (cubecl-runtime
-//! `device::index_id`), so an index above that would silently address another device.
+//! `device::index_id`), so an index above that would silently address another device. And trying
+//! to open a Vulkan id makes CubeCL create a temporary wgpu instance, which races with Vulkan
+//! compute on other threads (issue #26).
 //!
 //! Catching that panic with `catch_unwind` was rejected: it fires inside CubeCL's device registry,
 //! which we can't prove is consistent afterwards, and the panic hook would still print it. Instead
 //! an id is accepted only if Burn's enumeration lists it ([`list_backend_devices`], the same list
 //! [`list_devices`](super::list_devices) returns), so Burn never sees an id that addresses no device.
 //!
-//! Enumerating creates a wgpu instance or loads `libcuda`, so it isn't free. Ids that were found
-//! once are remembered for the rest of the process: CubeCL keeps a device's client for the whole
-//! process too, so a device that disappears later (an unplugged eGPU) fails inside the backend
-//! either way.
-
-use std::sync::{Mutex, PoisonError};
+//! The enumeration runs once per backend and process and is cached ([`list_backend_devices`]), so
+//! checking an id, listed or not, never touches the driver again. A device that disappears later
+//! (an unplugged eGPU) fails inside the backend; CubeCL keeps a device's client for the whole
+//! process too.
 
 use burn::tensor::Device;
 
 use super::discover::{EnumerationError, burn_device, list_backend_devices};
 use super::info::DeviceId;
 
-/// Ids that Burn's enumeration listed in this process. Only ever grows; a handful of entries.
-static LISTED: Mutex<Vec<DeviceId>> = Mutex::new(Vec::new());
-
 /// The Burn device for `id`, or why `id` can't be used: its backend isn't compiled in, or the
 /// backend has no such device. Never panics; enumeration panics are caught by
-/// [`list_backend_devices`].
+/// [`list_backend_devices`]. Must not be called while holding the device lock (the first
+/// enumeration of a backend takes it).
 pub(crate) fn resolve_device(id: DeviceId) -> Result<Device, String> {
     let backend = id.backend();
     let device =
         burn_device(id).ok_or_else(|| format!("the {backend} backend is not compiled in"))?;
-    if !is_listed(id) {
-        check_listed(id, list_backend_devices(backend))?;
-        // The list holds no data that a panic elsewhere could leave half-written.
-        LISTED
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(id);
-    }
+    check_listed(id, list_backend_devices(backend))?;
     Ok(device)
-}
-
-fn is_listed(id: DeviceId) -> bool {
-    LISTED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .contains(&id)
 }
 
 /// Whether `listed`, the enumeration of `id`'s backend, contains `id`. The error names the devices
 /// that do exist.
-fn check_listed(
+pub(crate) fn check_listed(
     id: DeviceId,
     listed: Result<Vec<DeviceId>, EnumerationError>,
 ) -> Result<(), String> {
@@ -155,6 +140,5 @@ mod tests {
     #[test]
     fn cpu_resolves() {
         assert!(resolve_device(DeviceId::Cpu).is_ok());
-        assert!(is_listed(DeviceId::Cpu));
     }
 }
