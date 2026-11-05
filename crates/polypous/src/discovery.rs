@@ -65,6 +65,11 @@ fn enumerate_options(config: &EngineConfig) -> backend::EnumerateOptions {
 /// except devices the config skips (software rasterizers by default), which are listed without
 /// being opened.
 ///
+/// The device lists come from the backend's process-wide enumeration cache, so a second engine
+/// doesn't enumerate again; and every device probed here is open afterwards, so later work on it
+/// creates no Vulkan instance that could race with compute on other threads (placement.md §1,
+/// "When enumeration happens"; issue #26).
+///
 /// Never fails: a backend whose enumeration fails is logged and skipped, and a device that cannot
 /// be opened or fails its probe is reported as unavailable with the reason.
 pub(crate) fn in_process(config: &EngineConfig) -> Vec<DeviceInfo> {

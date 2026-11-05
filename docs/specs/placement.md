@@ -66,8 +66,11 @@ to opt in.
   (`Device::enumerate_physical` skips devices without a card identity, such as the CPU and
   lavapipe, so it is not used directly; the same identity data is used for matching, see below.)
 - `describe_device(id)`: opens the device (creates its CubeCL client, which loads the driver) and
-  reads the fields above. `enumerate_devices_with(&EnumerateOptions { software_rasterizers })` =
-  list + describe, where the devices the options skip (`EnumerateOptions::skips(id)`) get
+  reads the fields above. An id that `list_backend_devices` doesn't list is not opened: the result
+  is `unavailable: probe failed: could not open the device: no such <backend> device (devices
+  found: …)`. `probe_device` rejects such ids without opening them too (`unavailable: probe failed:
+  no such <backend> device (devices found: …)`).
+  `enumerate_devices_with(&EnumerateOptions { software_rasterizers })` = list + describe, where the devices the options skip (`EnumerateOptions::skips(id)`) get
   `skipped_device(id)` instead and are not opened; `enumerate_devices()` uses the default options.
 - `probe_device(id)`: `[[1,2],[3,4]] @ [[5,6],[7,8]] + 1` on the device, read back and compared
   exactly with `[20, 23, 44, 51]` (small integers, exact in f32/tf32/f16).
@@ -75,9 +78,34 @@ to opt in.
   `unavailable: probe failed: …`; the in-process functions report `isolated: false`, the prober
   marks its results isolated. Calls are serialized by a process-wide lock.
 
+**When enumeration happens (issue #26).** Each compiled-in backend is enumerated **at most once per
+process**: on the first successful `list_backend_devices` call for it (directly, through
+`list_devices`/`enumerate_devices*`, through `describe_device`/`probe_device`/`DynTensor` checking an
+id, or through `Engine` discovery). Vulkan and Metal enumeration also reads wgpu's adapter info
+(driver strings for `describe_device`) at that moment. Every later call reuses the cached list, and
+an id that isn't in it fails against the list without enumerating again. Only successful
+enumerations are cached; a failed one (a caught Burn panic) is retried on the next call. Devices
+that appear later in the process lifetime (a newly plugged-in eGPU) are not seen until the process
+restarts. The cache is process-wide hardware state, identical for every `Engine`, and holds no
+configuration (public-api.md §2 rule 9).
+
+Why: enumerating Vulkan devices creates a temporary wgpu instance, and `vkEnumeratePhysicalDevices`
+on a fresh instance makes the Vulkan loader load all installed ICDs and unload the device-less ones
+(`dlclose`). With stock Mesa on Debian 13 (Mesa 25.0.7, loader 1.4.309) that crashes the process
+(SIGSEGV in `libvulkan.so.1`) when another thread computes on a Vulkan GPU at the same time.
+
+**Remaining window.** The first time a Vulkan device is opened in a process (`describe_device`,
+`probe_device`, or the first `DynTensor` on it), CubeCL (cubecl-wgpu 0.11.3, `try_create_setup`)
+enumerates adapters once on a temporary wgpu instance before creating the device; Polypous can't
+change that. Opening a device that was already opened touches no instance. So: **open every Vulkan
+device you will use before Vulkan compute starts on other threads** (the first enumeration itself
+counts as well). `Engine::new` does this for every device it probes, so after discovery only an
+explicit first use of a device discovery didn't open (a skipped software rasterizer, a device that
+failed to open) can still race with compute. CUDA and the CPU backend are not affected.
+
 Tensors address devices by the same ids (issue #19): `DynTensor::from_data(&data, id)`,
 `DynTensor::to_device(id)` and `DynTensor::device()`. An id is usable if its backend is compiled in
-and `list_backend_devices` lists it (ids found once are remembered for the process); anything else
+and `list_backend_devices` lists it (checked against the cached enumeration, see above); anything else
 is `TensorError::DeviceUnavailable`, never a panic. `from_data(&data, id)?.device() == id` for every
 id that `list_devices()` returns. Whether the device passed its probe is not checked there: that is
 the `Engine`'s decision (#14).

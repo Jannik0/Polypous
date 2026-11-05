@@ -7,7 +7,9 @@
 //! Calling the functions that open devices in the app process is only safe for tests and the
 //! in-process fallback: a broken GPU driver can crash the process natively.
 //!
-//! - [`list_devices`]: device ids of every compiled-in backend, without opening devices.
+//! - [`list_devices`]: device ids of every compiled-in backend, without opening devices. Each
+//!   backend is enumerated once per process and the list is reused (placement.md §1, "When
+//!   enumeration happens").
 //! - [`describe_device`]: opens a device and reads name, memory, identity, capabilities.
 //! - [`enumerate_devices`] / [`enumerate_devices_with`]: both, for all devices. Software
 //!   rasterizers (lavapipe, …) are listed but not opened unless [`EnumerateOptions`] opts in.
