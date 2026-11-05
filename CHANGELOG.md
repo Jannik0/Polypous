@@ -49,7 +49,18 @@ All notable changes to Polypous are documented here. The format follows
 - `polyp devices` prints a table of devices (backend, name, kind, dedicated memory, unified memory,
   status) with the primary GPU marked; `polyp devices --json` prints the JSON documented in
   public-api.md §1.2. Logs go to stderr (`RUST_LOG=polypous=debug` shows probe details).
+- `EnumerateOptions { software_rasterizers }`, `enumerate_devices_with`, `skipped_device` and
+  `DeviceId::is_software_rasterizer` in `polypous-backend`, and the `EngineConfig` field
+  `software_rasterizers` (default `false`) in `polypous`.
 
 ### Changed
+- Device discovery lists software rasterizers (Vulkan/Metal adapters of type `cpu`, such as
+  lavapipe) but no longer opens or probes them unless `software_rasterizers` is set. They are shown
+  as unavailable with the new reason code `software_rasterizer_skipped`. This keeps lavapipe on
+  Debian 13 (Mesa 25.0.7) from crashing `polyp devices`, `Engine::new` and the GPU tests; the
+  `VK_DRIVER_FILES` workaround is no longer needed for that. The GPU tests opt in with the test-only
+  variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, which the CI lavapipe job sets. On stock Debian the
+  backend GPU tests still need `--test-threads=1` until #26 (Vulkan enumeration racing with
+  compute) is fixed.
 - On Windows the CPU device shows its marketing name from the registry (`ProcessorNameString`)
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).

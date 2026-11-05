@@ -145,10 +145,15 @@ jobs:
         run: python3 tools/ci/backend_feature.py vulkan | tee -a "$GITHUB_OUTPUT"
 
       # `--include-ignored` also runs the `#[ignore = "gpu"]` tests; with only the `vulkan`
-      # feature compiled in, the only GPU device they find is lavapipe.
+      # feature compiled in, the only GPU device they find is lavapipe. Polypous skips software
+      # rasterizers unless opted in (placement.md §1, issue #21); the test-only variable
+      # POLYPOUS_TEST_SOFTWARE_VULKAN=1 makes the GPU tests open and test lavapipe. `--nocapture`
+      # keeps the device list and the tested devices in the log.
       - name: cargo test --features polypous-backend/vulkan
         if: steps.features.outputs.available == 'true'
-        run: cargo test --workspace --locked ${{ steps.features.outputs.args }} -- --include-ignored
+        env:
+          POLYPOUS_TEST_SOFTWARE_VULKAN: "1"
+        run: cargo test --workspace --locked ${{ steps.features.outputs.args }} -- --include-ignored --nocapture
 
       - name: Skip Vulkan tests (feature not available yet)
         if: steps.features.outputs.available != 'true'

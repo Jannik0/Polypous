@@ -201,7 +201,8 @@ pub struct DeviceCapabilities {
 /// Why a device is unavailable.
 ///
 /// JSON: `{"code":"crashed_during_probe"}`, `{"code":"probe_timed_out"}`,
-/// `{"code":"probe_failed","message":"…"}`, `{"code":"library_missing","library":"…"}`.
+/// `{"code":"probe_failed","message":"…"}`, `{"code":"library_missing","library":"…"}`,
+/// `{"code":"software_rasterizer_skipped"}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -222,6 +223,12 @@ pub enum UnavailableReason {
         /// The library's name.
         library: String,
     },
+    /// A software rasterizer (lavapipe, SwiftShader, … through Vulkan or Metal) that discovery
+    /// listed but did not open or probe, because [`EngineConfig::software_rasterizers`] is off
+    /// (placement.md §1). It is never the primary GPU either way.
+    ///
+    /// [`EngineConfig::software_rasterizers`]: crate::EngineConfig::software_rasterizers
+    SoftwareRasterizerSkipped,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -232,6 +239,9 @@ impl fmt::Display for UnavailableReason {
             UnavailableReason::ProbeFailed { message } => write!(f, "probe failed: {message}"),
             UnavailableReason::LibraryMissing { library } => {
                 write!(f, "library missing: {library}")
+            }
+            UnavailableReason::SoftwareRasterizerSkipped => {
+                f.write_str("software rasterizer skipped (set software_rasterizers to probe it)")
             }
         }
     }
@@ -379,6 +389,9 @@ fn unavailable_reason(value: backend::UnavailableReason) -> UnavailableReason {
         }
         backend::UnavailableReason::LibraryMissing { library } => {
             UnavailableReason::LibraryMissing { library }
+        }
+        backend::UnavailableReason::SoftwareRasterizerSkipped => {
+            UnavailableReason::SoftwareRasterizerSkipped
         }
     }
 }
@@ -613,6 +626,10 @@ pub(crate) mod tests {
                 reason: backend::UnavailableReason::LibraryMissing {
                     library: "libcuda.so".into(),
                 },
+                isolated: false,
+            },
+            backend::DeviceStatus::Unavailable {
+                reason: backend::UnavailableReason::SoftwareRasterizerSkipped,
                 isolated: false,
             },
         ];

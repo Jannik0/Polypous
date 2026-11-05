@@ -9,7 +9,8 @@
 //!
 //! - [`list_devices`]: device ids of every compiled-in backend, without opening devices.
 //! - [`describe_device`]: opens a device and reads name, memory, identity, capabilities.
-//! - [`enumerate_devices`]: both, for all devices.
+//! - [`enumerate_devices`] / [`enumerate_devices_with`]: both, for all devices. Software
+//!   rasterizers (lavapipe, …) are listed but not opened unless [`EnumerateOptions`] opts in.
 //! - [`probe_device`]: initialize, allocate, run a tiny kernel, compare the result.
 //! - [`select_primary_gpu`]: the priority rule of placement.md §1, on a device list.
 //!
@@ -25,7 +26,8 @@ mod select;
 
 pub(crate) use discover::device_id_of;
 pub use discover::{
-    EnumerationError, describe_device, enumerate_devices, list_backend_devices, list_devices,
+    EnumerateOptions, EnumerationError, describe_device, enumerate_devices, enumerate_devices_with,
+    list_backend_devices, list_devices, skipped_device,
 };
 pub use info::{
     AdapterKind, BackendKind, Capabilities, DeviceId, DeviceInfo, DeviceKind, DeviceStatus,

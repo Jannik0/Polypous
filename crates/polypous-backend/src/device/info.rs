@@ -153,6 +153,23 @@ impl DeviceId {
             DeviceId::Cpu => BackendKind::Cpu,
         }
     }
+
+    /// Whether this is a software rasterizer reached through a graphics API: a Vulkan or Metal
+    /// adapter of type [`AdapterKind::Cpu`] (lavapipe, SwiftShader, …). Discovery lists these but
+    /// does not open them unless asked to ([`EnumerateOptions`](super::EnumerateOptions),
+    /// placement.md §1).
+    pub fn is_software_rasterizer(&self) -> bool {
+        matches!(
+            self,
+            DeviceId::Vulkan {
+                adapter: AdapterKind::Cpu,
+                ..
+            } | DeviceId::Metal {
+                adapter: AdapterKind::Cpu,
+                ..
+            }
+        )
+    }
 }
 
 impl fmt::Display for DeviceId {
@@ -242,9 +259,16 @@ pub struct Capabilities {
     pub compute_units: Option<u32>,
 }
 
+/// The text of [`UnavailableReason::SoftwareRasterizerSkipped`]: what happened and how to opt in.
+/// The option has the same name everywhere (`EnumerateOptions`, `EngineConfig`, and the prober's
+/// options with #14).
+pub(crate) const SOFTWARE_RASTERIZER_SKIPPED: &str =
+    "software rasterizer skipped (set software_rasterizers to probe it)";
+
 /// Why a device is unavailable (placement.md §1).
 ///
-/// JSON: `{"code":"probe_failed","message":"…"}`, `{"code":"crashed_during_probe"}`, ….
+/// JSON: `{"code":"probe_failed","message":"…"}`, `{"code":"crashed_during_probe"}`,
+/// `{"code":"software_rasterizer_skipped"}`, ….
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum UnavailableReason {
@@ -262,6 +286,10 @@ pub enum UnavailableReason {
         /// The library's name, for example `libcuda.so`.
         library: String,
     },
+    /// A software rasterizer ([`DeviceId::is_software_rasterizer`]) that discovery listed but did
+    /// not open or probe, because the caller did not opt in (`software_rasterizers`). Such a
+    /// device is never the primary GPU anyway; opening one only risks a driver crash.
+    SoftwareRasterizerSkipped,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -272,6 +300,9 @@ impl fmt::Display for UnavailableReason {
             UnavailableReason::ProbeFailed { message } => write!(f, "probe failed: {message}"),
             UnavailableReason::LibraryMissing { library } => {
                 write!(f, "library missing: {library}")
+            }
+            UnavailableReason::SoftwareRasterizerSkipped => {
+                f.write_str(SOFTWARE_RASTERIZER_SKIPPED)
             }
         }
     }
@@ -432,6 +463,47 @@ mod tests {
             .unwrap(),
             r#"{"state":"unavailable","reason":{"code":"crashed_during_probe"},"isolated":true}"#
         );
+    }
+
+    #[test]
+    fn software_rasterizer_skipped_json_and_text_are_stable() {
+        let status = DeviceStatus::Unavailable {
+            reason: UnavailableReason::SoftwareRasterizerSkipped,
+            isolated: false,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(
+            json,
+            r#"{"state":"unavailable","reason":{"code":"software_rasterizer_skipped"},"isolated":false}"#
+        );
+        assert_eq!(serde_json::from_str::<DeviceStatus>(&json).unwrap(), status);
+        assert_eq!(
+            status.to_string(),
+            "unavailable: software rasterizer skipped (set software_rasterizers to probe it), \
+             not isolated"
+        );
+        assert!(!status.is_available());
+    }
+
+    #[test]
+    fn software_rasterizers_are_cpu_adapters_of_graphics_apis() {
+        let adapters = [
+            AdapterKind::DiscreteGpu,
+            AdapterKind::IntegratedGpu,
+            AdapterKind::VirtualGpu,
+            AdapterKind::Cpu,
+            AdapterKind::Other,
+        ];
+        for adapter in adapters {
+            let software = adapter == AdapterKind::Cpu;
+            let vulkan = DeviceId::Vulkan { adapter, index: 0 };
+            let metal = DeviceId::Metal { adapter, index: 0 };
+            assert_eq!(vulkan.is_software_rasterizer(), software, "{vulkan}");
+            assert_eq!(metal.is_software_rasterizer(), software, "{metal}");
+        }
+        // The CPU backend is not a software rasterizer: it is the CPU itself.
+        assert!(!DeviceId::Cpu.is_software_rasterizer());
+        assert!(!DeviceId::Cuda { index: 0 }.is_software_rasterizer());
     }
 
     #[test]

@@ -77,13 +77,21 @@ Once M0 is done, `cargo run -p polypous-cli -- devices` shows what Polypous dete
   nothing in `Cargo.lock` links OpenSSL.)
 - `mesa-vulkan-drivers` provides the Intel driver (ANV) **and** lavapipe (llvmpipe), and Vulkan always
   lists lavapipe next to the real GPUs (as `vulkan:cpu:0`). **On Debian 13 (Mesa 25.0.7, LLVM 19)
-  lavapipe crashes the process (SIGSEGV) on its first compute work**, so GPU tests that touch every
-  device crash on a stock install. Until the prober process (#14) isolates this, hide lavapipe for
-  GPU tests:
-  `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/intel_icd.json`.
-  (Mesa 25.2.8 lavapipe on Ubuntu, as in CI and the cloud sessions, works.)
+  lavapipe crashes the process (SIGSEGV) on its first compute work**. Polypous therefore lists
+  software rasterizers but does not open or probe them unless the caller opts in
+  (`software_rasterizers`, placement.md §1; issue #21), and the GPU tests skip them the same way, so
+  `polyp devices` works on a stock install without any `VK_DRIVER_FILES` workaround: `vulkan:cpu:0`
+  is shown as skipped. (Mesa 25.2.8 lavapipe on Ubuntu, as in CI and the cloud sessions, works.)
+- **Run the backend GPU tests single-threaded on a stock Debian install**
+  (`cargo test -p polypous-backend --features cuda,vulkan -- --include-ignored --test-threads=1`).
+  In parallel they crash with SIGSEGV in most runs: one test enumerates Vulkan devices, which makes
+  the Vulkan loader load and unload Mesa's device-less ICDs, while another test computes on a
+  Vulkan GPU. This is a library bug, not a lavapipe one (#26); hiding the extra ICDs with
+  `VK_DRIVER_FILES` also avoids it.
 - For Vulkan software-driver testing (as in CI), select lavapipe alone with `VK_DRIVER_FILES`
-  pointing at `lvp_icd.*.json` (for example `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`).
+  pointing at `lvp_icd.*.json` (for example `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`)
+  **and** set the test-only variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, so the GPU tests open and
+  test it instead of skipping it.
 - A first `--features vulkan` or `--features cuda` build compiles wgpu/CubeCL and takes several
   minutes (about 3.5 min for `vulkan` on a 4-vCPU cloud VM). The default `cpu` build is much lighter.
 - **Disk space:** each debug test binary with `cuda` or `vulkan` is about 1.2 GB on Linux (debug info

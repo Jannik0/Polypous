@@ -136,10 +136,16 @@ Implemented so far: `Engine::new`, `Engine::devices`, `Engine::primary_gpu`, `En
 | `engine.devices() -> Vec<DeviceInfo>` | All devices in probe order (GPU priority order, the CPU last), the primary GPU with `primary: true` |
 | `engine.primary_gpu() -> Option<DeviceInfo>` | The device with `primary: true`, or `None` (CPU only) |
 
-**`EngineConfig` JSON.** An object. It has no fields yet, so the defaults are `{}`. Unknown fields,
-and any JSON that is not an object, are an `InvalidInput` error (so a misspelled option never goes
-unnoticed). Later fields (`probe_report`, `prober_path`, `probe_cache_dir` with #14, placement
-options with M4) are optional with documented defaults, so `{}` stays valid.
+**`EngineConfig` JSON.** An object; every field is optional, so `{}` is the defaults. Unknown
+fields, and any JSON that is not an object, are an `InvalidInput` error (so a misspelled option never
+goes unnoticed). `to_json` writes every field.
+
+| Field | Type, default | Meaning |
+|---|---|---|
+| `software_rasterizers` | bool, `false` | Open and probe software rasterizers (Vulkan/Metal adapters of type `cpu`: lavapipe, SwiftShader, …). Off: they are listed with the reason `software_rasterizer_skipped` and never opened ([placement.md §1](placement.md#1-device-discovery)). They are never the primary GPU either way. `polyp devices` uses the default |
+
+Later fields (`probe_report`, `prober_path`, `probe_cache_dir` with #14, placement options with M4)
+are optional with documented defaults, so `{}` stays valid.
 
 **Device JSON** (`DeviceInfo`, an array of them from `devices()`). The fields, names and values are
 those of the backend's `DeviceInfo` in [placement.md §1](placement.md#1-device-discovery), plus
@@ -164,7 +170,8 @@ without changing this JSON.
                    "max_buffer_size": 6441926656, "max_shared_memory": 49152, "compute_units": 30},
   "status": {"state": "available", "isolated": false},
       // or {"state":"not_probed"}, {"state":"unavailable","reason":{"code":"probe_failed","message":"…"},"isolated":false};
-      // reason codes: crashed_during_probe, probe_timed_out, probe_failed (+message), library_missing (+library)
+      // reason codes: crashed_during_probe, probe_timed_out, probe_failed (+message), library_missing (+library),
+      // software_rasterizer_skipped (listed, not opened; EngineConfig.software_rasterizers opts in)
   "primary": true                              // the primary GPU (placement.md §1); at most one device, none for CPU only
 }
 ```

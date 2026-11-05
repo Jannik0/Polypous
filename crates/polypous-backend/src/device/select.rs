@@ -256,6 +256,30 @@ mod tests {
     }
 
     #[test]
+    fn skipped_lavapipe_changes_nothing() {
+        // Debian 13 with stock Mesa: lavapipe is listed and skipped (EnumerateOptions default).
+        let mut devices = reference_machine();
+        devices.insert(
+            3,
+            crate::device::skipped_device(DeviceId::Vulkan {
+                adapter: AdapterKind::Cpu,
+                index: 0,
+            }),
+        );
+        assert_eq!(
+            select_primary_gpu(&devices).unwrap().id,
+            DeviceId::Cuda { index: 0 }
+        );
+        assert_eq!(
+            group_physical_devices(&devices),
+            vec![vec![0, 1], vec![2], vec![3], vec![4]]
+        );
+        // Lavapipe and the CPU alone: CPU only, whether lavapipe was skipped or probed.
+        let lavapipe = devices.remove(3);
+        assert!(select_primary_gpu(&[lavapipe, cpu()]).is_none());
+    }
+
+    #[test]
     fn virtual_gpu_is_not_chosen() {
         let devices = vec![vulkan(AdapterKind::VirtualGpu, 0, 8 * GB, None)];
         assert!(select_primary_gpu(&devices).is_none());

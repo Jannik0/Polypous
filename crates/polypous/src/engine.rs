@@ -12,14 +12,26 @@ use crate::error::{Error, ErrorKind, guard};
 /// Configuration of an [`Engine`]. Every field is optional; `EngineConfig::default()` is the
 /// recommended configuration.
 ///
-/// JSON (public-api.md §1.2): an object, `{}` for the defaults. Unknown fields are an
-/// [`ErrorKind::InvalidInput`] error, so a misspelled option is never silently ignored. Fields are
-/// added as the engine grows (`probe_report`, `prober_path`, `probe_cache_dir` with #14; placement
-/// options with M4); each one is optional with a documented default.
+/// JSON (public-api.md §1.2): an object, `{}` for the defaults, for example
+/// `{"software_rasterizers":true}`. Unknown fields are an [`ErrorKind::InvalidInput`] error, so a
+/// misspelled option is never silently ignored. Fields are added as the engine grows
+/// (`probe_report`, `prober_path`, `probe_cache_dir` with #14; placement options with M4); each one
+/// is optional with a documented default.
+///
+/// The struct is `#[non_exhaustive]`: start from `EngineConfig::default()` and set fields.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[non_exhaustive]
-pub struct EngineConfig {}
+pub struct EngineConfig {
+    /// Whether discovery opens and probes software rasterizers: Vulkan or Metal adapters of type
+    /// `cpu` such as lavapipe or SwiftShader (placement.md §1). Default `false`: they are listed
+    /// as unavailable with the reason
+    /// [`SoftwareRasterizerSkipped`](crate::UnavailableReason::SoftwareRasterizerSkipped) and
+    /// never opened. They are never the primary GPU (the CPU backend is faster), and some crash
+    /// the process on their first compute work (lavapipe with Mesa 25.0 on Debian 13). Turn it on
+    /// to test them.
+    pub software_rasterizers: bool,
+}
 
 impl EngineConfig {
     /// Reads a config from its JSON form, the equivalent of constructing it in Rust
@@ -156,17 +168,35 @@ mod tests {
 
     #[test]
     fn config_json_round_trips() {
-        assert_eq!(EngineConfig::default().to_json(), "{}");
+        assert_eq!(
+            EngineConfig::default().to_json(),
+            r#"{"software_rasterizers":false}"#
+        );
         assert_eq!(EngineConfig::from_json("{}"), Ok(EngineConfig::default()));
         assert_eq!(
             EngineConfig::from_json(" { } "),
             Ok(EngineConfig::default())
         );
+        let mut opt_in = EngineConfig::default();
+        assert!(!opt_in.software_rasterizers);
+        opt_in.software_rasterizers = true;
+        assert_eq!(
+            EngineConfig::from_json(r#"{"software_rasterizers":true}"#),
+            Ok(opt_in.clone())
+        );
+        assert_eq!(EngineConfig::from_json(&opt_in.to_json()), Ok(opt_in));
     }
 
     #[test]
     fn bad_config_json_is_invalid_input() {
-        for json in [r#"{"devcie":"auto"}"#, "[]", "null", "{", ""] {
+        for json in [
+            r#"{"devcie":"auto"}"#,
+            r#"{"software_rasterizers":"yes"}"#,
+            "[]",
+            "null",
+            "{",
+            "",
+        ] {
             let error = EngineConfig::from_json(json).unwrap_err();
             assert_eq!(error.kind, ErrorKind::InvalidInput, "{json}");
             assert_eq!(
