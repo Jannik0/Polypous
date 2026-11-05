@@ -58,7 +58,9 @@ All notable changes to Polypous are documented here. The format follows
   lavapipe) but no longer opens or probes them unless `software_rasterizers` is set. They are shown
   as unavailable with the new reason code `software_rasterizer_skipped`. This keeps lavapipe on
   Debian 13 (Mesa 25.0.7) from crashing `polyp devices`, `Engine::new` and the GPU tests; the
-  `VK_DRIVER_FILES` workaround is no longer needed there. The GPU tests opt in with the test-only
-  variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, which the CI lavapipe job sets.
+  `VK_DRIVER_FILES` workaround is no longer needed for that. The GPU tests opt in with the test-only
+  variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, which the CI lavapipe job sets. On stock Debian the
+  backend GPU tests still need `--test-threads=1` until #26 (Vulkan enumeration racing with
+  compute) is fixed.
 - On Windows the CPU device shows its marketing name from the registry (`ProcessorNameString`)
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).

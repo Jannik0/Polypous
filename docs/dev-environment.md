@@ -80,9 +80,14 @@ Once M0 is done, `cargo run -p polypous-cli -- devices` shows what Polypous dete
   lavapipe crashes the process (SIGSEGV) on its first compute work**. Polypous therefore lists
   software rasterizers but does not open or probe them unless the caller opts in
   (`software_rasterizers`, placement.md §1; issue #21), and the GPU tests skip them the same way, so
-  **GPU tests and `polyp devices` work on a stock install without any `VK_DRIVER_FILES`
-  workaround**: `vulkan:cpu:0` is shown as skipped. (Mesa 25.2.8 lavapipe on Ubuntu, as in CI and
-  the cloud sessions, works.)
+  `polyp devices` works on a stock install without any `VK_DRIVER_FILES` workaround: `vulkan:cpu:0`
+  is shown as skipped. (Mesa 25.2.8 lavapipe on Ubuntu, as in CI and the cloud sessions, works.)
+- **Run the backend GPU tests single-threaded on a stock Debian install**
+  (`cargo test -p polypous-backend --features cuda,vulkan -- --include-ignored --test-threads=1`).
+  In parallel they crash with SIGSEGV in most runs: one test enumerates Vulkan devices, which makes
+  the Vulkan loader load and unload Mesa's device-less ICDs, while another test computes on a
+  Vulkan GPU. This is a library bug, not a lavapipe one (#26); hiding the extra ICDs with
+  `VK_DRIVER_FILES` also avoids it.
 - For Vulkan software-driver testing (as in CI), select lavapipe alone with `VK_DRIVER_FILES`
   pointing at `lvp_icd.*.json` (for example `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`)
   **and** set the test-only variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, so the GPU tests open and
