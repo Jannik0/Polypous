@@ -12,6 +12,11 @@ Vulkan where possible).
 
 ## M0 — Foundations
 
+**Status: done (2026-11-06).** Exit criteria verified on Windows 11 and Debian 13, results in
+[#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754). M0 also delivered
+crash-safe probing in a separate prober process with a probe cache ([ADR-0013](adr/0013-crash-safe-device-probing.md)).
+Current state and known limitations: [status.md](status.md).
+
 Scope: Cargo workspace, CI, Burn pin, backend selection, device discovery.
 
 - Workspace with the crates from [architecture.md](architecture.md) (empty where not yet needed).
