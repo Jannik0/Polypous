@@ -7,6 +7,7 @@
 | [project-brief.md](project-brief.md) | understand the vision, users, priorities, goals, non-goals and the v1 target |
 | [architecture.md](architecture.md) | see how the crates fit together and how data flows |
 | [roadmap.md](roadmap.md) | know what gets built in which milestone, and when a milestone is done |
+| [status.md](status.md) | see what exists now, what's verified, known limitations, and where the next milestone starts |
 | [glossary.md](glossary.md) | look up terms (block, tier, `.polyp`, session, …) |
 
 ## Specifications ([`specs/`](specs/))
@@ -33,7 +34,7 @@ See the [ADR index](adr/README.md).
 |---|---|
 | [../CLAUDE.md](../CLAUDE.md) | AI agents (and humans): rules, commands, conventions |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Humans: quick start and PR checklist |
-| [development-workflow.md](development-workflow.md) | Tasks, lifecycle, definition of done, parallel agents |
+| [development-workflow.md](development-workflow.md) | Tasks, lifecycle, definition of done, parallel agents, lead and worker agents |
 | [testing-strategy.md](testing-strategy.md) | Test levels, tolerances, fixtures, backends in CI |
 | [dev-environment.md](dev-environment.md) | Setting up Windows/Debian, CUDA, Vulkan, Python |
 | [hardware-targets.md](hardware-targets.md) | Target machines, memory budgets, expected placements |

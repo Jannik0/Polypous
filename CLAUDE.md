@@ -8,9 +8,12 @@ entry point. Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). The rul
 
 1. [docs/project-brief.md](docs/project-brief.md): priorities (correctness > stability > ease of use > portability > performance), goals, non-goals.
 2. [docs/architecture.md](docs/architecture.md): crates and their boundaries.
+   [docs/status.md](docs/status.md): what exists now, what's verified, known limitations, where the
+   current milestone starts.
 3. The **spec** for the area you are touching, in [docs/specs/](docs/specs/).
 4. Relevant **ADRs** in [docs/adr/](docs/adr/). Accepted ADRs are binding.
-5. [docs/development-workflow.md](docs/development-workflow.md): how a task goes from start to done.
+5. [docs/development-workflow.md](docs/development-workflow.md): how a task goes from start to done,
+   and (§8) how a lead agent delegates to cloud and local workers, reviews and merges.
 
 ## Hard rules
 
@@ -45,18 +48,21 @@ entry point. Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). The rul
 
 ## Commands
 
-> The workspace crates are skeletons for now. The GPU features, the CLI subcommands and the fixture
-> script arrive with later milestones; until then those commands are the planned interface.
-
 ```bash
 cargo fmt --all                                   # format
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features polypous/cuda,polypous/vulkan -- -D warnings
 cargo test --workspace                            # CPU tests, must pass everywhere
-cargo test --workspace --features cuda,vulkan -- --include-ignored gpu   # GPU tests on the reference machine
-cargo run -p polypous-cli -- devices              # list detected devices
-cargo run -p polypous-cli -- validate polyps/llama.polyp
-python tools/reference/fetch_fixtures.py          # download large fixtures (hash-verified)
+cargo test --workspace --features polypous/cuda,polypous/vulkan -- --include-ignored   # GPU tests on the reference machine
+cargo run -p polypous-cli --features cuda,vulkan -- devices   # detected devices, isolated probing
 ```
+
+On PowerShell, refresh `PATH` first if `cargo` isn't found (development-workflow.md §8.5). After
+`cargo test`, rebuild `polyp` before using `target/debug/polyp`: the test build contains prober
+fault injection.
+
+Planned, not there yet: `polyp validate polyps/llama.polyp` (M3) and
+`python tools/reference/fetch_fixtures.py` (download large fixtures, hash-verified; M1).
 
 ## Conventions
 

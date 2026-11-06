@@ -79,3 +79,97 @@ Stop and report instead of guessing when:
 - a reference implementation disagrees with the spec
 - a test needs hardware that is not available (report it, don't skip it silently)
 - a tolerance would need loosening
+
+## 8. Lead agent and worker agents
+
+A milestone is run by one **lead agent** that plans, delegates, reviews and verifies, and by
+**worker agents** that implement one task each. This is how M0 ran; the notes below are what worked.
+
+### 8.1 Roles
+
+- **Owner:** accepts ADRs, approves every merge, and passes prompts and reports between the lead and
+  local workers. A cloud lead can't start or message sessions on the owner's machines. The owner
+  also does whatever needs a person: reboots, driver updates, admin rights.
+- **Lead:**
+  - Turns the roadmap into issues on a milestone (task template in §2).
+  - Decides where each task runs, writes the worker prompts, and reviews PRs.
+  - Gets reference-machine results before merging backend, kernel or probing changes.
+  - Merges after the owner says so, and keeps [status.md](status.md) current.
+  - Implements only small fixes itself.
+- **Workers:** one task, one branch, one PR, as in §3–§5. They report what they verified and what
+  they couldn't, and never merge.
+
+### 8.2 Where a task runs
+
+| Worker | Use it for | Can't do |
+|---|---|---|
+| **Cloud session** (Ubuntu, 4 vCPU, no GPU; [dev-environment.md](dev-environment.md#cloud-environments-for-agents)) | Pure-Rust crates (IR, formats, parsers, planner), CPU kernels, CPU reference tests, docs, CI | CUDA, real-GPU Vulkan, driver behavior. Lavapipe only |
+| **Local Windows session** on the reference machine | CUDA and Vulkan on Windows, Windows-only code (registry, DLLs), checks that need a reboot or a driver update (the owner performs those) | Linux driver behavior |
+| **Local Debian session** on the reference machine | Linux driver behavior, the real lavapipe crash (opt-in), Vulkan loader issues, hiding libraries in a private namespace (`unshare --user --map-root-user --mount` plus overlay whiteouts, no root) | Windows specifics |
+
+When a bug only reproduces on the reference machine, give the whole **reproduce → fix → verify**
+loop to that machine's local worker instead of a cloud worker that would have to fix blind. #26 (the
+Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went this way.
+
+### 8.3 What every worker prompt contains
+
+- **Task and sources:**
+  - The issue number. Read it with `gh api repos/Jannik0/Polypous/issues/N --jq .body`, because in cloud sessions `gh issue`/`gh pr` fail with HTTP 403.
+  - What to read first: CLAUDE.md, the spec sections, the ADRs.
+  - The branch name, starting from a fresh `main`.
+- **Identity:**
+  - In local sessions, `git config user.email` must be the owner's no-reply address (CLAUDE.md).
+  - Check `gh auth status`. If gh isn't logged in, commit but don't push, and report the branch state.
+- **Environment:**
+  - Unset `VK_DRIVER_FILES`, `VK_ICD_FILENAMES`, `POLYPOUS_TEST_SOFTWARE_VULKAN`, `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER` unless the task sets them.
+  - Rebuild `polyp` with `cargo build -p polypous-cli --features cuda,vulkan` after any `cargo test`: the test build at `target/debug/polyp` contains prober fault injection.
+  - Use a fresh `--probe-cache-dir` for cold runs.
+- **Done when:**
+  - Observable criteria with the exact expected output.
+  - For every bug fix, a **negative check**: revert only the fix, show that the new test (and the real-hardware symptom) fails, then restore.
+- **Scope:** what's out of scope, and which files to stay out of when other workers run in parallel.
+- **Verification:** the exact commands. Cloud workers state that they ran CPU and lavapipe only.
+- **PR rules:**
+  - "Decisions", "Verification" and "Not verified" sections.
+  - `Closes #N`, or `Part of #N` when the issue stays open.
+  - Wait for green CI. Don't merge.
+  - The attribution rules of CLAUDE.md. After opening the PR, re-read its body through the API.
+- **The report back:** the PR link, results, decisions, and what wasn't verified.
+
+### 8.4 Reviewing and merging
+
+1. **Checks:**
+   - All seven required checks are green.
+   - Every commit has the owner's no-reply address and ends with `Co-Authored-By: Claude <noreply@anthropic.com>`.
+   - The PR title and description have no session link and no model name (the PR-text job enforces this).
+2. **Review focus:**
+   - Untrusted input is bounded: files, prober output, registry, sysfs.
+   - No panics across the API.
+   - No state that differs between `Engine`s (public-api.md §2 rule 9). A process-wide hardware cache is acceptable when documented.
+   - No Burn types outside `polypous-backend`/`polypous-quant`.
+   - Spec, code, tests and `CHANGELOG.md` agree.
+   - Tests can fail: negative checks were shown.
+3. **Reference machine:** for backend, kernel and probing changes, run the GPU tests and the relevant real-hardware checks on Windows, and on Debian when Linux behavior is involved. Record the results in the PR description.
+4. **Merge** after the owner's go:
+   - The ruleset allows squash merges only.
+   - Merge through the REST API: `PUT repos/Jannik0/Polypous/pulls/N/merge` with:
+     - `merge_method: squash`
+     - `commit_title: "<title> (#N)"`
+     - a `commit_message` that summarizes the change and its verification, ending with the co-author line
+     - `sha`: the head commit you verified
+5. **A branch behind `main`:** merge `main` into the branch, resolve conflicts (usually `CHANGELOG.md`), re-verify and push. The ruleset forbids force pushes.
+6. **After the merge:**
+   - Make sure the issue closed.
+   - Check that the branch was deleted. The repository deletes merged branches automatically, but not always.
+   - Update [status.md](status.md) when a milestone item or known limitation changed.
+
+### 8.5 Tool quirks seen in M0
+
+- **Cloud sessions:**
+  - The harness appends a session-link footer to PR descriptions written through `gh api`. The PR-text job fails on it. Edit the description (or write it with the GitHub tool) until only the required footer remains.
+  - The app's **Auto-fix** CI monitor can only be turned on for a PR the app knows the session opened. Otherwise the lead checks CI itself.
+- **Safety checks:** auto-mode safety checks can block destructive git operations (deleting a remote branch) and file deletions inside scripts. Don't work around them; ask the owner.
+- **Windows PowerShell:**
+  - Refresh `PATH` before `cargo`: `$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")`.
+  - Piping `cargo` into `Select-Object -First N` cuts the pipeline short and distorts the exit code. Write logs to a file instead.
+- **`target/`:** debug test binaries with `cuda` or `vulkan` are about 1.2 GB each.

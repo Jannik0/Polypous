@@ -160,7 +160,9 @@ Windows, it shows that a stock install can crash the process during probing: a s
 case for ADR-0013.
 
 Not checked yet: a `cuda` build on a Windows machine without any NVIDIA driver (confirmed on Linux
-only), Metal (CI build only).
+only), Metal (CI build only). (M0 exit check, #7: on Windows this was approximated with
+`CUDA_VISIBLE_DEVICES=-1`, and the build starts, falls back to Vulkan and names the reason; on
+Debian `libcuda` was hidden for real. A Windows machine without the driver is still unchecked.)
 
 **Consequence for device probing (#4):** a GPU driver can crash the whole process during device
 initialization. That can't be caught inside the process, and casual users often run old drivers.

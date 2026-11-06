@@ -40,8 +40,10 @@ needed to *build* with `--features vulkan`.
   compiled to PTX with the bundled LLVM, so NVRTC and the rest of the CUDA Toolkit are not needed
   to run (confirmed on the reference machine on Windows and Debian, see ADR-0007's follow-up
   notes). Toolkit versions 11.4–13.4 are supported.
-- Without a driver, a `cuda` build starts and finds no CUDA devices (checked on Linux without
-  CUDA; Windows not checked yet).
+- Without a driver, a `cuda` build starts, finds no CUDA devices and says why, for example
+  `cuda: compiled in, but no device found: the driver library libcuda.so.1 is not installed`
+  (checked on Linux by hiding `libcuda`; on Windows approximated with `CUDA_VISIBLE_DEVICES=-1`,
+  since `nvcuda.dll` can't be hidden without admin rights).
 
 Smoke test for a backend (runs a 2×2 matmul on the first device found, or reports that there is none):
 
@@ -63,7 +65,17 @@ nvidia-smi
 vulkaninfo --summary
 ```
 
-Once M0 is done, `cargo run -p polypous-cli -- devices` shows what Polypous detects.
+What Polypous detects, with isolated probing and the probe cache (the `GPU` column groups rows that
+are one physical card):
+
+```bash
+cargo run -p polypous-cli --features cuda,vulkan -- devices
+```
+
+Add `RUST_LOG=polypous=info` to see prober starts and cache hits, `--json --report` for the full
+probe report, and `--probe-cache-dir <dir>` for a cold run without touching the default cache.
+After `cargo test`, run `cargo build -p polypous-cli --features cuda,vulkan` again before using
+`target/debug/polyp`: the test build contains the prober's fault injection.
 
 ## Windows notes
 
