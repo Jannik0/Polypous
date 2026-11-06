@@ -76,6 +76,7 @@ fn devices_json_lists_the_cpu() {
         "identity",
         "capabilities",
         "status",
+        "physical_gpu",
         "primary",
     ];
     for device in devices {
@@ -109,13 +110,23 @@ fn devices_table_lists_the_cpu() {
     let table = String::from_utf8(output.stdout).expect("UTF-8 output");
     let mut lines = table.lines();
     let header = lines.next().expect("a header line");
-    for column in ["BACKEND", "NAME", "KIND", "DEDICATED", "UNIFIED", "STATUS"] {
+    for column in [
+        "GPU",
+        "BACKEND",
+        "NAME",
+        "KIND",
+        "DEDICATED",
+        "UNIFIED",
+        "STATUS",
+    ] {
         assert!(header.contains(column), "{header}");
     }
     assert!(
-        table
-            .lines()
-            .any(|line| line.trim_start().starts_with("cpu ") && line.contains("available")),
+        table.lines().any(|line| {
+            // The CPU row: no primary marker, no physical GPU (`-`), backend `cpu`.
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            cells.starts_with(&["-", "cpu"]) && line.contains("available")
+        }),
         "{table}"
     );
     assert!(

@@ -91,6 +91,32 @@ pub fn current() -> Option<SystemFingerprint> {
         });
     }
     os::current()
+        .map(|fingerprint| with_cuda_variables(fingerprint, &|name| std::env::var(name).ok()))
+}
+
+/// Variables that change which CUDA devices exist or how they are numbered.
+const CUDA_VARIABLES: [&str; 2] = ["CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER"];
+
+/// Adds the CUDA variables that are set to every GPU fingerprint and the shared one, so setting or
+/// changing them invalidates the cached devices (placement.md §1, "Driver fingerprint"). Unset
+/// variables change nothing, so caches written without them stay valid.
+fn with_cuda_variables(
+    mut fingerprint: SystemFingerprint,
+    variable: &dyn Fn(&str) -> Option<String>,
+) -> SystemFingerprint {
+    let set: Vec<String> = CUDA_VARIABLES
+        .iter()
+        .filter_map(|name| variable(name).map(|value| format!("{name}={value}")))
+        .collect();
+    if set.is_empty() {
+        return fingerprint;
+    }
+    let suffix = format!(";cuda_variables={}", set.join(","));
+    for gpu in fingerprint.gpus.values_mut() {
+        gpu.push_str(&suffix);
+    }
+    fingerprint.shared.push_str(&suffix);
+    fingerprint
 }
 
 #[cfg(target_os = "linux")]
@@ -738,5 +764,43 @@ mod tests {
             Some("nvidia-615;gpus=pci:0000:00:02.0,pci:0000:01:00.0".into())
         );
         assert_eq!(machine.for_device(None, None), Some("shared".into()));
+    }
+
+    #[test]
+    fn cuda_variables_change_every_fingerprint() {
+        let unset = with_cuda_variables(machine(), &|_| None);
+        assert_eq!(unset, machine());
+
+        let hidden = with_cuda_variables(machine(), &|name| {
+            (name == "CUDA_VISIBLE_DEVICES").then(|| "-1".to_string())
+        });
+        for key in ["pci:0000:01:00.0", "pci:0000:00:02.0"] {
+            assert_eq!(
+                hidden.gpus[key],
+                format!(
+                    "{};cuda_variables=CUDA_VISIBLE_DEVICES=-1",
+                    machine().gpus[key]
+                )
+            );
+        }
+        assert_eq!(
+            hidden.shared,
+            "shared;cuda_variables=CUDA_VISIBLE_DEVICES=-1"
+        );
+        // A CUDA device matched by its PCI address sees the change too.
+        assert_ne!(
+            hidden.for_device(None, Some("0000:01:00.0")),
+            machine().for_device(None, Some("0000:01:00.0"))
+        );
+
+        let both = with_cuda_variables(machine(), &|name| match name {
+            "CUDA_VISIBLE_DEVICES" => Some("1".into()),
+            "CUDA_DEVICE_ORDER" => Some("PCI_BUS_ID".into()),
+            _ => None,
+        });
+        assert!(
+            both.shared
+                .ends_with("cuda_variables=CUDA_VISIBLE_DEVICES=1,CUDA_DEVICE_ORDER=PCI_BUS_ID")
+        );
     }
 }
