@@ -169,7 +169,7 @@ prober writes one JSON object per line to stdout, `type` naming it:
 |---|---|
 | `{"type":"header","protocol":1,"polypous_version":"…"}` | First line |
 | `{"type":"enumerating","backend":"vulkan"}` | Enumeration of a backend starts |
-| `{"type":"enumerated","device":{"id":…,"key":…,"enum_fingerprint":…}}` | A device found, not opened. `key`: `pci:<address>` where the graphics API reports it at enumeration (Vulkan, Metal), else null. `enum_fingerprint`: adapter name, PCI vendor/device ids and driver strings from wgpu's adapter info, else null |
+| `{"type":"enumerated","device":{"id":…,"key":…,"enum_fingerprint":…}}` | A device found, not opened. `key`: `pci:<address>` where the graphics API reports it at enumeration (Vulkan, Metal); else the key of the one GPU in the OS fingerprint with the same PCI vendor and device id (Intel iGPUs through Vulkan on Windows; see "Driver fingerprint"); else null. `enum_fingerprint`: adapter name, PCI vendor/device ids and driver strings from wgpu's adapter info, else null |
 | `{"type":"enumeration_failed","backend":…,"message":…}` | Enumeration panicked (caught) |
 | `{"type":"skipped","id":…,"rule":N}` | Matched skip rule N; not opened |
 | `{"type":"probing","id":…}` | Written and flushed **before** the device is opened |
@@ -237,8 +237,22 @@ the same for the library it names. The shared fingerprint (CPU, software rasteri
 a key) has the kernel release, NVIDIA version, Vulkan driver set and the GPU key set. A device's
 fingerprint is its GPU's by enumeration key; else by the PCI address its description reported, plus
 the GPU key set (it is matched by id, which depends on the device set); else the shared one. Nothing
-here opens a device node or loads a library. **Windows** (#28) **and macOS** report unknown for now,
-which takes the enumerate-only path. LUIDs are never a key.
+here opens a device node or loads a library. **Windows:** GPUs are the present display
+adapters among the PCI device instances under `HKLM\SYSTEM\CurrentControlSet\Enum\PCI` (class GUID
+`{4d36e968-e325-11ce-bfc1-08002be10318}`; present means the instance has its volatile `Control`
+subkey, which Windows creates while the device is started). The key is `pci:0000:<bus>:<device>.<function>`
+from the `(bus,device,function)` triple in `LocationInformation` (Windows doesn't store the PCI
+segment there; 0 is assumed). A GPU's fingerprint is its instance id (PCI vendor, device, subsystem,
+revision) and, from its driver key (`HKLM\SYSTEM\CurrentControlSet\Control\Class\<Driver>`),
+`DriverVersion`, `DriverDate`, `ProviderName` and `MatchingDeviceId`. The shared fingerprint has the
+Windows build (`CurrentBuild` and `UBR` under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`),
+size and modification time of the Vulkan loader `%SystemRoot%\System32\vulkan-1.dll`, the loader
+variables `VK_DRIVER_FILES`, `VK_ICD_FILENAMES`, `VK_ADD_DRIVER_FILES`, every GPU's fingerprint and
+the GPU key set. If the registry can't be read, the fingerprint is unknown. **Adapters without a PCI
+address at enumeration** (Intel iGPUs through Vulkan on Windows report only a LUID): the enumeration
+key is that of the one present GPU with the same PCI vendor and device id; if none or several match,
+there is no key. **macOS** reports unknown for now, which takes the enumerate-only path. LUIDs are
+never a key.
 
 A device recorded as `crashed during probe` or `probe timed out` stays unavailable, without being
 opened, while its fingerprint is unchanged. `force` re-probes it **out of process only**: in-process

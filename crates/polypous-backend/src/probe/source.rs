@@ -7,6 +7,7 @@ use crate::device::{
     self, BackendKind, DeviceId, DeviceInfo, DeviceStatus, EnumerationError, enumeration_details,
 };
 
+use super::fingerprint;
 use super::protocol::EnumeratedDevice;
 
 /// The device operations a probe session needs. The real implementation is [`RealDevices`];
@@ -35,11 +36,17 @@ impl DeviceSource for RealDevices {
     }
 
     fn details(&self, id: DeviceId) -> EnumeratedDevice {
-        let (key, enum_fingerprint) = enumeration_details(id);
+        let details = enumeration_details(id);
+        // No PCI address from the graphics API (Intel iGPUs through Vulkan on Windows): the key of
+        // the one GPU in the OS fingerprint with the same PCI ids (placement.md §1).
+        let key = details.key.or_else(|| {
+            let (vendor, device) = details.pci_ids?;
+            fingerprint::current()?.key_for_pci_ids(vendor, device)
+        });
         EnumeratedDevice {
             id,
             key,
-            enum_fingerprint,
+            enum_fingerprint: details.fingerprint,
         }
     }
 

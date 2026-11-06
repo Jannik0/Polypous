@@ -764,6 +764,7 @@ mod tests {
         SystemFingerprint {
             gpus: BTreeMap::new(),
             shared: shared.into(),
+            pci_ids: BTreeMap::new(),
         }
     }
 
