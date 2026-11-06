@@ -109,16 +109,25 @@ typedef void (*pp_event_cb)(void* user, const char* event_json);
 
 ### 1.1 Device probing ([ADR-0013](../adr/0013-crash-safe-device-probing.md))
 
+Implemented in M0 (issue #14). Behavior: [placement.md §1](placement.md#1-device-discovery), "The probe".
+
 | Item | Purpose |
 |---|---|
-| `polypous::probe::probe_devices(options, cancel, on_event) -> ProbeReport` | Run the probe without an `Engine` (prober process, cache, recovery) |
-| `Engine::refresh_devices(options, cancel, on_event) -> ProbeReport` | Probe again and update a running engine's device list. Loaded models keep their placement |
-| `polypous::probe::run_prober_if_requested()` | First line of `main` in Rust apps that link Polypous statically: lets Polypous use the app itself as the prober. Returns normally when the process was not started as a prober |
-| `ProbeOptions` | `force` (ignore the cache), `devices` (subset), `isolation` (`auto` \| `out_of_process` \| `in_process`), `timeout_per_device` |
-| `ProbeEvent` | `ProbeStarted`, `DeviceEnumerated`, `DeviceProbed`, `ProbeFinished` |
-| `ProbeReport` | Devices with status and reason, whether probing was isolated, cache hits. Plain JSON data |
-| `EngineConfig::probe_report` | Use a report the app produced itself; Polypous then starts no prober |
+| `polypous::probe::probe_devices(options, cancel, on_event) -> Result<ProbeReport, Error>` | Run the probe without an `Engine` (cache, prober process, recovery, fallback) |
+| `Engine::refresh_devices(options, cancel, on_event) -> Result<ProbeReport, Error>` | Probe again and update a running engine's device list (all devices, or only `options.devices`). Loaded models keep their placement. `prober_path` and `probe_cache_dir` default to the engine's; the other options are used as given |
+| `Engine::probe_report() -> ProbeReport` | The report of the probe behind the current device list |
+| `polypous::probe::run_prober_if_requested()` | First line of `main` in Rust apps that link Polypous: lets Polypous use the app itself as the prober. When started as `<app> --polypous-prober --request <json>` it runs the probe and exits; otherwise it returns normally |
+| `polypous::probe::run_prober(request_json) -> i32` | Runs the prober in this process (stdout protocol) and returns the exit code; `polyp probe --json` uses it |
+| `ProbeOptions` | `force` (ignore the cache), `devices` (subset), `isolation` (`auto` \| `out_of_process` \| `in_process`), `timeout_per_device_ms` (default 60000, 1 ms to one day), `software_rasterizers` (default false), `prober_path`, `probe_cache_dir`. JSON object, unknown fields rejected, `from_json`/`to_json` |
+| `ProbeEvent` | JSON `{"event":"probe_started"}`, `{"event":"device_enumerated","id":…}`, `{"event":"device_probed","device":…,"cached":bool}` (`primary` is always false here), `{"event":"probe_finished","report":…}`; in that order, `probe_finished` last unless an error is returned |
+| `ProbeReport` | `devices` (probe order, `primary` marked), `isolated` (every result in the report came from a prober process), `cache_hits` (ids), `prober_starts`, `fingerprint_known`, `warnings`. Plain JSON data |
+| `CancellationToken` | `new`, `cancel`, `is_cancelled`; clones share one flag. Cancelling kills a running prober; the call returns `Cancelled` |
+| `EngineConfig::probe_report` | Use a report the app produced itself; Polypous then starts no probe (`primary` is recomputed) |
 | `EngineConfig::prober_path`, `EngineConfig::probe_cache_dir` | Where the prober executable and the probe cache are |
+| `EngineConfig::probe_isolation`, `EngineConfig::probe_timeout_per_device_ms` | `isolation` and `timeout_per_device_ms` for `Engine::new` |
+
+Errors: `InvalidInput` (timeout out of range), `Cancelled`, `BackendUnavailable` (`out_of_process`
+without a working prober), `Internal` (caught panic). Device problems are statuses, never errors.
 
 C ABI (M7): `pp_probe_devices`, `pp_engine_refresh_devices`, and the entry point the tiny
 `polypous-probe` executable calls.
@@ -126,12 +135,15 @@ C ABI (M7): `pp_probe_devices`, `pp_engine_refresh_devices`, and the entry point
 ### 1.2 Engine, devices and errors (M0, issue #6)
 
 Implemented so far: `Engine::new`, `Engine::devices`, `Engine::primary_gpu`, `Engine::config`,
-`EngineConfig` (with `from_json`/`to_json`), the device types below and `Error`. The CLI's
-`polyp devices --json` prints exactly `Engine::devices()` as JSON.
+`Engine::probe_report`, `Engine::refresh_devices`, `EngineConfig` (with `from_json`/`to_json`), the
+device types below, the probe API of §1.1 and `Error`. The CLI's
+`polyp devices --json` prints exactly `Engine::devices()` as JSON (`--json --report`:
+`Engine::probe_report()`); `polyp devices` options `--software-rasterizers`, `--isolation`,
+`--probe-cache-dir`, `--prober-path`, `--timeout-per-device-ms` set the `EngineConfig` fields.
 
 | Item | Behavior |
 |---|---|
-| `Engine::new(config) -> Result<Engine, Error>` | Discovers and probes every device of every compiled-in backend (placement.md §1; in process until #14), then marks the primary GPU. A failing device is reported as unavailable, never as an error. A panic becomes `Internal` |
+| `Engine::new(config) -> Result<Engine, Error>` | Discovers and probes every device of every compiled-in backend (placement.md §1: probe cache, else prober process, else in process with crash journal), then marks the primary GPU. A failing device is reported as unavailable, never as an error. A panic becomes `Internal` |
 | `Engine` | `Arc` handle: `Clone + Send + Sync + 'static`, no generics or lifetimes. No `close()` yet: it holds no resources that need deterministic release until models can be loaded |
 | `engine.devices() -> Vec<DeviceInfo>` | All devices in probe order (GPU priority order, the CPU last), the primary GPU with `primary: true` |
 | `engine.primary_gpu() -> Option<DeviceInfo>` | The device with `primary: true`, or `None` (CPU only) |
@@ -144,8 +156,14 @@ goes unnoticed). `to_json` writes every field.
 |---|---|---|
 | `software_rasterizers` | bool, `false` | Open and probe software rasterizers (Vulkan/Metal adapters of type `cpu`: lavapipe, SwiftShader, …). Off: they are listed with the reason `software_rasterizer_skipped` and never opened ([placement.md §1](placement.md#1-device-discovery)). They are never the primary GPU either way. `polyp devices` uses the default |
 
-Later fields (`probe_report`, `prober_path`, `probe_cache_dir` with #14, placement options with M4)
-are optional with documented defaults, so `{}` stays valid.
+| `probe_report` | `ProbeReport` or null, null | A report the app produced itself; no probe runs |
+| `prober_path` | path string or null, null | The prober executable (else the current executable if it called `run_prober_if_requested`, else in-process probing) |
+| `probe_cache_dir` | path string or null, null | Probe cache and crash journal directory (else the platform cache directory) |
+| `probe_isolation` | `"auto"` \| `"out_of_process"` \| `"in_process"`, `"auto"` | Where `Engine::new` probes |
+| `probe_timeout_per_device_ms` | integer, 60000 | Prober timeout per device |
+
+Later fields (placement options with M4) are optional with documented defaults, so `{}` stays
+valid.
 
 **Device JSON** (`DeviceInfo`, an array of them from `devices()`). The fields, names and values are
 those of the backend's `DeviceInfo` in [placement.md §1](placement.md#1-device-discovery), plus

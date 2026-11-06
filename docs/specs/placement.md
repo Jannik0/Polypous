@@ -53,7 +53,7 @@ the reason `software rasterizer skipped (set software_rasterizers to probe it)` 
 `software_rasterizer_skipped`, `isolated: false`); the other fields are what the id alone tells:
 name = the id (`vulkan:cpu:0`), kind `cpu`, `unified_memory` true, everything else null/empty. The
 caller opts in with the option `software_rasterizers: true` (backend `EnumerateOptions`, facade
-`EngineConfig`, and the prober's options with #14); then they are described and probed like any
+`EngineConfig` and `ProbeOptions`, and the prober's `ProbeRequest`); then they are described and probed like any
 other device. Explicit `describe_device(id)` / `probe_device(id)` calls always open the device they
 are given. Selection is unchanged either way. Polypous never reads an environment variable for this
 (public-api.md §2 rule 9); the GPU tests use the test-only variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`
@@ -126,15 +126,145 @@ the `Engine`'s decision (#14).
 | `capabilities` | `f16`, `bf16`, `subgroup_size_min`, `subgroup_size_max`, `max_buffer_size`, `max_shared_memory`, `compute_units` | Missing values are null/false |
 | `status` | `{"state":"not_probed"}`, `{"state":"available","isolated":bool}`, `{"state":"unavailable","reason":{"code":"crashed_during_probe"\|"probe_timed_out"\|"probe_failed","message"\|"library_missing","library"\|"software_rasterizer_skipped"},"isolated":bool}` | `not_probed` after `describe_device`; the probe sets the rest. `software_rasterizer_skipped` (always `isolated: false`): listed, not opened (see "Software rasterizers" above) |
 
-**`Engine::new` (M0, issue #6; `polypous::Engine`).** Until the prober process (#14) exists, the
-engine discovers devices **in process**: it lists the devices of every compiled-in backend, sorts
-them into **probe order** (CUDA, Metal, Vulkan discrete, Vulkan integrated, other Vulkan adapters,
-Vulkan software rasterizers, CPU; the backend's order within each group), then describes and probes
-each one (a device that could not be opened is not probed). Software rasterizers are skipped unless
-`EngineConfig::software_rasterizers` is set (same rule as the backend's `EnumerateOptions`). The list keeps that order, and the
-facade marks the result of `select_primary_gpu` as `primary` (public-api.md §1.2). A native driver
-crash still takes the process down until #14; there is no crash journal yet. The discovery step is
-one function from the config to the device list, so #14 replaces it without changing the engine.
+**`Engine::new` (M0, issues #6 and #14; `polypous::Engine`).** The engine gets its devices from
+`EngineConfig::probe_report` if the app passed one; otherwise it runs the probe below (cache →
+prober → fallback). Devices are reported in **probe order** (CUDA, Metal, Vulkan discrete, Vulkan
+integrated, other Vulkan adapters, Vulkan/Metal software rasterizers, CPU; the backend's order
+within each group; `polypous_backend::device::probe_order`), and the facade marks the result of
+`select_primary_gpu` as `primary` (public-api.md §1.2). Software rasterizers are skipped unless
+`EngineConfig::software_rasterizers` is set (same rule as the backend's `EnumerateOptions`).
+
+**The probe (issue #14; `polypous_backend::probe`, facade `polypous::probe`).** One probe runs these
+steps; `Engine::new`, `Engine::refresh_devices` and `probe::probe_devices` share them:
+
+1. **Crash journal recovery.** Leftover journal entries in the cache directory (see "Fallback")
+   become cache entries `crashed during probe`, `isolated: false`.
+2. **Complete cache hit** (not with `force`): the OS fingerprint is known, the cache was written by a
+   probe of all devices that ran to the end, its GPU key set equals the current one, every entry's
+   fingerprint still matches, and no entry is a skipped software rasterizer while the caller now opts
+   in. Then every device comes from the cache and **no prober is started** (log:
+   `probe cache hit: every device from the cache, no prober started`; report: `prober_starts: 0`).
+3. Otherwise **skip rules** are built from the valid cache entries (by stable key, else by id; with
+   an unknown fingerprint, by id + enumeration key + enumeration fingerprint), and a **prober
+   process** enumerates every device and probes those that match no rule (a match is reported
+   `skipped` and not opened). With an unknown fingerprint this is the enumerate-only comparison of
+   ADR-0013 §2: if every device matches, the prober opens nothing.
+4. **Fallback:** without a prober (none configured, none could start, or `isolation = in_process`),
+   the same session runs in process with the crash journal.
+
+The report (`ProbeReport`) lists the devices with status, `isolated` (every probe result in the
+report, cached or new, came from a prober process), `cache_hits`, `prober_starts`,
+`fingerprint_known` and `warnings`. `polyp devices` prints a summary line under the table
+(`Probing: isolated … / NOT isolated …`, prober processes started, cache hits) and the warnings;
+`polyp devices --json --report` prints the report.
+
+**Prober protocol** (`polypous_backend::probe::protocol`, protocol version 1). The app starts
+`<prober> --polypous-prober --request <json>` with stdin, stdout and stderr piped. The request
+(`ProbeRequest`) carries `protocol`, `software_rasterizers`, `devices` (subset), `skip` (skip rules:
+`{"by":"key","key":…}`, `{"by":"id","id":…}`, `{"by":"enumeration","id":…,"key":…,"enum_fingerprint":…}`),
+`skip_backends` and `exclude` (devices an earlier prober of the same probe already reported). The
+prober writes one JSON object per line to stdout, `type` naming it:
+
+| Line | Meaning |
+|---|---|
+| `{"type":"header","protocol":1,"polypous_version":"…"}` | First line |
+| `{"type":"enumerating","backend":"vulkan"}` | Enumeration of a backend starts |
+| `{"type":"enumerated","device":{"id":…,"key":…,"enum_fingerprint":…}}` | A device found, not opened. `key`: `pci:<address>` where the graphics API reports it at enumeration (Vulkan, Metal), else null. `enum_fingerprint`: adapter name, PCI vendor/device ids and driver strings from wgpu's adapter info, else null |
+| `{"type":"enumeration_failed","backend":…,"message":…}` | Enumeration panicked (caught) |
+| `{"type":"skipped","id":…,"rule":N}` | Matched skip rule N; not opened |
+| `{"type":"probing","id":…}` | Written and flushed **before** the device is opened |
+| `{"type":"probed","device":{DeviceInfo}}` | Description and probe result |
+| `{"type":"done"}` | Last line; the prober exits |
+
+After all backends are enumerated, devices are probed in probe order. Logs go to stderr. The app
+treats the output as **untrusted**: at most 64 KiB per line, 1024 lines and 128 devices per process;
+a line that is not valid JSON of the protocol, or comes out of order (for example `probed` without
+`probing`, a device that was not enumerated, a second header, anything after `done`), is a protocol
+error. The app decides `isolated` itself (`true` for prober results, `false` for skipped software
+rasterizers) and takes `backend` from the id.
+
+**Supervision.** stdout is read on a thread (bounded lines), stderr is drained on another thread
+into the log at `debug` (target `polypous::prober`; the last lines are kept for warnings), and stdin
+stays open: the prober's watchdog thread exits the prober (code 3) when stdin reaches end of file,
+so a prober never outlives its app. If no line arrives within the **timeout per device** (default
+60 s, `timeout_per_device_ms`; it also covers start-up and enumeration), or on a protocol error or
+cancellation, the prober is killed; every path waits for the child, so no zombie is left. Then:
+
+- the device in progress (`probing` without `probed`) is marked `crashed during probe` (the
+  prober exited, for example SIGSEGV), `probe timed out` (killed after the timeout), or
+  `probe failed: the device prober sent invalid output: …` (protocol error); all `isolated: true`.
+  A prober that dies while enumerating a backend makes that backend's devices unknown (a warning)
+  and it is skipped (`skip_backends`) from then on;
+- the prober is restarted with `exclude` = the devices already reported, so results survive, until
+  every wanted device has a result. A restart happens only after something was blamed or reported,
+  so each device or backend causes at most one restart. Devices no prober got to are
+  `probe failed: the device prober ended before probing it`.
+
+A prober that cannot be started, or ends, hangs or misbehaves **before its header**, counts as
+"no prober": `isolation = auto` falls back to in-process probing (with a warning in the report),
+`out_of_process` is a `BackendUnavailable` error.
+
+**Locating the prober** (ADR-0013 §3): `EngineConfig::prober_path` / `ProbeOptions::prober_path` if
+set; otherwise the current executable if it called `polypous::probe::run_prober_if_requested()`
+(the first line of `main`; `polyp` does); otherwise none (in-process fallback). Every prober
+understands `--polypous-prober --request <json>`: `run_prober_if_requested` runs the prober and exits
+when it sees that, so `polyp`, an app that embeds the library, and the tiny `polypous-probe` of M7
+are started the same way. `polyp probe --json [--software-rasterizers] [--request JSON]` runs the
+same prober by hand (unsupervised: no stdin watchdog). The hook is a process-wide flag that
+describes the executable, the same for every `Engine` (public-api.md §2 rule 9).
+
+**Probe cache.** One JSON file per Polypous version and set of compiled-in backends,
+`probe-cache-v1-<backends>.json` (for example `probe-cache-v1-cuda-vulkan-cpu.json`), in
+`EngineConfig::probe_cache_dir` / `ProbeOptions::probe_cache_dir`, else the platform cache
+directory (`$XDG_CACHE_HOME/polypous` or `~/.cache/polypous`; `%LOCALAPPDATA%\polypous\cache`;
+`~/Library/Caches/polypous`). Each entry is a `DeviceInfo` with its stable key, enumeration
+fingerprint and the OS fingerprint it was probed under. The file is read with a 4 MiB limit, any
+parse error or other version means "no cache", it is written atomically (temporary file + rename),
+and read/write failures are only logged. A `software_rasterizer_skipped` result never replaces a
+probed result of the same device. A probe of all devices that ran to the end marks the cache
+complete and drops devices that are gone; in-process probing saves after every device but marks
+the cache incomplete until it finishes.
+
+**Driver fingerprint** (`polypous_backend::probe::fingerprint`, one function per OS: a stable key and
+fingerprint per GPU plus a "shared" fingerprint, or unknown). **Linux:** GPUs are the PCI display
+controllers (class `0x03xxxx`) in `/sys/bus/pci/devices`, keyed `pci:<address>`. A GPU's fingerprint
+is its PCI vendor/device ids, kernel driver, `/sys/module/<driver>/version` (else the kernel release
+`/proc/sys/kernel/osrelease`), the NVIDIA version line of `/proc/driver/nvidia/version` for the
+`nvidia` driver, and the Vulkan driver set: `VK_DRIVER_FILES`, `VK_ICD_FILENAMES`,
+`VK_ADD_DRIVER_FILES`, and every ICD manifest in `/etc/vulkan/icd.d`, `/usr/share/vulkan/icd.d`,
+`/usr/local/share/vulkan/icd.d`, `~/.local/share/vulkan/icd.d` with size and modification time, and
+the same for the library it names. The shared fingerprint (CPU, software rasterizers, devices without
+a key) has the kernel release, NVIDIA version, Vulkan driver set and the GPU key set. A device's
+fingerprint is its GPU's by enumeration key; else by the PCI address its description reported, plus
+the GPU key set (it is matched by id, which depends on the device set); else the shared one. Nothing
+here opens a device node or loads a library. **Windows** (#28) **and macOS** report unknown for now,
+which takes the enumerate-only path. LUIDs are never a key.
+
+A device recorded as `crashed during probe` or `probe timed out` stays unavailable, without being
+opened, while its fingerprint is unchanged. `force` re-probes it **out of process only**: in-process
+probing never re-opens such a device under the same driver, even with `force` (it would crash the
+app again).
+
+**Fallback: in-process probing with crash journal.** Before each in-process probe, the device's
+cache entry with the status `crashed during probe`, `isolated: false` is written and `fsync`ed to
+`probe-journal-<pid>-<nanos>-<n>.json` in the cache directory; after the probe the file is emptied,
+and it is removed when the probe ends. The file is held with an exclusive file lock (`File::lock`)
+while in use, so recovery (step 1) only reads journals no running process holds. The fallback logs a
+warning, results say `isolated: false`, and the report and `polyp devices` say probing was not
+isolated. In-process probing has no timeout (a hung driver hangs the app; that is what the prober is
+for). Without a cache directory there is no journal (a warning says so).
+
+**Testing the prober** (CI, Linux and Windows). The cargo feature `test-fault-injection` of
+`polypous-backend` (forwarded as `polypous/test-fault-injection`) compiles a fault-injection module.
+Only `polypous-cli`'s dev-dependency enables it, so `cargo build`, `cargo run` and `cargo install` of
+`polyp`, and every app, don't contain it; without the feature the variables below are never read.
+`POLYPOUS_TEST_PROBER_FAULTS` (prober and in-process path) replaces the real devices by fakes
+(`fake_devices=cuda:0,…`, `fake_driver=…`) and injects `crash=<id>` (abort), `hang=<id>`,
+`fail=<id>`, `crash_enumeration=<backend>`, `garbage=<id>` / `oversized=<id>` / `spam=<id>`
+(malformed, too long, or out-of-order output after `probing`), `exit_before_header` and
+`pid_file=<path>`. `POLYPOUS_TEST_FINGERPRINT` (app process) replaces the OS fingerprint (`unknown`
+or any text). `crates/polypous-cli/tests/prober.rs` uses them; `crates/polypous/tests/embedded_prober.rs`
+is an app that probes through itself re-launched.
 
 **Primary GPU selection** (only one GPU is used in v1):
 1. CUDA device (discrete NVIDIA)
