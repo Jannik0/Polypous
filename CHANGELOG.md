@@ -52,8 +52,26 @@ All notable changes to Polypous are documented here. The format follows
 - `EnumerateOptions { software_rasterizers }`, `enumerate_devices_with`, `skipped_device` and
   `DeviceId::is_software_rasterizer` in `polypous-backend`, and the `EngineConfig` field
   `software_rasterizers` (default `false`) in `polypous`.
+- Crash-safe device probing (ADR-0013, #14): `Engine::new` takes devices from a probe cache (no
+  prober process when every device's driver fingerprint is unchanged), else probes them in a prober
+  process (`polyp` or the app itself re-launched via `polypous::probe::run_prober_if_requested()`,
+  or `EngineConfig::prober_path`), restarting it after a crash or hang so one bad driver only makes
+  its own device unavailable (`crashed during probe` / `probe timed out`), else in process with a
+  crash journal so a crashing driver takes the app down at most once. Linux driver fingerprints from
+  sysfs, `/proc/driver/nvidia/version` and the Vulkan ICD manifests; Windows and macOS compare the
+  enumeration instead (#28).
+- Probe API: `polypous::probe::{probe_devices, run_prober_if_requested, run_prober}`,
+  `Engine::refresh_devices`, `Engine::probe_report`, `ProbeOptions`, `ProbeEvent`, `ProbeReport`,
+  `Isolation`, `CancellationToken`, and `EngineConfig` fields `probe_report`, `prober_path`,
+  `probe_cache_dir`, `probe_isolation`, `probe_timeout_per_device_ms`.
+- `polyp probe --json` runs the prober and prints its JSON-lines protocol. `polyp devices` gets
+  `--software-rasterizers`, `--isolation`, `--probe-cache-dir`, `--prober-path`,
+  `--timeout-per-device-ms` and `--json --report`, and prints how devices were probed under the table.
 
 ### Changed
+- `polyp devices` and `Engine::new` in apps that call `run_prober_if_requested()` report probe
+  results as `isolated: true`. Apps without a prober probe in process as before, now with a crash
+  journal and a warning in the report.
 - Device discovery lists software rasterizers (Vulkan/Metal adapters of type `cpu`, such as
   lavapipe) but no longer opens or probes them unless `software_rasterizers` is set. They are shown
   as unavailable with the new reason code `software_rasterizer_skipped`. This keeps lavapipe on

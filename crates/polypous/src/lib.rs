@@ -17,14 +17,17 @@
 //! # Ok::<(), polypous::Error>(())
 //! ```
 
+mod cancel;
 mod device;
-mod discovery;
 mod engine;
 mod error;
+pub mod probe;
 
+pub use cancel::CancellationToken;
 pub use device::{
     AdapterKind, BackendKind, DeviceCapabilities, DeviceId, DeviceInfo, DeviceKind, DeviceStatus,
     PhysicalIdentity, UnavailableReason,
 };
 pub use engine::{Engine, EngineConfig};
 pub use error::{Error, ErrorContext, ErrorKind};
+pub use probe::{Isolation, ProbeEvent, ProbeOptions, ProbeReport};

@@ -285,6 +285,33 @@ fn describe_listed(
         .collect()
 }
 
+/// What enumeration alone tells about a listed device, without opening it: a stable key
+/// (`pci:<address>`) and an enumeration fingerprint (adapter name, PCI vendor/device ids and driver
+/// strings), from wgpu's adapter info recorded with the backend's enumeration. Both are `None` for
+/// CUDA, the CPU, and when nothing was recorded. Used by the prober and the probe cache
+/// (placement.md §1, "Probe cache").
+pub(crate) fn enumeration_details(id: DeviceId) -> (Option<String>, Option<String>) {
+    match id {
+        #[cfg(feature = "vulkan")]
+        DeviceId::Vulkan { adapter, index } => {
+            gpu::wgpu_info::details(cubecl::wgpu::wgpu::Backend::Vulkan, adapter, index)
+        }
+        #[cfg(feature = "metal")]
+        DeviceId::Metal { adapter, index } => {
+            gpu::wgpu_info::details(cubecl::wgpu::wgpu::Backend::Metal, adapter, index)
+        }
+        #[allow(unreachable_patterns)]
+        _ => (None, None),
+    }
+}
+
+/// The description of a device from its id alone, with the status [`DeviceStatus::NotProbed`]:
+/// name = the id, kind from the adapter type, everything else unknown. Opens nothing. The prober's
+/// supervisor uses it for devices that crashed or hung the prober before they could be described.
+pub fn unprobed_device(id: DeviceId) -> DeviceInfo {
+    placeholder(id)
+}
+
 /// A description from the id alone, for devices that could not be opened.
 fn placeholder(id: DeviceId) -> DeviceInfo {
     let kind = match id {
@@ -636,6 +663,40 @@ mod gpu {
             let mut cached = ADAPTERS.lock().unwrap_or_else(PoisonError::into_inner);
             cached.retain(|(cached_api, _)| *cached_api != api);
             cached.push((api, adapters));
+        }
+
+        /// Stable key and enumeration fingerprint of the `index`-th adapter of type `adapter`
+        /// (see `enumeration_details`). `(None, None)` if nothing was recorded.
+        pub(in super::super) fn details(
+            backend: wgpu::Backend,
+            adapter: AdapterKind,
+            index: usize,
+        ) -> (Option<String>, Option<String>) {
+            let adapters = recorded_adapters(backend);
+            // CubeCL gives every software adapter index 0.
+            let index = if adapter == AdapterKind::Cpu {
+                0
+            } else {
+                index
+            };
+            let Some(info) = adapters
+                .iter()
+                .filter(|candidate| adapter_kind(candidate.device_type) == adapter)
+                .nth(index)
+            else {
+                return (None, None);
+            };
+            let pci = info.device_pci_bus_id.trim();
+            let key = (!pci.is_empty()).then(|| format!("pci:{}", pci.to_ascii_lowercase()));
+            let fingerprint = format!(
+                "name={};vendor={:#06x};device={:#06x};driver={};driver_info={}",
+                info.name.trim(),
+                info.vendor,
+                info.device,
+                info.driver.trim(),
+                info.driver_info.trim()
+            );
+            (key, Some(fingerprint))
         }
 
         fn recorded_adapters(api: wgpu::Backend) -> Vec<wgpu::AdapterInfo> {

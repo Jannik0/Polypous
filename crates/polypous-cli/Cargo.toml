@@ -28,5 +28,11 @@ serde_json = "1.0.154"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
+[dev-dependencies]
+# The integration tests drive the prober's test-only fault injection (crashes, hangs, malformed
+# output, fake devices) through environment variables. A dev-dependency feature: `cargo build`,
+# `cargo run` and `cargo install` of `polyp` don't have it (placement.md §1, "Testing the prober").
+polypous = { workspace = true, features = ["test-fault-injection"] }
+
 [lints]
 workspace = true

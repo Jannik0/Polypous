@@ -1,7 +1,8 @@
 //! `polyp devices` end to end: runs the built binary (issue #6).
 //!
 //! These run in CI with the default (`cpu`) features, and in the lavapipe job with `vulkan`
-//! compiled in. They probe devices in the test's child process, not in a prober process (#14).
+//! compiled in. `polyp` probes devices in a prober process (itself, re-launched; #14), so results
+//! are isolated. Each run uses a fresh probe cache directory.
 //!
 //! `polyp devices` always uses the default config, so software rasterizers (lavapipe, …) are
 //! listed as skipped. The GPU test of the engine itself opts in to them only with the test-only
@@ -12,12 +13,24 @@ use std::process::Command;
 
 use serde_json::Value;
 
+/// A fresh probe cache directory for one test.
+fn cache_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("devices-{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
 // Test helper: failing to start the binary under test should fail the test.
 #[allow(clippy::expect_used)]
 fn polyp(args: &[&str]) -> std::process::Output {
+    let name = args.join("-").replace("--", "");
     Command::new(env!("CARGO_BIN_EXE_polyp"))
         .args(args)
+        .arg("--probe-cache-dir")
+        .arg(cache_dir(&name))
         .env_remove("RUST_LOG")
+        .env_remove("POLYPOUS_TEST_PROBER_FAULTS")
+        .env_remove("POLYPOUS_TEST_FINGERPRINT")
         .output()
         .expect("polyp runs")
 }
@@ -41,9 +54,10 @@ fn devices_json_lists_the_cpu() {
     assert_eq!(cpu["kind"], "cpu");
     assert_eq!(cpu["unified_memory"], true);
     assert_eq!(cpu["dedicated_memory"], Value::Null);
+    // Probed in the prober process.
     assert_eq!(
         cpu["status"],
-        serde_json::json!({"state": "available", "isolated": false})
+        serde_json::json!({"state": "available", "isolated": true})
     );
     assert_eq!(cpu["primary"], false);
     assert!(!cpu["name"].as_str().unwrap_or_default().is_empty());
@@ -170,6 +184,7 @@ fn engine_skips_software_rasterizers_unless_opted_in() {
     let opt_in = std::env::var("POLYPOUS_TEST_SOFTWARE_VULKAN").is_ok_and(|v| v == "1");
     let mut config = polypous::EngineConfig::default();
     config.software_rasterizers = opt_in;
+    config.probe_cache_dir = Some(cache_dir("engine-software-rasterizers"));
     let engine = polypous::Engine::new(config).expect("engine");
     let devices: Vec<Value> = engine
         .devices()

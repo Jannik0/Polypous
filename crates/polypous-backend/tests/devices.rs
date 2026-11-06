@@ -5,7 +5,7 @@
 //! cargo test -p polypous-backend --features cuda,vulkan --test devices -- --include-ignored --nocapture
 //! ```
 //!
-//! This runs probes in the test process, not in a prober process (that is #14), so a native
+//! This runs probes in the test process, not in a prober process (ADR-0013), so a native
 //! driver crash takes the test down.
 //!
 //! Software rasterizers (lavapipe, …) are listed but not opened, as in discovery's default

@@ -466,6 +466,137 @@ pub(crate) fn device_info(value: backend::DeviceInfo, primary: bool) -> DeviceIn
     }
 }
 
+// Conversions back to the backend's types, for device lists the app hands in
+// (`EngineConfig::probe_report`) and for merging a partial refresh. Exhaustive like the above.
+
+fn to_adapter_kind(value: AdapterKind) -> backend::AdapterKind {
+    match value {
+        AdapterKind::DiscreteGpu => backend::AdapterKind::DiscreteGpu,
+        AdapterKind::IntegratedGpu => backend::AdapterKind::IntegratedGpu,
+        AdapterKind::VirtualGpu => backend::AdapterKind::VirtualGpu,
+        AdapterKind::Cpu => backend::AdapterKind::Cpu,
+        AdapterKind::Other => backend::AdapterKind::Other,
+    }
+}
+
+/// The backend's id for a public id.
+pub(crate) fn to_backend_id(value: DeviceId) -> backend::DeviceId {
+    match value {
+        DeviceId::Cuda { index } => backend::DeviceId::Cuda { index },
+        DeviceId::Metal { adapter, index } => backend::DeviceId::Metal {
+            adapter: to_adapter_kind(adapter),
+            index,
+        },
+        DeviceId::Vulkan { adapter, index } => backend::DeviceId::Vulkan {
+            adapter: to_adapter_kind(adapter),
+            index,
+        },
+        DeviceId::Cpu => backend::DeviceId::Cpu,
+    }
+}
+
+/// The public id for a backend id.
+pub(crate) fn from_backend_id(value: backend::DeviceId) -> DeviceId {
+    device_id(value)
+}
+
+fn to_device_kind(value: DeviceKind) -> backend::DeviceKind {
+    match value {
+        DeviceKind::Discrete => backend::DeviceKind::Discrete,
+        DeviceKind::Integrated => backend::DeviceKind::Integrated,
+        DeviceKind::Cpu => backend::DeviceKind::Cpu,
+        DeviceKind::Other => backend::DeviceKind::Other,
+    }
+}
+
+fn to_unavailable_reason(value: UnavailableReason) -> backend::UnavailableReason {
+    match value {
+        UnavailableReason::CrashedDuringProbe => backend::UnavailableReason::CrashedDuringProbe,
+        UnavailableReason::ProbeTimedOut => backend::UnavailableReason::ProbeTimedOut,
+        UnavailableReason::ProbeFailed { message } => {
+            backend::UnavailableReason::ProbeFailed { message }
+        }
+        UnavailableReason::LibraryMissing { library } => {
+            backend::UnavailableReason::LibraryMissing { library }
+        }
+        UnavailableReason::SoftwareRasterizerSkipped => {
+            backend::UnavailableReason::SoftwareRasterizerSkipped
+        }
+    }
+}
+
+fn to_device_status(value: DeviceStatus) -> backend::DeviceStatus {
+    match value {
+        DeviceStatus::NotProbed => backend::DeviceStatus::NotProbed,
+        DeviceStatus::Available { isolated } => backend::DeviceStatus::Available { isolated },
+        DeviceStatus::Unavailable { reason, isolated } => backend::DeviceStatus::Unavailable {
+            reason: to_unavailable_reason(reason),
+            isolated,
+        },
+    }
+}
+
+/// The backend's description of a public device (`primary` is dropped: it is recomputed).
+pub(crate) fn to_backend_info(value: DeviceInfo) -> backend::DeviceInfo {
+    let DeviceInfo {
+        id,
+        backend: _,
+        name,
+        vendor,
+        driver,
+        kind,
+        dedicated_memory,
+        free_memory,
+        unified_memory,
+        identity,
+        capabilities,
+        status,
+        primary: _,
+    } = value;
+    let PhysicalIdentity {
+        pci_bus_id,
+        luid,
+        registry_id,
+    } = identity;
+    let DeviceCapabilities {
+        f16,
+        bf16,
+        subgroup_size_min,
+        subgroup_size_max,
+        max_buffer_size,
+        max_shared_memory,
+        compute_units,
+    } = capabilities;
+    let id = to_backend_id(id);
+    backend::DeviceInfo {
+        id,
+        // Always the id's backend, whatever the input said.
+        backend: id.backend(),
+        name,
+        vendor,
+        driver,
+        kind: to_device_kind(kind),
+        dedicated_memory,
+        free_memory,
+        unified_memory,
+        identity: backend::PhysicalIdentity {
+            pci_bus_id,
+            luid,
+            registry_id,
+        },
+        capabilities: backend::Capabilities {
+            f16,
+            bf16,
+            subgroup_size_min,
+            subgroup_size_max,
+            max_buffer_size,
+            max_shared_memory,
+            compute_units,
+        },
+        status: to_device_status(status),
+    }
+}
+
 /// Converts a discovered device list and marks the primary GPU chosen by the backend's
 /// `select_primary_gpu` (placement.md §1). The order is kept.
 pub(crate) fn device_list(devices: Vec<backend::DeviceInfo>) -> Vec<DeviceInfo> {

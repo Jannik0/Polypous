@@ -186,6 +186,41 @@ impl fmt::Display for DeviceId {
     }
 }
 
+impl std::str::FromStr for DeviceId {
+    type Err = String;
+
+    /// Parses the [`Display`](fmt::Display) form: `cuda:0`, `vulkan:discrete_gpu:0`,
+    /// `metal:integrated_gpu:0`, `cpu`.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let invalid = || format!("not a device id: `{text}` (examples: cuda:0, vulkan:cpu:0, cpu)");
+        let adapter = |name: &str| match name {
+            "discrete_gpu" => Some(AdapterKind::DiscreteGpu),
+            "integrated_gpu" => Some(AdapterKind::IntegratedGpu),
+            "virtual_gpu" => Some(AdapterKind::VirtualGpu),
+            "cpu" => Some(AdapterKind::Cpu),
+            "other" => Some(AdapterKind::Other),
+            _ => None,
+        };
+        let parts: Vec<&str> = text.trim().split(':').collect();
+        match parts.as_slice() {
+            ["cpu"] => Ok(DeviceId::Cpu),
+            ["cuda", index] => Ok(DeviceId::Cuda {
+                index: index.parse().map_err(|_| invalid())?,
+            }),
+            [api @ ("vulkan" | "metal"), kind, index] => {
+                let adapter = adapter(kind).ok_or_else(invalid)?;
+                let index = index.parse().map_err(|_| invalid())?;
+                Ok(if *api == "vulkan" {
+                    DeviceId::Vulkan { adapter, index }
+                } else {
+                    DeviceId::Metal { adapter, index }
+                })
+            }
+            _ => Err(invalid()),
+        }
+    }
+}
+
 /// What kind of hardware a device is (placement.md §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -260,8 +295,8 @@ pub struct Capabilities {
 }
 
 /// The text of [`UnavailableReason::SoftwareRasterizerSkipped`]: what happened and how to opt in.
-/// The option has the same name everywhere (`EnumerateOptions`, `EngineConfig`, and the prober's
-/// options with #14).
+/// The option has the same name everywhere (`EnumerateOptions`, `EngineConfig`, `ProbeOptions`, and the prober's
+/// `ProbeRequest`).
 pub(crate) const SOFTWARE_RASTERIZER_SKIPPED: &str =
     "software rasterizer skipped (set software_rasterizers to probe it)";
 
@@ -521,6 +556,36 @@ mod tests {
             status.with_isolated(false).to_string(),
             "unavailable: probe timed out, not isolated"
         );
+    }
+
+    #[test]
+    fn device_id_parses_its_display_form() {
+        let ids = [
+            DeviceId::Cuda { index: 3 },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::Cpu,
+                index: 0,
+            },
+            DeviceId::Metal {
+                adapter: AdapterKind::IntegratedGpu,
+                index: 1,
+            },
+            DeviceId::Cpu,
+        ];
+        for id in ids {
+            assert_eq!(id.to_string().parse::<DeviceId>(), Ok(id));
+        }
+        for bad in [
+            "",
+            "gpu",
+            "cuda",
+            "cuda:x",
+            "vulkan:gpu:0",
+            "cpu:0",
+            "cuda:-1",
+        ] {
+            assert!(bad.parse::<DeviceId>().is_err(), "{bad}");
+        }
     }
 
     #[test]

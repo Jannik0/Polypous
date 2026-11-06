@@ -15,6 +15,9 @@ cpu = ["polypous-backend/cpu"]
 cuda = ["polypous-backend/cuda"]
 vulkan = ["polypous-backend/vulkan"]
 metal = ["polypous-backend/metal"]
+# TEST ONLY: prober fault injection (polypous-backend's `test-fault-injection`). Enabled only by
+# polypous-cli's dev-dependency, never in a release build.
+test-fault-injection = ["polypous-backend/test-fault-injection"]
 
 [dependencies]
 polypous-ir.workspace = true
@@ -33,6 +36,12 @@ serde_json = "1.0.154"
 thiserror = "2.0.21"
 # Logging (public-api.md §2 rule 9). MIT; already in the lock file through Burn.
 tracing = "0.1.44"
+
+# An app that embeds Polypous and is re-launched as its own prober (ADR-0013 §3, option 2). It has
+# its own `main`, which calls `run_prober_if_requested()` first, as apps do.
+[[test]]
+name = "embedded_prober"
+harness = false
 
 [lints]
 workspace = true
