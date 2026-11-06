@@ -48,8 +48,8 @@ fn main() {
     }
 
     // `Engine::new` with the same cache directory: every device from the cache. With a known OS
-    // driver fingerprint (Linux) no prober starts; with an unknown one (Windows and macOS until
-    // #28) one prober enumerates and compares, but opens nothing.
+    // driver fingerprint (Linux, Windows) no prober starts; with an unknown one (macOS) one prober
+    // enumerates and compares, but opens nothing.
     let mut config = EngineConfig::default();
     config.probe_cache_dir = Some(dir.clone());
     let engine = Engine::new(config).expect("engine");

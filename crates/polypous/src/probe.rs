@@ -174,7 +174,7 @@ pub struct ProbeReport {
     /// Prober processes started by this probe: 0 for a complete cache hit or in-process probing.
     pub prober_starts: u32,
     /// Whether the OS driver fingerprint was known. If not, a prober enumerated the devices to
-    /// compare them with the cache (Windows and macOS until #28).
+    /// compare them with the cache (macOS for now).
     pub fingerprint_known: bool,
     /// Problems worth showing: a prober crash or hang, a fallback to in-process probing, a
     /// device remembered from a crash.

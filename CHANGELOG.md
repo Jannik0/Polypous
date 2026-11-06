@@ -58,8 +58,11 @@ All notable changes to Polypous are documented here. The format follows
   or `EngineConfig::prober_path`), restarting it after a crash or hang so one bad driver only makes
   its own device unavailable (`crashed during probe` / `probe timed out`), else in process with a
   crash journal so a crashing driver takes the app down at most once. Linux driver fingerprints from
-  sysfs, `/proc/driver/nvidia/version` and the Vulkan ICD manifests; Windows and macOS compare the
-  enumeration instead (#28).
+  sysfs, `/proc/driver/nvidia/version` and the Vulkan ICD manifests; Windows driver fingerprints and
+  stable device keys from the registry (display adapters' PCI location, hardware id and driver
+  version/date/provider, Windows build, Vulkan loader), so the cache also survives reboots there and
+  an Intel iGPU, which Vulkan reports without a PCI address, is matched by its PCI ids (#28); macOS
+  compares the enumeration instead.
 - Probe API: `polypous::probe::{probe_devices, run_prober_if_requested, run_prober}`,
   `Engine::refresh_devices`, `Engine::probe_report`, `ProbeOptions`, `ProbeEvent`, `ProbeReport`,
   `Isolation`, `CancellationToken`, and `EngineConfig` fields `probe_report`, `prober_path`,
