@@ -1,6 +1,6 @@
 //! Primary GPU selection and physical-device grouping (placement.md §1, "Primary GPU selection").
 
-use super::info::{BackendKind, DeviceInfo, DeviceKind};
+use super::info::{AdapterKind, BackendKind, DeviceId, DeviceInfo, DeviceKind};
 
 /// Groups devices that are the same physical device reached through different backends (for
 /// example an RTX 3060 through CUDA and Vulkan). Returns indices into `devices`, each group in
@@ -38,6 +38,45 @@ fn rank(device: &DeviceInfo) -> Option<u8> {
         (BackendKind::Vulkan, DeviceKind::Integrated) => Some(4),
         _ => None,
     }
+}
+
+/// Probe order of a device (placement.md §1): GPU priority order (CUDA, Metal, Vulkan discrete,
+/// Vulkan integrated), then other adapters, then software rasterizers, then the CPU. Devices
+/// likely to become the primary GPU are probed first, so they are known before a riskier device is
+/// touched (ADR-0013 §5). Lower is earlier.
+pub fn probe_rank(id: &DeviceId) -> u8 {
+    match id {
+        DeviceId::Cuda { .. } => 0,
+        DeviceId::Metal {
+            adapter: AdapterKind::Cpu,
+            ..
+        } => 5,
+        DeviceId::Metal { .. } => 1,
+        DeviceId::Vulkan {
+            adapter: AdapterKind::DiscreteGpu,
+            ..
+        } => 2,
+        DeviceId::Vulkan {
+            adapter: AdapterKind::IntegratedGpu,
+            ..
+        } => 3,
+        DeviceId::Vulkan {
+            adapter: AdapterKind::VirtualGpu | AdapterKind::Other,
+            ..
+        } => 4,
+        DeviceId::Vulkan {
+            adapter: AdapterKind::Cpu,
+            ..
+        } => 5,
+        DeviceId::Cpu => 6,
+    }
+}
+
+/// Sorts device ids into [`probe_rank`] order. The sort is stable, so the backend's order is kept
+/// within a rank.
+pub fn probe_order(mut ids: Vec<DeviceId>) -> Vec<DeviceId> {
+    ids.sort_by_key(probe_rank);
+    ids
 }
 
 /// Chooses the one GPU v1 uses, or `None` for CPU only (placement.md §1).

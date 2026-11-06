@@ -26,15 +26,15 @@ mod probe;
 mod resolve;
 mod select;
 
-pub(crate) use discover::device_id_of;
 pub use discover::{
     EnumerateOptions, EnumerationError, describe_device, enumerate_devices, enumerate_devices_with,
-    list_backend_devices, list_devices, skipped_device,
+    list_backend_devices, list_devices, skipped_device, unprobed_device,
 };
+pub(crate) use discover::{device_id_of, enumeration_details};
 pub use info::{
     AdapterKind, BackendKind, Capabilities, DeviceId, DeviceInfo, DeviceKind, DeviceStatus,
     PhysicalIdentity, UnavailableReason,
 };
 pub use probe::probe_device;
 pub(crate) use resolve::resolve_device;
-pub use select::{group_physical_devices, select_primary_gpu};
+pub use select::{group_physical_devices, probe_order, probe_rank, select_primary_gpu};
