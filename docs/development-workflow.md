@@ -119,6 +119,8 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
   - The branch name, starting from a fresh `main`.
 - **Identity:**
   - In local sessions, `git config user.email` must be the owner's no-reply address (CLAUDE.md).
+    Cloud sessions commit as `Claude <noreply@anthropic.com>` (signed, set by the cloud
+    environment); leave that as it is.
   - Check `gh auth status`. If gh isn't logged in, commit but don't push, and report the branch state.
 - **Environment:**
   - Unset `VK_DRIVER_FILES`, `VK_ICD_FILENAMES`, `POLYPOUS_TEST_SOFTWARE_VULKAN`, `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER` unless the task sets them.
@@ -140,7 +142,11 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
 
 1. **Checks:**
    - All seven required checks are green.
-   - Every commit has the owner's no-reply address and ends with `Co-Authored-By: Claude <noreply@anthropic.com>`.
+   - Every commit ends with `Co-Authored-By: Claude <noreply@anthropic.com>` and has no session link or model name.
+   - Commit authors:
+     - Commits from local sessions use the owner's no-reply address.
+     - Commits from cloud sessions are authored `Claude <noreply@anthropic.com>`. That's expected: it isn't a personal address, and the squash merge replaces these commits on `main`.
+     - Any other address is a finding.
    - The PR title and description have no session link and no model name (the PR-text job enforces this).
 2. **Review focus:**
    - Untrusted input is bounded: files, prober output, registry, sysfs.
@@ -157,6 +163,19 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
      - `commit_title: "<title> (#N)"`
      - a `commit_message` that summarizes the change and its verification, ending with the co-author line
      - `sha`: the head commit you verified
+   - The squash commit on `main` is authored by the account that merges, which is the owner's,
+     also from cloud sessions (they act as the owner on GitHub). With the owner's GitHub setting
+     "Keep my email addresses private" on, it carries the no-reply address.
+   - **Check the squash commit right after merging:** `git log -1 --format='%an <%ae>%n%B' origin/main`
+     after a fetch. It must show the owner's no-reply address, the title and message you sent, the
+     co-author line, and no session link or model name. A commit on `main` can't be fixed afterwards
+     (no force pushes), so stop and tell the owner if anything is off.
+   - **First merge by a cloud lead:** it has not been verified that the cloud harness leaves a
+     merge call's `commit_message` alone (it does rewrite PR descriptions written through `gh api`,
+     §8.5). A cloud lead's first merge is therefore a deliberate test on a documentation-only PR,
+     checked as above before any other merge. If the harness changed the message, the owner merges
+     from then on with GitHub's "Squash and merge" button, which uses the PR title and description
+     that CI has already checked.
 5. **A branch behind `main`:** merge `main` into the branch, resolve conflicts (usually `CHANGELOG.md`), re-verify and push. The ruleset forbids force pushes.
 6. **After the merge:**
    - Make sure the issue closed.
@@ -168,6 +187,9 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
 - **Cloud sessions:**
   - The harness appends a session-link footer to PR descriptions written through `gh api`. The PR-text job fails on it. Edit the description (or write it with the GitHub tool) until only the required footer remains.
   - The app's **Auto-fix** CI monitor can only be turned on for a PR the app knows the session opened. Otherwise the lead checks CI itself.
+  - On GitHub, cloud sessions act as the owner's account: their PRs show as opened by the owner,
+    and their commits as authored by `Claude <noreply@anthropic.com>`. Commit messages from cloud
+    sessions in M0 had no session-link trailer.
 - **Safety checks:** auto-mode safety checks can block destructive git operations (deleting a remote branch) and file deletions inside scripts. Don't work around them; ask the owner.
 - **Windows PowerShell:**
   - Refresh `PATH` before `cargo`: `$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")`.
