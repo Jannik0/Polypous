@@ -70,21 +70,36 @@ fn reason(
     {
         return format!("{name} is set to {value:?}");
     }
-    if let Some(library) = library {
-        let directories = library_directories(variable);
-        if !directories.is_empty()
-            && !directories
-                .iter()
-                .any(|directory| exists(&directory.join(library)))
-        {
-            return format!("the driver library {library} is not installed");
-        }
+    if let Some(library) = library
+        && let Some(None) = find_library(library, variable, exists)
+    {
+        return format!("the driver library {library} is not installed");
     }
     nothing.to_string()
 }
 
+/// Where `library` is installed: the first of [`library_directories`] that has it. `None` if the
+/// directories can't be determined, `Some(None)` if no directory has it. Looks for the file only;
+/// nothing is loaded.
+pub(crate) fn find_library(
+    library: &str,
+    variable: &dyn Fn(&str) -> Option<String>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Option<Option<PathBuf>> {
+    let directories = library_directories(variable);
+    if directories.is_empty() {
+        return None;
+    }
+    Some(
+        directories
+            .iter()
+            .map(|directory| directory.join(library))
+            .find(|path| exists(path)),
+    )
+}
+
 /// The CUDA driver library, if this OS has one Polypous looks for.
-fn cuda_library() -> Option<&'static str> {
+pub(crate) fn cuda_library() -> Option<&'static str> {
     if cfg!(windows) {
         Some("nvcuda.dll")
     } else if cfg!(target_os = "linux") {
@@ -228,6 +243,30 @@ mod tests {
             notes_with(&devices, &[], &GPU_BACKENDS, &system_root, &|_| true),
             vec!["cuda: compiled in, but no device found: no CUDA device was reported"]
         );
+    }
+
+    #[test]
+    fn the_first_directory_with_the_library_wins() {
+        let variable = |name: &str| match name {
+            "SystemRoot" => Some(r"C:\Windows".into()),
+            "LD_LIBRARY_PATH" => Some("/opt/a:/opt/b".into()),
+            _ => None,
+        };
+        assert_eq!(find_library("libx.so.1", &variable, &|_| false), Some(None));
+        let found = find_library("libx.so.1", &variable, &|_| true).flatten();
+        if cfg!(windows) {
+            assert_eq!(found, Some(PathBuf::from(r"C:\Windows\System32\libx.so.1")));
+        } else {
+            assert_eq!(found, Some(PathBuf::from("/opt/a/libx.so.1")));
+            let found = find_library("libx.so.1", &variable, &|path| {
+                path.starts_with("/opt/b") || path.starts_with("/usr")
+            });
+            assert_eq!(found, Some(Some(PathBuf::from("/opt/b/libx.so.1"))));
+        }
+        // Windows without SystemRoot: the directories are unknown.
+        if cfg!(windows) {
+            assert_eq!(find_library("nvcuda.dll", &|_| None, &|_| true), None);
+        }
     }
 
     #[test]

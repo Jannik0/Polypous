@@ -271,7 +271,16 @@ there is no key. **macOS** reports unknown for now, which takes the enumerate-on
 never a key. **On every OS** the variables that change which CUDA devices exist or how they are
 numbered, `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`, are part of every GPU fingerprint and of
 the shared one: setting or changing them invalidates the cached devices, so a hidden CUDA device is
-never served from the cache.
+never served from the cache. **On Linux and Windows** the CUDA driver library is part of every GPU
+fingerprint and of the shared one too, as `cuda_library=<path>:<size>:<mtime>`. On Linux that is the
+first `libcuda.so.1` found in the directories listed under "A compiled-in GPU backend without
+devices" (first match wins); on Windows, `%SystemRoot%\System32\nvcuda.dll`. Symbolic links are
+followed. The value is `missing` if the library isn't found, and `unknown` if the directories can't
+be determined. The file is only stat'ed, never loaded. So installing, removing or updating the CUDA
+driver library invalidates the cached devices, even when the NVIDIA version line and the Vulkan
+ICDs stay the same. It counts for every GPU, not only CUDA devices, because NVIDIA's Vulkan driver
+needs it too: with NVIDIA 620.70.06 on Linux, opening the RTX through Vulkan fails while
+`libcuda.so.1` is missing.
 
 A device recorded as `crashed during probe` or `probe timed out` stays unavailable, without being
 opened, while its fingerprint is unchanged. `force` re-probes it **out of process only**: in-process
