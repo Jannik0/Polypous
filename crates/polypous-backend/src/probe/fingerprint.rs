@@ -294,9 +294,6 @@ pub(crate) mod registry {
 
     use super::SystemFingerprint;
 
-    /// The device setup class of display adapters.
-    pub(crate) const DISPLAY_CLASS: &str = "{4d36e968-e325-11ce-bfc1-08002be10318}";
-
     /// One present display adapter as the registry describes it.
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub(crate) struct Adapter {
@@ -578,7 +575,10 @@ mod os {
     use windows_registry::{Key, LOCAL_MACHINE};
 
     use super::SystemFingerprint;
-    use super::registry::{Adapter, DISPLAY_CLASS, Machine, fingerprint};
+    use super::registry::{Adapter, Machine, fingerprint};
+
+    /// The device setup class of display adapters.
+    const DISPLAY_CLASS: &str = "{4d36e968-e325-11ce-bfc1-08002be10318}";
 
     /// At most this many PCI hardware ids, and instances per id, are looked at.
     const MAX_ENTRIES: usize = 4096;
