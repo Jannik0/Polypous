@@ -1,6 +1,6 @@
 //! `polyp devices`: the devices Polypous found, as a table or as JSON (public-api.md §1.2).
 
-use polypous::DeviceInfo;
+use polypous::{DeviceInfo, ProbeReport};
 
 /// Human-readable size: `-` if unknown, else MiB below 1 GiB, else GiB with two decimals.
 pub(crate) fn format_memory(bytes: Option<u64>) -> String {
@@ -82,6 +82,26 @@ pub(crate) fn render_table(devices: &[DeviceInfo]) -> String {
             primary.name, primary.id
         )),
         None => out.push_str("No usable GPU: Polypous runs on the CPU only.\n"),
+    }
+    out
+}
+
+/// How the devices were probed, below the table: isolated or not, prober processes started,
+/// cache hits, and the report's warnings.
+pub(crate) fn render_probe_summary(report: &ProbeReport) -> String {
+    let isolation = if report.isolated {
+        "isolated (separate prober process)"
+    } else {
+        "NOT isolated (in-process probing with crash journal)"
+    };
+    let mut out = format!(
+        "Probing: {isolation}; prober processes started: {}; from the probe cache: {} of {} devices\n",
+        report.prober_starts,
+        report.cache_hits.len(),
+        report.devices.len()
+    );
+    for warning in &report.warnings {
+        out.push_str(&format!("warning: {warning}\n"));
     }
     out
 }
@@ -184,6 +204,20 @@ mod tests {
 No usable GPU: Polypous runs on the CPU only.
 ";
         assert_eq!(table, expected);
+    }
+
+    #[test]
+    fn probe_summary() {
+        let report: ProbeReport = serde_json::from_str(
+            r#"{"devices":[],"isolated":false,"cache_hits":[],"prober_starts":0,
+                "fingerprint_known":true,"warnings":["vulkan:cpu:0 crashed this app"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            render_probe_summary(&report),
+            "Probing: NOT isolated (in-process probing with crash journal); prober processes \
+             started: 0; from the probe cache: 0 of 0 devices\nwarning: vulkan:cpu:0 crashed this app\n"
+        );
     }
 
     #[test]
