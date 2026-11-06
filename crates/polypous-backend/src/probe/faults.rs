@@ -14,6 +14,7 @@
 //! | `crash=<id>,…` | Abort the process when probing these devices |
 //! | `hang=<id>,…` | Never return when probing these devices |
 //! | `fail=<id>,…` | Report these devices as `probe_failed` |
+//! | `worker_panic=<id>,…` | A spawned thread panics while these devices are opened, then the calling thread fails with a caught panic, as when CubeCL can't create a device |
 //! | `crash_enumeration=<backend>` | Abort the process while enumerating this backend |
 //! | `garbage=<id>` | Prober only: after `probing` for this device, write a malformed line and hang |
 //! | `oversized=<id>` | Prober only: … a line longer than the limit … |
@@ -49,6 +50,7 @@ pub(crate) struct Faults {
     crash: Vec<DeviceId>,
     hang: Vec<DeviceId>,
     fail: Vec<DeviceId>,
+    worker_panic: Vec<DeviceId>,
     crash_enumeration: Vec<BackendKind>,
     garbage: Vec<DeviceId>,
     oversized: Vec<DeviceId>,
@@ -102,6 +104,7 @@ impl Faults {
                 "crash" => faults.crash.extend(ids(value)?),
                 "hang" => faults.hang.extend(ids(value)?),
                 "fail" => faults.fail.extend(ids(value)?),
+                "worker_panic" => faults.worker_panic.extend(ids(value)?),
                 "crash_enumeration" => faults.crash_enumeration.push(backend(value)?),
                 "garbage" => faults.garbage.extend(ids(value)?),
                 "oversized" => faults.oversized.extend(ids(value)?),
@@ -222,6 +225,9 @@ impl DeviceSource for Faulty {
                 ..unprobed_device(id)
             };
         }
+        if self.faults.worker_panic.contains(&id) {
+            return worker_panic(id);
+        }
         if self.faults.fake_devices.is_some() {
             DeviceInfo {
                 name: format!("Fake {id}"),
@@ -231,6 +237,41 @@ impl DeviceSource for Faulty {
         } else {
             self.real.describe_and_probe(id)
         }
+    }
+}
+
+/// What CubeCL does when it can't create a device: its device-runner thread panics with the cause,
+/// and the calling thread panics on the closed channel, which `describe_device` catches.
+fn worker_panic(id: DeviceId) -> DeviceInfo {
+    let worker = std::thread::Builder::new()
+        .name("fault-injection-worker".into())
+        .spawn(move || {
+            panic!("fault injection: worker thread could not create {id}");
+        });
+    let worker_panicked = !matches!(worker.map(std::thread::JoinHandle::join), Ok(Ok(())));
+    let caught = std::panic::catch_unwind(|| {
+        if worker_panicked {
+            panic!("fault injection: the worker's channel closed (RecvError)");
+        }
+    });
+    let message = match caught {
+        Ok(()) => "the worker thread did not panic".to_string(),
+        Err(payload) => format!(
+            "panic: {}",
+            payload
+                .downcast_ref::<&str>()
+                .copied()
+                .unwrap_or("non-text payload")
+        ),
+    };
+    DeviceInfo {
+        status: DeviceStatus::Unavailable {
+            reason: UnavailableReason::ProbeFailed {
+                message: format!("could not open the device: {message}"),
+            },
+            isolated: false,
+        },
+        ..unprobed_device(id)
     }
 }
 

@@ -19,13 +19,21 @@
 //!   loads a GPU driver.
 //! - **macOS**: unknown for now.
 //!
+//! On Linux and Windows, every GPU fingerprint and the shared one also record the CUDA driver
+//! library (`libcuda.so.1` / `nvcuda.dll`: path, size and modification time, or `missing`;
+//! [`with_cuda_library`]) and the CUDA variables that are set ([`with_cuda_variables`]). The library
+//! is only stat'ed, never loaded.
+//!
 //! LUIDs change on reboot and are never a key. Adapters whose graphics API reports no PCI address
 //! (Intel iGPUs through Vulkan on Windows) get their key by PCI vendor/device id
 //! ([`SystemFingerprint::key_for_pci_ids`]).
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+
+use super::absence;
 
 /// Driver fingerprints of this machine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,8 +98,58 @@ pub fn current() -> Option<SystemFingerprint> {
             pci_ids: BTreeMap::new(),
         });
     }
-    os::current()
-        .map(|fingerprint| with_cuda_variables(fingerprint, &|name| std::env::var(name).ok()))
+    let variable = |name: &str| std::env::var(name).ok();
+    os::current().map(|fingerprint| {
+        let fingerprint = with_cuda_variables(fingerprint, &variable);
+        with_cuda_library(fingerprint, &cuda_library_text(&variable, &file_stat))
+    })
+}
+
+/// Size and modification time (seconds since the Unix epoch, 0 if unknown) of a file, following
+/// symbolic links; `None` if it doesn't exist or can't be read. Only stats the file.
+fn file_stat(path: &Path) -> Option<(u64, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let mtime = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_secs());
+    Some((metadata.len(), mtime))
+}
+
+/// The CUDA driver library as the fingerprints record it: `<path>:<size>:<mtime>` of the first
+/// match in the directories `absence` searches (`libcuda.so.1` on Linux, `nvcuda.dll` in
+/// `%SystemRoot%\System32` on Windows), `missing` if there is none, `unknown` if the directories
+/// can't be determined, and `none` on an OS where Polypous looks for no CUDA library.
+fn cuda_library_text(
+    variable: &dyn Fn(&str) -> Option<String>,
+    stat: &dyn Fn(&Path) -> Option<(u64, u64)>,
+) -> String {
+    let Some(library) = absence::cuda_library() else {
+        return "none".into();
+    };
+    let exists = |path: &Path| stat(path).is_some();
+    match absence::find_library(library, variable, &exists) {
+        None => "unknown".into(),
+        Some(None) => "missing".into(),
+        Some(Some(path)) => match stat(&path) {
+            Some((size, mtime)) => format!("{}:{size}:{mtime}", path.display()),
+            // Gone between the two looks.
+            None => "missing".into(),
+        },
+    }
+}
+
+/// Adds the CUDA driver library to every GPU fingerprint and the shared one (placement.md §1,
+/// "Driver fingerprint"): installing, removing or updating it invalidates the cached devices. It
+/// counts for every GPU, not only CUDA devices: NVIDIA's Vulkan driver needs it too.
+fn with_cuda_library(mut fingerprint: SystemFingerprint, library: &str) -> SystemFingerprint {
+    let suffix = format!(";cuda_library={library}");
+    for gpu in fingerprint.gpus.values_mut() {
+        gpu.push_str(&suffix);
+    }
+    fingerprint.shared.push_str(&suffix);
+    fingerprint
 }
 
 /// Variables that change which CUDA devices exist or how they are numbered.
@@ -802,5 +860,87 @@ mod tests {
             both.shared
                 .ends_with("cuda_variables=CUDA_VISIBLE_DEVICES=1,CUDA_DEVICE_ORDER=PCI_BUS_ID")
         );
+    }
+
+    /// Every GPU fingerprint, the shared one and the fingerprint of a CUDA device matched by its
+    /// PCI address differ between `a` and `b`.
+    fn all_differ(a: &SystemFingerprint, b: &SystemFingerprint) {
+        for key in ["pci:0000:01:00.0", "pci:0000:00:02.0"] {
+            assert_ne!(a.gpus[key], b.gpus[key], "{key}");
+        }
+        assert_ne!(a.shared, b.shared);
+        assert_ne!(
+            a.for_device(None, Some("0000:01:00.0")),
+            b.for_device(None, Some("0000:01:00.0"))
+        );
+    }
+
+    /// The fingerprint of [`machine`] with the CUDA library as `stat` reports it.
+    #[cfg(any(target_os = "linux", windows))]
+    fn with_library(stat: &dyn Fn(&Path) -> Option<(u64, u64)>) -> SystemFingerprint {
+        let variable = |name: &str| match name {
+            "SystemRoot" => Some(r"C:\Windows".to_string()),
+            _ => None,
+        };
+        with_cuda_library(machine(), &cuda_library_text(&variable, stat))
+    }
+
+    #[test]
+    fn the_cuda_library_is_part_of_every_fingerprint() {
+        let library = with_cuda_library(machine(), "/usr/lib/libcuda.so.1:100:5");
+        for key in ["pci:0000:01:00.0", "pci:0000:00:02.0"] {
+            assert_eq!(
+                library.gpus[key],
+                format!(
+                    "{};cuda_library=/usr/lib/libcuda.so.1:100:5",
+                    machine().gpus[key]
+                )
+            );
+        }
+        assert_eq!(
+            library.shared,
+            "shared;cuda_library=/usr/lib/libcuda.so.1:100:5"
+        );
+        all_differ(&library, &with_cuda_library(machine(), "missing"));
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn present_missing_resized_or_touched_cuda_library_changes_the_fingerprints() {
+        let library = absence::cuda_library().expect("Linux and Windows have one");
+        let installed = |size: u64, mtime: u64| {
+            move |path: &Path| path.ends_with(library).then_some((size, mtime))
+        };
+        let present = with_library(&installed(100, 5));
+        let text = cuda_library_text(
+            &|name| (name == "SystemRoot").then(|| "C:\\W".into()),
+            &installed(100, 5),
+        );
+        assert!(text.ends_with(&format!("{library}:100:5")), "{text}");
+
+        let missing = with_library(&|_| None);
+        assert!(missing.shared.ends_with(";cuda_library=missing"));
+        all_differ(&present, &missing);
+        all_differ(&present, &with_library(&installed(101, 5)));
+        all_differ(&present, &with_library(&installed(100, 6)));
+        // The same library gives the same fingerprint.
+        assert_eq!(present, with_library(&installed(100, 5)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_first_cuda_library_found_is_recorded() {
+        let variable = |name: &str| (name == "LD_LIBRARY_PATH").then(|| "/opt/cuda".to_string());
+        let everywhere = |_: &Path| Some((1, 2));
+        assert_eq!(
+            cuda_library_text(&variable, &everywhere),
+            "/opt/cuda/libcuda.so.1:1:2"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn without_system_root_the_cuda_library_is_unknown() {
+        assert_eq!(cuda_library_text(&|_| None, &|_| Some((1, 2))), "unknown");
     }
 }

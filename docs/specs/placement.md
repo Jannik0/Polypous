@@ -78,6 +78,23 @@ to opt in.
   `unavailable: probe failed: …`; the in-process functions report `isolated: false`, the prober
   marks its results isolated. Calls are serialized by a process-wide lock.
 
+**Probe failure reasons: panics of other threads.** When CubeCL can't create a device, the panic
+with the real cause happens on CubeCL's device-runner thread; the calling thread's `catch_unwind`
+only sees the closed channel (`called Result::unwrap() on an Err value: RecvError`). So the
+**prober process** (`run_prober`, which `run_prober_if_requested` and `polyp probe --json` call)
+installs a panic hook once at start: it records the message of a panic on any thread, then calls
+the previous hook (panics are still printed to stderr). While one device is described and probed,
+the panics of threads other than the probing thread are collected; if the device's result is
+`probe failed`, they are appended to the reason: `could not open the device: panic: … RecvError
+(worker thread panicked: Unable to acquire wgpu device: RequestDevice { message: "Initialization of
+an object has failed" })`. Several distinct messages are joined with `; ` (`worker threads
+panicked: a; b; and 2 more`). Limits: messages are kept on one line (control characters become
+spaces), each cut to at most 400 bytes at a UTF-8 character boundary (with `…`), at most 3
+distinct messages are listed, and at most 8 panics are recorded per device. Other statuses are not
+changed. **In-process probing installs no hook**: the panic hook is the app's process-wide state
+(public-api.md §2 rule 9), so there the reason is what the calling thread saw (for the example
+above, only `… RecvError`). Probing isolated is the way to see the full reason.
+
 **When enumeration happens (issue #26).** Each compiled-in backend is enumerated **at most once per
 process**: on the first successful `list_backend_devices` call for it (directly, through
 `list_devices`/`enumerate_devices*`, through `describe_device`/`probe_device`/`DynTensor` checking an
@@ -271,7 +288,16 @@ there is no key. **macOS** reports unknown for now, which takes the enumerate-on
 never a key. **On every OS** the variables that change which CUDA devices exist or how they are
 numbered, `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`, are part of every GPU fingerprint and of
 the shared one: setting or changing them invalidates the cached devices, so a hidden CUDA device is
-never served from the cache.
+never served from the cache. **On Linux and Windows** the CUDA driver library is part of every GPU
+fingerprint and of the shared one too, as `cuda_library=<path>:<size>:<mtime>`. On Linux that is the
+first `libcuda.so.1` found in the directories listed under "A compiled-in GPU backend without
+devices" (first match wins); on Windows, `%SystemRoot%\System32\nvcuda.dll`. Symbolic links are
+followed. The value is `missing` if the library isn't found, and `unknown` if the directories can't
+be determined. The file is only stat'ed, never loaded. So installing, removing or updating the CUDA
+driver library invalidates the cached devices, even when the NVIDIA version line and the Vulkan
+ICDs stay the same. It counts for every GPU, not only CUDA devices, because NVIDIA's Vulkan driver
+needs it too: with NVIDIA 620.70.06 on Linux, opening the RTX through Vulkan fails while
+`libcuda.so.1` is missing.
 
 A device recorded as `crashed during probe` or `probe timed out` stays unavailable, without being
 opened, while its fingerprint is unchanged. `force` re-probes it **out of process only**: in-process
@@ -293,7 +319,8 @@ Only `polypous-cli`'s dev-dependency enables it, so `cargo build`, `cargo run` a
 `polyp`, and every app, don't contain it; without the feature the variables below are never read.
 `POLYPOUS_TEST_PROBER_FAULTS` (prober and in-process path) replaces the real devices by fakes
 (`fake_devices=cuda:0,…`, `fake_driver=…`) and injects `crash=<id>` (abort), `hang=<id>`,
-`fail=<id>`, `crash_enumeration=<backend>`, `garbage=<id>` / `oversized=<id>` / `spam=<id>`
+`fail=<id>`, `worker_panic=<id>` (a spawned thread panics, then the calling thread fails with a
+caught panic, as when CubeCL can't create a device), `crash_enumeration=<backend>`, `garbage=<id>` / `oversized=<id>` / `spam=<id>`
 (malformed, too long, or out-of-order output after `probing`), `exit_before_header` and
 `pid_file=<path>`. `POLYPOUS_TEST_FINGERPRINT` (app process) replaces the OS fingerprint (`unknown`
 or any text). `crates/polypous-cli/tests/prober.rs` uses them; `crates/polypous/tests/embedded_prober.rs`

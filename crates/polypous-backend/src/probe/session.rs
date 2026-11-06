@@ -11,6 +11,7 @@ use crate::device::{DeviceId, probe_rank, skipped_device};
 
 use super::protocol::{EnumeratedDevice, MAX_DEVICES, PROTOCOL_VERSION, ProbeRequest, ProberLine};
 use super::source::DeviceSource;
+use super::worker_panics::{self, WorkerPanics};
 
 /// Runs one session for `request` on `source`. `isolated` is what probe results report
 /// (`true` in the prober process). `emit` receives every line in protocol order; an error from it
@@ -83,8 +84,14 @@ fn probe_one(
     if id.is_software_rasterizer() && !request.software_rasterizers {
         return skipped_device(id);
     }
-    let mut info = source.describe_and_probe(id);
-    info.status = info.status.with_isolated(isolated);
+    // Only the prober process collects panics of other threads (it installed the hook; in-process
+    // probing never does, see `worker_panics`).
+    let (mut info, panics) = if isolated {
+        worker_panics::during_step(|| source.describe_and_probe(id))
+    } else {
+        (source.describe_and_probe(id), WorkerPanics::default())
+    };
+    info.status = worker_panics::attach(info.status, &panics).with_isolated(isolated);
     info
 }
 

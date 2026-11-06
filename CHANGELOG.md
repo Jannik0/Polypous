@@ -96,6 +96,16 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- When a device could not be opened because a worker thread panicked (CubeCL's device runner, for
+  example `Unable to acquire wgpu device: RequestDevice { … "Initialization of an object has
+  failed" }`), the `probe failed` reason only said `… RecvError`. The prober process now records
+  panics on every thread and appends the ones from other threads to the reason (`… (worker thread
+  panicked: …)`, bounded). In-process probing is unchanged: it installs no panic hook.
+- With a warm probe cache, removing (or installing, or updating) the CUDA driver library was
+  ignored: `cuda:0` was still reported available and chosen as the primary GPU. The library
+  (`libcuda.so.1` on Linux, `nvcuda.dll` on Windows: path, size and modification time, or
+  `missing`) is now part of every driver fingerprint, so a change re-probes. Existing probe caches
+  are re-probed once after the update.
 - With a warm probe cache, setting `CUDA_VISIBLE_DEVICES` (or `CUDA_DEVICE_ORDER`) was ignored: a
   hidden CUDA device was still reported available and chosen as the primary GPU. Both variables are
   now part of the driver fingerprint, so changing them re-probes.
