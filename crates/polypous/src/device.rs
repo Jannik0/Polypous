@@ -328,6 +328,12 @@ pub struct DeviceInfo {
     pub capabilities: DeviceCapabilities,
     /// Probe status.
     pub status: DeviceStatus,
+    /// Index of the physical GPU this device is (0, 1, … in order of first appearance in the
+    /// list). Devices with the same index are one card reached through different backends, such as
+    /// an RTX 3060 through CUDA and Vulkan, matched by [`identity`](Self::identity) (placement.md
+    /// §1). `None` for devices of kind `cpu` (the CPU and software rasterizers), and outside a
+    /// device list (in [`ProbeEvent`](crate::probe::ProbeEvent)s).
+    pub physical_gpu: Option<u32>,
     /// Whether this is the primary GPU: the one GPU Polypous uses (placement.md §1, "Primary GPU
     /// selection"). At most one device has `true`; none if no GPU passed its probe (CPU only).
     pub primary: bool,
@@ -462,6 +468,7 @@ pub(crate) fn device_info(value: backend::DeviceInfo, primary: bool) -> DeviceIn
             compute_units,
         },
         status: device_status(status),
+        physical_gpu: None,
         primary,
     }
 }
@@ -536,7 +543,8 @@ fn to_device_status(value: DeviceStatus) -> backend::DeviceStatus {
     }
 }
 
-/// The backend's description of a public device (`primary` is dropped: it is recomputed).
+/// The backend's description of a public device (`physical_gpu` and `primary` are dropped: they
+/// are recomputed).
 pub(crate) fn to_backend_info(value: DeviceInfo) -> backend::DeviceInfo {
     let DeviceInfo {
         id,
@@ -551,6 +559,7 @@ pub(crate) fn to_backend_info(value: DeviceInfo) -> backend::DeviceInfo {
         identity,
         capabilities,
         status,
+        physical_gpu: _,
         primary: _,
     } = value;
     let PhysicalIdentity {
@@ -597,18 +606,39 @@ pub(crate) fn to_backend_info(value: DeviceInfo) -> backend::DeviceInfo {
     }
 }
 
-/// Converts a discovered device list and marks the primary GPU chosen by the backend's
-/// `select_primary_gpu` (placement.md §1). The order is kept.
+/// Converts a discovered device list, marks the primary GPU chosen by the backend's
+/// `select_primary_gpu` and numbers the physical GPUs with its `group_physical_devices`
+/// (placement.md §1). The order is kept.
 pub(crate) fn device_list(devices: Vec<backend::DeviceInfo>) -> Vec<DeviceInfo> {
     let primary = backend::select_primary_gpu(&devices).and_then(|chosen| {
         devices
             .iter()
             .position(|device| std::ptr::eq(device, chosen))
     });
+    let mut physical = vec![None; devices.len()];
+    let mut next = 0_u32;
+    for group in backend::group_physical_devices(&devices) {
+        // The CPU and software rasterizers form groups of their own but are no GPU.
+        let gpus: Vec<usize> = group
+            .into_iter()
+            .filter(|&index| devices[index].kind != backend::DeviceKind::Cpu)
+            .collect();
+        if gpus.is_empty() {
+            continue;
+        }
+        for index in gpus {
+            physical[index] = Some(next);
+        }
+        next += 1;
+    }
     devices
         .into_iter()
+        .zip(physical)
         .enumerate()
-        .map(|(index, device)| device_info(device, Some(index) == primary))
+        .map(|(index, (device, physical_gpu))| DeviceInfo {
+            physical_gpu,
+            ..device_info(device, Some(index) == primary)
+        })
         .collect()
 }
 
@@ -700,6 +730,46 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn physical_gpus_are_numbered_by_card() {
+        let physical = |devices: Vec<backend::DeviceInfo>| -> Vec<Option<u32>> {
+            device_list(devices)
+                .iter()
+                .map(|device| device.physical_gpu)
+                .collect()
+        };
+        // RTX 3060 through CUDA and Vulkan (same PCI id), Iris Xe, CPU.
+        assert_eq!(
+            physical(reference_machine()),
+            vec![Some(0), Some(0), Some(1), None]
+        );
+
+        // A skipped software rasterizer is no GPU; a second card gets the next number.
+        let mut devices = reference_machine();
+        devices.insert(
+            3,
+            backend::skipped_device(backend::DeviceId::Vulkan {
+                adapter: backend::AdapterKind::Cpu,
+                index: 0,
+            }),
+        );
+        devices.insert(
+            0,
+            synthetic(
+                backend::DeviceId::Cuda { index: 1 },
+                "second card",
+                backend::DeviceKind::Discrete,
+                Some(8 * GIB),
+                Some("0000:02:00.0"),
+                available(),
+            ),
+        );
+        assert_eq!(
+            physical(devices),
+            vec![Some(0), Some(1), Some(1), Some(2), None, None]
+        );
+    }
+
+    #[test]
     fn every_field_is_converted() {
         let mut device = synthetic(
             backend::DeviceId::Vulkan {
@@ -727,8 +797,10 @@ pub(crate) mod tests {
             compute_units: Some(30),
         };
         // The backend's JSON and the facade's JSON agree on every field placement.md §1 names;
-        // the facade adds `primary`.
+        // the facade adds `physical_gpu` (set by `device_list`, not by a single conversion) and
+        // `primary`.
         let mut expected = serde_json::to_value(&device).unwrap();
+        expected["physical_gpu"] = serde_json::Value::Null;
         expected["primary"] = serde_json::Value::Bool(true);
         let converted = device_info(device, true);
         assert_eq!(serde_json::to_value(&converted).unwrap(), expected);
@@ -871,6 +943,7 @@ pub(crate) mod tests {
       "state": "available",
       "isolated": false
     },
+    "physical_gpu": 0,
     "primary": true
   },
   {
@@ -903,6 +976,7 @@ pub(crate) mod tests {
       "state": "available",
       "isolated": false
     },
+    "physical_gpu": null,
     "primary": false
   }
 ]"#;

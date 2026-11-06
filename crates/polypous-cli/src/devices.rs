@@ -14,14 +14,16 @@ pub(crate) fn format_memory(bytes: Option<u64>) -> String {
     }
 }
 
-/// The table `polyp devices` prints: one row per device, the primary GPU marked with `*`, and a
-/// line naming the primary GPU (or saying that only the CPU is used).
+/// The table `polyp devices` prints: one row per device, the primary GPU marked with `*`, the
+/// physical GPU number in the `GPU` column (rows with the same number are one card), and a line
+/// naming the primary GPU (or saying that only the CPU is used).
 pub(crate) fn render_table(devices: &[DeviceInfo]) -> String {
     if devices.is_empty() {
         return "No devices found.\n".to_string();
     }
     let header = [
         "",
+        "GPU",
         "BACKEND",
         "NAME",
         "KIND",
@@ -29,11 +31,15 @@ pub(crate) fn render_table(devices: &[DeviceInfo]) -> String {
         "UNIFIED",
         "STATUS",
     ];
-    let rows: Vec<[String; 7]> = devices
+    let rows: Vec<[String; 8]> = devices
         .iter()
         .map(|device| {
             [
                 if device.primary { "*" } else { "" }.to_string(),
+                // Rows with the same number are one physical GPU (public-api.md §1.2).
+                device
+                    .physical_gpu
+                    .map_or_else(|| "-".to_string(), |gpu| gpu.to_string()),
                 device.backend.to_string(),
                 device.name.clone(),
                 device.kind.to_string(),
@@ -55,7 +61,7 @@ pub(crate) fn render_table(devices: &[DeviceInfo]) -> String {
     }
 
     let mut out = String::new();
-    let mut push_row = |cells: [&str; 7]| {
+    let mut push_row = |cells: [&str; 8]| {
         let mut line = String::new();
         for (column, cell) in cells.iter().enumerate() {
             if column > 0 {
@@ -120,6 +126,7 @@ mod tests {
                       memory: &str,
                       unified: bool,
                       status: &str,
+                      physical_gpu: &str,
                       primary: bool| {
             format!(
                 r#"{{"id":{id},"backend":"{backend}","name":"{name}","vendor":null,"driver":null,
@@ -128,7 +135,8 @@ mod tests {
                 "identity":{{"pci_bus_id":null,"luid":null,"registry_id":null}},
                 "capabilities":{{"f16":false,"bf16":false,"subgroup_size_min":null,
                 "subgroup_size_max":null,"max_buffer_size":null,"max_shared_memory":null,
-                "compute_units":null}},"status":{status},"primary":{primary}}}"#
+                "compute_units":null}},"status":{status},"physical_gpu":{physical_gpu},
+                "primary":{primary}}}"#
             )
         };
         let available = r#"{"state":"available","isolated":false}"#;
@@ -142,6 +150,7 @@ mod tests {
                 "6442450944",
                 false,
                 available,
+                "0",
                 true
             ),
             device(
@@ -152,6 +161,7 @@ mod tests {
                 "6442450944",
                 false,
                 available,
+                "0",
                 false
             ),
             device(
@@ -162,6 +172,7 @@ mod tests {
                 "536870912",
                 true,
                 r#"{"state":"unavailable","reason":{"code":"crashed_during_probe"},"isolated":true}"#,
+                "1",
                 false
             ),
             device(
@@ -172,6 +183,7 @@ mod tests {
                 "null",
                 true,
                 available,
+                "null",
                 false
             ),
         );
@@ -182,11 +194,11 @@ mod tests {
     fn table_snapshot() {
         let table = render_table(&reference_machine());
         // (The first line starts with spaces, so it is not continued with `\`.)
-        let expected = "   BACKEND  NAME                                  KIND        DEDICATED  UNIFIED  STATUS
-*  cuda     NVIDIA GeForce RTX 3060 Laptop GPU    discrete    6.00 GiB   no       available, not isolated
-   vulkan   NVIDIA GeForce RTX 3060 Laptop GPU    discrete    6.00 GiB   no       available, not isolated
-   vulkan   Intel(R) Iris(R) Xe Graphics          integrated  512 MiB    yes      unavailable: crashed during probe
-   cpu      12th Gen Intel(R) Core(TM) i7-12800H  cpu         -          yes      available, not isolated
+        let expected = "   GPU  BACKEND  NAME                                  KIND        DEDICATED  UNIFIED  STATUS
+*  0    cuda     NVIDIA GeForce RTX 3060 Laptop GPU    discrete    6.00 GiB   no       available, not isolated
+   0    vulkan   NVIDIA GeForce RTX 3060 Laptop GPU    discrete    6.00 GiB   no       available, not isolated
+   1    vulkan   Intel(R) Iris(R) Xe Graphics          integrated  512 MiB    yes      unavailable: crashed during probe
+   -    cpu      12th Gen Intel(R) Core(TM) i7-12800H  cpu         -          yes      available, not isolated
 
 * primary GPU: NVIDIA GeForce RTX 3060 Laptop GPU (cuda:0)
 ";
@@ -198,8 +210,8 @@ mod tests {
         let devices: Vec<DeviceInfo> = reference_machine().into_iter().skip(3).collect();
         let table = render_table(&devices);
         let expected =
-            "   BACKEND  NAME                                  KIND  DEDICATED  UNIFIED  STATUS
-   cpu      12th Gen Intel(R) Core(TM) i7-12800H  cpu   -          yes      available, not isolated
+            "   GPU  BACKEND  NAME                                  KIND  DEDICATED  UNIFIED  STATUS
+   -    cpu      12th Gen Intel(R) Core(TM) i7-12800H  cpu   -          yes      available, not isolated
 
 No usable GPU: Polypous runs on the CPU only.
 ";

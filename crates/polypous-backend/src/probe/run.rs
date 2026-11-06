@@ -11,6 +11,7 @@ use crate::device::{
     unprobed_device,
 };
 
+use super::absence;
 use super::cache::{self, CacheEntry, CacheFile};
 use super::collect::{Accepted, Collector, Outcome};
 use super::fingerprint::{self, SystemFingerprint};
@@ -176,6 +177,9 @@ pub fn probe_devices(
                 device: device.clone(),
                 cached: true,
             });
+        }
+        if config.devices.is_none() {
+            warnings.extend(absence::notes(&devices, &[]));
         }
         return Ok(report(devices, cache_hits, 0, true, warnings));
     }
@@ -742,6 +746,14 @@ impl Run<'_> {
             if !self.warnings.contains(&message) {
                 self.warnings.push(message);
             }
+        }
+        if self.config.devices.is_none() {
+            let failed: Vec<BackendKind> = collector
+                .failed_backends
+                .iter()
+                .map(|(backend, _)| *backend)
+                .collect();
+            self.warnings.extend(absence::notes(&devices, &failed));
         }
         report(
             devices,

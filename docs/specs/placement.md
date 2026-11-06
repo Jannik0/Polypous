@@ -158,6 +158,22 @@ report, cached or new, came from a prober process), `cache_hits`, `prober_starts
 (`Probing: isolated … / NOT isolated …`, prober processes started, cache hits) and the warnings;
 `polyp devices --json --report` prints the report.
 
+**A compiled-in GPU backend without devices** is not an error, but the report says why, so a
+`cuda` build on a machine without usable CUDA still explains itself. When a report covers all
+devices (no `devices` subset), every compiled-in GPU backend (CUDA, Vulkan, Metal) with no device in
+it, and whose enumeration did not fail (that already has its own warning), adds the warning
+`<backend>: compiled in, but no device found: <reason>`. The reason is the first that applies:
+
+- a variable that selects devices or drivers is set: CUDA `CUDA_VISIBLE_DEVICES`; Vulkan
+  `VK_DRIVER_FILES`, `VK_ICD_FILENAMES` (for example `CUDA_VISIBLE_DEVICES is set to "-1"`);
+- the driver library is not installed, checked by looking for the file without loading it: CUDA
+  `nvcuda.dll` in `%SystemRoot%\System32` (Windows), `libcuda.so.1` (Linux); Vulkan `vulkan-1.dll`
+  (Windows), `libvulkan.so.1` (Linux). On Linux the directories are those of `LD_LIBRARY_PATH`,
+  `/usr/lib/<arch>-linux-gnu`, `/lib/<arch>-linux-gnu`, `/usr/lib64`, `/usr/lib`, `/usr/local/lib`
+  and `/usr/lib/wsl/lib`;
+- otherwise: no device was reported (`no CUDA device was reported`, `no Vulkan device was reported`,
+  `no Metal device was reported`).
+
 **Prober protocol** (`polypous_backend::probe::protocol`, protocol version 1). The app starts
 `<prober> --polypous-prober --request <json>` with stdin, stdout and stderr piped. The request
 (`ProbeRequest`) carries `protocol`, `software_rasterizers`, `devices` (subset), `skip` (skip rules:
@@ -252,7 +268,10 @@ the GPU key set. If the registry can't be read, the fingerprint is unknown. **Ad
 address at enumeration** (Intel iGPUs through Vulkan on Windows report only a LUID): the enumeration
 key is that of the one present GPU with the same PCI vendor and device id; if none or several match,
 there is no key. **macOS** reports unknown for now, which takes the enumerate-only path. LUIDs are
-never a key.
+never a key. **On every OS** the variables that change which CUDA devices exist or how they are
+numbered, `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`, are part of every GPU fingerprint and of
+the shared one: setting or changing them invalidates the cached devices, so a hidden CUDA device is
+never served from the cache.
 
 A device recorded as `crashed during probe` or `probe timed out` stays unavailable, without being
 opened, while its fingerprint is unchanged. `force` re-probes it **out of process only**: in-process

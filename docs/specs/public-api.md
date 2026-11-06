@@ -120,7 +120,7 @@ Implemented in M0 (issue #14). Behavior: [placement.md §1](placement.md#1-devic
 | `polypous::probe::run_prober(request_json) -> i32` | Runs the prober in this process (stdout protocol) and returns the exit code; `polyp probe --json` uses it |
 | `ProbeOptions` | `force` (ignore the cache), `devices` (subset), `isolation` (`auto` \| `out_of_process` \| `in_process`), `timeout_per_device_ms` (default 60000, 1 ms to one day), `software_rasterizers` (default false), `prober_path`, `probe_cache_dir`. JSON object, unknown fields rejected, `from_json`/`to_json` |
 | `ProbeEvent` | JSON `{"event":"probe_started"}`, `{"event":"device_enumerated","id":…}`, `{"event":"device_probed","device":…,"cached":bool}` (`primary` is always false here), `{"event":"probe_finished","report":…}`; in that order, `probe_finished` last unless an error is returned |
-| `ProbeReport` | `devices` (probe order, `primary` marked), `isolated` (every result in the report came from a prober process), `cache_hits` (ids), `prober_starts`, `fingerprint_known`, `warnings`. Plain JSON data |
+| `ProbeReport` | `devices` (probe order, `primary` and `physical_gpu` set), `isolated` (every result in the report came from a prober process), `cache_hits` (ids), `prober_starts`, `fingerprint_known`, `warnings` (including why a compiled-in GPU backend has no device, placement.md §1). Plain JSON data |
 | `CancellationToken` | `new`, `cancel`, `is_cancelled`; clones share one flag. Cancelling kills a running prober; the call returns `Cancelled` |
 | `EngineConfig::probe_report` | Use a report the app produced itself; Polypous then starts no probe (`primary` is recomputed) |
 | `EngineConfig::prober_path`, `EngineConfig::probe_cache_dir` | Where the prober executable and the probe cache are |
@@ -167,7 +167,7 @@ valid.
 
 **Device JSON** (`DeviceInfo`, an array of them from `devices()`). The fields, names and values are
 those of the backend's `DeviceInfo` in [placement.md §1](placement.md#1-device-discovery), plus
-`primary`. The facade has its own types (`polypous::DeviceInfo`, `DeviceId`, `BackendKind`,
+`physical_gpu` and `primary`. The facade has its own types (`polypous::DeviceInfo`, `DeviceId`, `BackendKind`,
 `AdapterKind`, `DeviceKind`, `PhysicalIdentity`, `DeviceCapabilities`, `DeviceStatus`,
 `UnavailableReason`) and converts from `polypous_backend::device`, so the backend can change
 without changing this JSON.
@@ -190,9 +190,15 @@ without changing this JSON.
       // or {"state":"not_probed"}, {"state":"unavailable","reason":{"code":"probe_failed","message":"…"},"isolated":false};
       // reason codes: crashed_during_probe, probe_timed_out, probe_failed (+message), library_missing (+library),
       // software_rasterizer_skipped (listed, not opened; EngineConfig.software_rasterizers opts in)
+  "physical_gpu": 0,                           // index of the physical GPU, or null (CPU, software rasterizers)
   "primary": true                              // the primary GPU (placement.md §1); at most one device, none for CPU only
 }
 ```
+
+`physical_gpu` numbers the physical GPUs of the list, 0, 1, …, in the order they first appear.
+Devices with the same number are one card reached through different backends (the RTX 3060 through
+CUDA and Vulkan), matched by `identity` with the rule of placement.md §1. It is `null` for devices
+of kind `cpu` (the CPU and software rasterizers). `polyp devices` shows it in its `GPU` column.
 
 Every field is always present (`null` when unknown). Readers must accept new fields and new enum
 values (the Rust types are `#[non_exhaustive]`).

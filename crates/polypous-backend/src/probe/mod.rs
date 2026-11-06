@@ -10,6 +10,7 @@
 //! Test builds with the `test-fault-injection` feature can inject crashes, hangs and malformed
 //! output (`faults`); that code is not compiled otherwise.
 
+mod absence;
 mod cache;
 mod collect;
 #[cfg(feature = "test-fault-injection")]

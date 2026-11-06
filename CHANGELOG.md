@@ -70,6 +70,12 @@ All notable changes to Polypous are documented here. The format follows
 - `polyp probe --json` runs the prober and prints its JSON-lines protocol. `polyp devices` gets
   `--software-rasterizers`, `--isolation`, `--probe-cache-dir`, `--prober-path`,
   `--timeout-per-device-ms` and `--json --report`, and prints how devices were probed under the table.
+- `DeviceInfo::physical_gpu` (JSON `physical_gpu`): devices with the same number are one physical
+  GPU reached through different backends (the RTX 3060 through CUDA and Vulkan); `null` for the CPU
+  and software rasterizers. `polyp devices` shows it in a new `GPU` column.
+- The probe report says why a compiled-in GPU backend has no device, for example
+  `cuda: compiled in, but no device found: CUDA_VISIBLE_DEVICES is set to "-1"` or
+  `… the driver library nvcuda.dll is not installed`; `polyp devices` prints it as a warning.
 
 ### Changed
 - `polyp devices` and `Engine::new` in apps that call `run_prober_if_requested()` report probe
@@ -90,6 +96,9 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- With a warm probe cache, setting `CUDA_VISIBLE_DEVICES` (or `CUDA_DEVICE_ORDER`) was ignored: a
+  hidden CUDA device was still reported available and chosen as the primary GPU. Both variables are
+  now part of the driver fingerprint, so changing them re-probes.
 - Listing devices, or using a `DynTensor` with an id that doesn't exist, while another thread
   computed on a Vulkan GPU could crash the process with SIGSEGV in the Vulkan loader (Debian 13 with
   stock Mesa, #26). The backend GPU tests no longer need `--test-threads=1` there. The first open of
