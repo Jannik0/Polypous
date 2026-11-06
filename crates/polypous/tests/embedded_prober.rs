@@ -47,11 +47,16 @@ fn main() {
         );
     }
 
-    // `Engine::new` with the same cache directory: a complete cache hit, no prober.
+    // `Engine::new` with the same cache directory: every device from the cache. With a known OS
+    // driver fingerprint (Linux) no prober starts; with an unknown one (Windows and macOS until
+    // #28) one prober enumerates and compares, but opens nothing.
     let mut config = EngineConfig::default();
     config.probe_cache_dir = Some(dir.clone());
     let engine = Engine::new(config).expect("engine");
-    assert_eq!(engine.probe_report().prober_starts, 0);
+    let cached = engine.probe_report();
+    let expected_starts = if report.fingerprint_known { 0 } else { 1 };
+    assert_eq!(cached.prober_starts, expected_starts, "{cached:#?}");
+    assert_eq!(cached.cache_hits.len(), report.devices.len(), "{cached:#?}");
     assert_eq!(engine.devices(), report.devices);
 
     // A forced refresh starts the prober again.

@@ -215,10 +215,13 @@ mod tests {
     use crate::device::unprobed_device;
 
     pub(crate) fn temp_dir(name: &str) -> PathBuf {
+        // Digits only: `SystemTime`'s Debug form contains `:`, which Windows paths don't allow.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
         let dir = std::env::temp_dir().join(format!(
-            "polypous-test-{name}-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
+            "polypous-test-{name}-{}-{nanos}",
+            std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
