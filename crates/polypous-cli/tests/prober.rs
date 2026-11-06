@@ -393,3 +393,54 @@ fn probe_json_writes_the_protocol() {
         .unwrap();
     assert_eq!(bad.status.code(), Some(2));
 }
+
+/// The `probe failed` message of a device in a report.
+fn failure_message(report: &Value, device: &str) -> String {
+    let status = status(report, device);
+    assert_eq!(status["reason"]["code"], "probe_failed", "{report:#}");
+    status["reason"]["message"]
+        .as_str()
+        .expect("a message")
+        .to_string()
+}
+
+#[test]
+fn a_worker_thread_panic_is_in_the_reason_when_probed_isolated() {
+    // As when CubeCL can't create a device: its worker thread panics with the cause, and the
+    // calling thread only sees the closed channel.
+    let dir = cache_dir("worker-panic");
+    let faults = format!("{FAKES};worker_panic=vulkan:discrete_gpu:0");
+    let report = report(&devices(&dir, &faults, "fp-a", &[]));
+    assert_eq!(report["isolated"], true);
+    let message = failure_message(&report, "vulkan:discrete_gpu:0");
+    assert_eq!(
+        message,
+        "could not open the device: panic: fault injection: the worker's channel closed \
+         (RecvError) (worker thread panicked: fault injection: worker thread could not create \
+         vulkan:discrete_gpu:0)"
+    );
+    // The other devices are not affected.
+    for device in ["cuda:0", "vulkan:integrated_gpu:0", "cpu"] {
+        assert_eq!(status(&report, device), available(true), "{device}");
+    }
+}
+
+#[test]
+fn in_process_probing_installs_no_panic_hook() {
+    // In process the panic hook belongs to the app (public-api.md §2 rule 9): the reason is what
+    // the calling thread saw.
+    let dir = cache_dir("worker-panic-in-process");
+    let faults = format!("{FAKES};worker_panic=vulkan:discrete_gpu:0");
+    let report = report(&devices(
+        &dir,
+        &faults,
+        "fp-a",
+        &["--isolation", "in_process"],
+    ));
+    assert_eq!(report["isolated"], false);
+    assert_eq!(
+        failure_message(&report, "vulkan:discrete_gpu:0"),
+        "could not open the device: panic: fault injection: the worker's channel closed \
+         (RecvError)"
+    );
+}

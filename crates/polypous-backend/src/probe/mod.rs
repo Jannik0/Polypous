@@ -6,6 +6,8 @@
 //!   [`protocol::PROBER_FLAG`]).
 //! - [`probe_devices`]: the app side: probe cache → prober process (timeouts, restarts,
 //!   untrusted-output limits) → in-process fallback with a crash journal.
+//! - `worker_panics`: in the prober only, panics of other threads (CubeCL's device runner) are
+//!   added to a `probe failed` reason.
 //!
 //! Test builds with the `test-fault-injection` feature can inject crashes, hangs and malformed
 //! output (`faults`); that code is not compiled otherwise.
@@ -23,6 +25,7 @@ mod run;
 mod session;
 mod source;
 mod supervisor;
+mod worker_panics;
 
 pub use cache::default_cache_dir;
 pub use prober::{

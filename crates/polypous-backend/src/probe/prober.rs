@@ -66,7 +66,13 @@ pub fn parse_request(json: &str) -> Result<ProbeRequest, String> {
 /// `supervised`: started by the app's supervisor. Then a watchdog thread exits the process as soon
 /// as stdin reaches end of file, which happens when the app closes it or dies, so a hung prober
 /// never outlives its app. (`polyp probe --json` from a terminal runs unsupervised.)
+///
+/// Installs a panic hook for the rest of the process that records panics on every thread (then
+/// runs the previous hook), so a device whose worker thread panicked gets that message in its
+/// `probe failed` reason (placement.md §1, "Probe failure reasons"). Call this only in a process
+/// that exists to probe: the hook is process-wide.
 pub fn run_prober(request: &ProbeRequest, supervised: bool) -> i32 {
+    super::worker_panics::install();
     #[cfg(feature = "test-fault-injection")]
     let faults = super::faults::Faults::from_env();
     #[cfg(feature = "test-fault-injection")]
