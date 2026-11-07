@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.cast",
+  "case": "bool_to_i64",
+  "description": "Tensor.to(i64) from bool.",
+  "attributes": {
+    "dtype": "i64"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "input.to(i64)",
+  "notes": "",
+  "seed": 434,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -76,6 +76,14 @@ All notable changes to Polypous are documented here. The format follows
 - The probe report says why a compiled-in GPU backend has no device, for example
   `cuda: compiled in, but no device found: CUDA_VISIBLE_DEVICES is set to "-1"` or
   `… the driver library nvcuda.dll is not installed`; `polyp devices` prints it as a warning.
+- Reference fixture tooling (#36): `tools/reference/gen_ops.py` generates op fixtures from
+  PyTorch (pinned CPU-only versions in `tools/reference/requirements.txt`, Python 3.14) into
+  `fixtures/small/ops/<op>/<case>.{safetensors,json}`, with `--check` to compare against the
+  committed files. First fixtures for `core.add`, `core.matmul`, `core.cast` (all 36 pairs of
+  `f32`/`f16`/`bf16`/`i64`/`i32`/`bool`) and `core.reshape`. Sidecar schema and layout in
+  testing-strategy.md §3. `tools/reference/fetch_fixtures.py` downloads `fixtures/manifest.json`
+  entries into `fixtures/cache/` with a size limit and SHA-256 check. CI checks the fixture size
+  budget and sidecars (`tools/ci/check_fixtures.py`) in the "Dependency boundary" job.
 
 ### Changed
 - `polyp devices` and `Engine::new` in apps that call `run_prober_if_requested()` report probe

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "op": "core.matmul",
+  "case": "broadcast_batch_4d_f32",
+  "description": "[2, 1, 3, 5] @ [1, 3, 5, 4] -> [2, 3, 3, 4]: broadcast batch dims.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "lhs",
+      "dtype": "f32",
+      "shape": [
+        2,
+        1,
+        3,
+        5
+      ]
+    },
+    {
+      "name": "rhs",
+      "dtype": "f32",
+      "shape": [
+        1,
+        3,
+        5,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.matmul(lhs.double(), rhs.double()).to(lhs.dtype)",
+  "notes": "out is torch.matmul in f64, rounded once to the dtype under test, so the bytes don't depend on the CPU's BLAS kernel; torch.matmul in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 204,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

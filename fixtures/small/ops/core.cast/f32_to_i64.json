@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.cast",
+  "case": "f32_to_i64",
+  "description": "Tensor.to(i64) from f32.",
+  "attributes": {
+    "dtype": "i64"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "f32",
+      "shape": [
+        21
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        21
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "input.to(i64)",
+  "notes": "Float to int truncates toward zero. Inputs are finite, not NaN and inside the i32 range after rounding to the source dtype; out-of-range and NaN conversions are undefined in PyTorch.",
+  "seed": 404,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

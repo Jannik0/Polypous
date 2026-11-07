@@ -11,7 +11,7 @@ requirements below).
 |---|---|
 | **Rust** via [rustup](https://rustup.rs) | The toolchain pinned in `rust-toolchain.toml` is installed automatically |
 | **Git** | — |
-| **Python 3.12–3.14** | Generating reference fixtures only (`tools/reference/`), never needed at runtime. Use a version PyTorch publishes wheels for. Newly released Python versions often lack them for a few months |
+| **Python 3.14** | Generating and checking reference fixtures only (`tools/reference/`, see [below](#python-reference-environment)), never needed at runtime. The CI helper scripts and the fixture tooling tests need only Python 3.12+ and its standard library |
 
 ## GPU backends (optional, for GPU tests)
 
@@ -112,17 +112,37 @@ After `cargo test`, run `cargo build -p polypous-cli --features cuda,vulkan` aga
 
 ## Python reference environment
 
+Only needed to generate or check reference fixtures ([testing-strategy.md §3](testing-strategy.md#3-reference-fixtures)).
+The committed fixtures are generated with **Python 3.14** and the versions pinned in
+[`tools/reference/requirements.txt`](../tools/reference/requirements.txt) (CPU-only PyTorch,
+`safetensors`, `numpy`). The generators refuse to run with other versions.
+
+With [uv](https://docs.astral.sh/uv/) (fetches Python 3.14 if needed):
+
 ```bash
 uv venv --python 3.14 tools/reference/.venv
+# Linux:   source tools/reference/.venv/bin/activate
+# Windows: tools\reference\.venv\Scripts\activate
+uv pip install -r tools/reference/requirements.txt
 ```
 
-(or `py -3.14 -m venv tools/reference/.venv` without uv). Activate it (`tools/reference/.venv/Scripts/activate` on Windows, `tools/reference/.venv/bin/activate` on Linux), then:
+Without uv: `py -3.14 -m venv tools/reference/.venv` (Windows) or `python3.14 -m venv
+tools/reference/.venv` (Linux), activate it, then `pip install -r tools/reference/requirements.txt`.
+
+`requirements.txt` adds PyTorch's CPU wheel index (`https://download.pytorch.org/whl/cpu`) with
+`--extra-index-url` and pins `torch==X.Y.Z+cpu`. The `+cpu` version exists only on that index, so
+pip and uv can't pick a CUDA build from PyPI by accident, and the same file works on Linux (x86-64)
+and Windows (x64). PyTorch publishes no `+cpu` wheels for macOS. That index's links point to
+`download-r2.pytorch.org`, so a firewall or proxy must allow that host as well as
+`download.pytorch.org`.
+
+Then, from the repository root:
 
 ```bash
-pip install -r tools/reference/requirements.txt
+python tools/reference/gen_ops.py            # regenerate fixtures/small/ops/
+python tools/reference/gen_ops.py --check    # compare with the committed fixtures
+python -m unittest discover -s tools/reference -v
 ```
-
-`requirements.txt` is added together with the first fixture generator (M1).
 
 ## Cloud environments for agents
 
@@ -136,8 +156,8 @@ Python are pre-installed.
    private, so sessions need it to clone and push. Auto-fix on PRs also depends on it.
 2. Create a cloud environment:
    - **Network access:** *Custom*, keeping the default (Trusted) list, which covers crates.io,
-     rustup, PyPI, GitHub and Ubuntu apt. Add `huggingface.co`, `*.hf.co` (test models) and
-     `download.pytorch.org` (CPU-only PyTorch for fixture generation).
+     rustup, PyPI, GitHub and Ubuntu apt. Add `huggingface.co`, `*.hf.co` (test models),
+     `download.pytorch.org` and `download-r2.pytorch.org` (CPU-only PyTorch for fixture generation).
    - **Setup script:** the contents of [`tools/cloud/setup.sh`](../tools/cloud/setup.sh).
    - **Environment variables:** none needed. Never put secrets there: everyone using the environment can read them.
 
