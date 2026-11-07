@@ -31,7 +31,7 @@ with no dependency on Burn.
 
   "dims": { "batch": { "min": 1 } },
 
-  "inputs":  [ { "name": "image", "dtype": "f32", "shape": ["batch", 784] } ],
+  "inputs":  [ { "name": "image", "dtype": "float", "shape": ["batch", 784] } ],
   "outputs": [ { "name": "logits", "value": "fc2" } ],
 
   "params": [
@@ -86,15 +86,31 @@ Optional inputs, params and attrs may be left out. A name the op doesn't define 
 | `f32`, `f16`, `bf16` | Float tensors |
 | `i64`, `i32` | Integer tensors (token ids, indices) |
 | `bool` | Masks |
-| `float` (params only) | "Any float or quantized storage": the actual storage dtype comes from the weight file (`f16`, `q4_k`, …). Ops see the param in the **compute dtype** |
+| `float` | On params: "any float or quantized storage". The actual storage dtype comes from the weight file (`f16`, `q4_k`, …), and ops see the param in the **compute dtype**. On graph inputs, state entries and some `dtype` attributes: the compute dtype itself (see below) |
 
 Value tensors have **rank 1 to 6**. There is no rank 0: a scalar is a tensor of shape `[1]` (§3.1.5).
 
 **Compute dtype.** Each loaded model has a compute dtype: `f32` by default, `f16` or `bf16` where
 the device supports them. The runtime casts every `float` param to it when it loads the param.
 Validation takes the compute dtype as an input (default `f32`) and types every `float` param with
-it. Graph inputs and state entries declare a concrete dtype, and ops check it under the strict rule
-of §3.1.2, so a graph whose inputs are `f32` validates only with compute dtype `f32` unless it casts.
+it.
+
+**`float` as a value dtype.** Graph inputs and state entries declare their dtype. Besides the
+concrete dtypes they may declare `"float"`, which means the compute dtype. So may the `dtype`
+attribute of `core.cast`, `core.constant`, `core.zeros`, `core.ones`, `core.full`,
+`core.full_like` and `core.arange`. With it, one graph is valid for every compute dtype:
+- Validation resolves every `"float"` to the compute dtype it is given, before dtype inference.
+  The strict rule of §3.1.2 is unchanged: a `float` input has exactly the compute dtype. A graph
+  whose inputs declare a concrete `f32` still validates only with compute dtype `f32`, unless it
+  casts.
+- `"float"` is not allowed anywhere else. In particular, index dtypes (`dtype` of `core.argmax`,
+  `core.argmin`, `core.top_k`) must be `I`. Elsewhere it is `invalid_attr` (attributes) or
+  `invalid_value` (other fields).
+- Scalar values of `core.constant`, `core.full` and `core.full_like` with dtype `float` are rounded
+  to the compute dtype.
+- The runtime checks given input and state values against the resolved dtype (`InvalidInput` on a
+  mismatch, §2.3.4).
+- Saving keeps `"float"` as written; it is never replaced by the resolved dtype.
 
 **Device support.** Not every device supports every dtype. On Vulkan, for example, `bf16` depends on
 device extensions (Mesa lavapipe has none), and `i64` on `shaderInt64`. The backend reports support
@@ -203,7 +219,8 @@ Validation proves:
 - every used symbol can be bound (§2.3)
 
 On each call, before any node runs, the runtime:
-1. Checks every graph input and state value: present, declared dtype, declared rank.
+1. Checks every graph input and state value: present, declared dtype (`float` resolved to the
+   compute dtype, §2.2), declared rank.
 2. Binds symbols: a plain-symbol dim of an input or state value (inputs in declaration order, then
    state, dims left to right) binds the symbol on its first occurrence. Every later occurrence must
    have the same value. Literal dims must match exactly.
@@ -258,7 +275,7 @@ The runtime keeps state per **session** and places it on the device of the block
 
 **What M1 implements:**
 - `state` entries on the graph root and in `repeat` bodies (§2.6), with a concrete value dtype
-  (not `float`) and `init: "zeros"` (the only init kind in M1).
+  or `float` (the compute dtype, §2.2), and `init: "zeros"` (the only init kind in M1).
 - `state_updates`: each state entry is updated at most once per call. The update's dtype must equal
   the entry's dtype and its shape must be provably equal to the entry's shape. Nodes that read a
   state entry during a call see the value from the start of the call; the update takes effect for
@@ -404,7 +421,7 @@ input rank.
 | `int[]` | array of integers | Length rules per op |
 | `dim` | integer, or string | A dim expression (§2.3.1). Its symbols must be declared in `dims` |
 | `dim[]` | array of `dim` | |
-| `dtype` | string | `f32 f16 bf16 i64 i32 bool` |
+| `dtype` | string | `f32 f16 bf16 i64 i32 bool`, and `float` (the compute dtype, §2.2) where the op says so |
 | `scalar` | number, `"inf"`/`"-inf"`/`"nan"`, or `true`/`false` | A value of the dtype the op is filling: an integer for `I` (in range for the dtype), a `float` for `F` (rounded to the dtype), a bool for `B` |
 
 **Shape-like arguments are attributes** (reshape target, `expand`, `slice` bounds, `pad`, `arange`,
@@ -556,18 +573,20 @@ These ops have no tensor inputs (except `full_like`) and are not differentiable.
 
 | Op | Inputs | Attributes | Outputs | Shape | Diff. | PyTorch |
 |---|---|---|---|---|---|---|
-| `core.constant` | — | `dtype: dtype`, `shape: int[]` (literals, 1–6 entries), `values: scalar[]` | `out`: `dtype` | `shape` | no | `torch.tensor(values, dtype=dtype).reshape(shape)` |
-| `core.arange` | — | `start: dim = 0`, `end: dim`, `step: int = 1` (≥ 1), `dtype: dtype = "i64"` (`N`) | `out`: `dtype` | `[(end - start + step - 1) // step]` | no | `torch.arange(start, end, step, dtype=dtype)` |
-| `core.zeros` | — | `shape: dim[]` (1–6 entries), `dtype: dtype = "f32"` | `out`: `dtype` | `shape` | no | `torch.zeros(shape, dtype=dtype)` |
-| `core.ones` | — | `shape: dim[]` (1–6 entries), `dtype: dtype = "f32"` | `out`: `dtype` | `shape` | no | `torch.ones(shape, dtype=dtype)` |
-| `core.full` | — | `shape: dim[]` (1–6 entries), `value: scalar`, `dtype: dtype = "f32"` | `out`: `dtype` | `shape` | no | `torch.full(shape, value, dtype=dtype)` |
-| `core.full_like` | `x`: `A` | `value: scalar`, `dtype: dtype?` (default: `x`'s dtype) | `out`: `dtype` | `x.shape` | no | `torch.full_like(x, value, dtype=dtype)` |
+| `core.constant` | — | `dtype: dtype` (`float` allowed), `shape: int[]` (literals, 1–6 entries), `values: scalar[]` | `out`: `dtype` | `shape` | no | `torch.tensor(values, dtype=dtype).reshape(shape)` |
+| `core.arange` | — | `start: dim = 0`, `end: dim`, `step: int = 1` (≥ 1), `dtype: dtype = "i64"` (`N` or `float`) | `out`: `dtype` | `[(end - start + step - 1) // step]` | no | `torch.arange(start, end, step, dtype=dtype)` |
+| `core.zeros` | — | `shape: dim[]` (1–6 entries), `dtype: dtype = "f32"` (`float` allowed) | `out`: `dtype` | `shape` | no | `torch.zeros(shape, dtype=dtype)` |
+| `core.ones` | — | `shape: dim[]` (1–6 entries), `dtype: dtype = "f32"` (`float` allowed) | `out`: `dtype` | `shape` | no | `torch.ones(shape, dtype=dtype)` |
+| `core.full` | — | `shape: dim[]` (1–6 entries), `value: scalar`, `dtype: dtype = "f32"` (`float` allowed) | `out`: `dtype` | `shape` | no | `torch.full(shape, value, dtype=dtype)` |
+| `core.full_like` | `x`: `A` | `value: scalar`, `dtype: dtype?` (default: `x`'s dtype; `float` allowed) | `out`: `dtype` | `x.shape` | no | `torch.full_like(x, value, dtype=dtype)` |
 
 - `constant`: `values` is row-major and has exactly as many entries as `shape` has elements, at
   most 65,536. Larger constants are params.
 - `arange`: `start` and `end` are evaluated at runtime (they may use symbols); `start ≥ 0` and the
   length must be ≥ 1. For float dtypes, values are exact while they are below 2^24 (`f32`), 2^11
   (`f16`) or 2^8 (`bf16`).
+- `dtype: "float"` means the compute dtype (§2.2); scalar values are rounded to it. In fixtures,
+  the PyTorch call gets the resolved dtype.
 - `full_like` replaces the earlier `like`: shape (and by default dtype) come from `x`, values from
   `value`. `zeros_like`/`ones_like` are `full_like` with `0`/`1`.
 
@@ -603,7 +622,7 @@ These ops have no tensor inputs (except `full_like`) and are not differentiable.
 
 | Op | Inputs | Attributes | Outputs | Shape | Diff. | PyTorch |
 |---|---|---|---|---|---|---|
-| `core.cast` | `x`: `A` | `dtype: dtype` | `out`: `dtype` | `x.shape` | float → float only | `x.to(dtype)` |
+| `core.cast` | `x`: `A` | `dtype: dtype` (`float` allowed) | `out`: `dtype` | `x.shape` | float → float only | `x.to(dtype)` |
 | `core.softmax` | `x`: `F` | `dim: int` | `out`: `T` | `x.shape` | yes | `torch.softmax(x, dim)` |
 | `core.log_softmax` | `x`: `F` | `dim: int` | `out`: `T` | `x.shape` | yes | `torch.log_softmax(x, dim)` |
 | `core.cumsum` | `x`: `N` | `dim: int` | `out`: `T` | `x.shape` | yes | `torch.cumsum(x, dim)` |
@@ -746,7 +765,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `unsupported_opset` | An opset in `opsets` is unknown or its version isn't supported |
 | `unknown_field` | A field that the schema doesn't define (except inside `meta`) |
 | `missing_field` | A required field is missing (for example a node's `op`, a param's `shape`) |
-| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, an unknown `init` kind, `min`/`max` of a dim) |
+| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, `min`/`max` of a dim) |
 | `invalid_name` | A name or id breaks the naming rules (§2.1, §2.3.1) |
 | `duplicate_name` | Two values, params, dims, state entries or outputs share a name |
 | `unknown_reference` | A reference to an undeclared value, port, param, state entry or dim symbol |

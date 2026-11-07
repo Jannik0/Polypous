@@ -4,7 +4,7 @@
 |---|---|
 | **Backend** | A Burn compute backend (CUDA, Metal, Vulkan via wgpu, CPU). In Polypous: a `BackendKind` value chosen at runtime. |
 | **Block** (placement block) | The unit the placement planner assigns to a tier. Usually one iteration of a `repeat` (one transformer layer). Also embeddings, the output head, etc. |
-| **Compute dtype** | The float dtype (`f32`, `f16` or `bf16`) a loaded model computes in. `float` params are cast to it when loaded. See [graph-ir.md §2.2](specs/graph-ir.md#22-dtypes). |
+| **Compute dtype** | The float dtype (`f32`, `f16` or `bf16`) a loaded model computes in. `float` params are cast to it when loaded, and graph inputs, state and some op attributes may declare `float` to mean it. See [graph-ir.md §2.2](specs/graph-ir.md#22-dtypes). |
 | **DynTensor** | Polypous' runtime-typed tensor wrapper over Burn's compile-time typed `Tensor<B, D, K>`: dynamic rank and dtype. |
 | **DynamicModel** | A `Module` implementation whose parameters come from a graph at runtime, so Burn optimizers can train it. |
 | **Engine** | Top-level public object: owns device discovery, the backend instances and loaded models. |
