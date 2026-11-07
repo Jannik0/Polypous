@@ -1,0 +1,7 @@
+# Pinned versions for the reference fixture generators (docs/dev-environment.md#python-reference-environment).
+# torch comes from PyTorch's CPU-only index: the `+cpu` version exists only there, on Linux x86-64
+# and Windows x64. The index links its wheels to download-r2.pytorch.org.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
+safetensors==0.8.0
+numpy==2.5.4

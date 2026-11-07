@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "op": "core.reshape",
+  "case": "2d_to_3d_bool",
+  "description": "bool [2, 6] -> [3, 2, 2], row-major order kept.",
+  "attributes": {
+    "shape": [
+      3,
+      2,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "bool",
+      "shape": [
+        2,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        3,
+        2,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.reshape(input, shape)",
+  "notes": "",
+  "seed": 305,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

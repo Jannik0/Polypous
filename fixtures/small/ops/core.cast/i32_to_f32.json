@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.cast",
+  "case": "i32_to_f32",
+  "description": "Tensor.to(f32) from i32.",
+  "attributes": {
+    "dtype": "f32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "i32",
+      "shape": [
+        18
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        18
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "input.to(f32)",
+  "notes": "Int to float rounds to nearest, ties to even.",
+  "seed": 425,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

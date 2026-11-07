@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.add",
+  "case": "broadcast_i64",
+  "description": "[3, 4] + [1, 4] in i64.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "lhs",
+      "dtype": "i64",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "rhs",
+      "dtype": "i64",
+      "shape": [
+        1,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.add(lhs, rhs)",
+  "notes": "Integer inputs are small enough that the sum doesn't overflow.",
+  "seed": 108,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

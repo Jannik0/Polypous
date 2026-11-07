@@ -38,12 +38,92 @@ an explanation in the PR.
   diffusers, `gguf-py`, librosa and llama.cpp. Each script is deterministic (fixed seeds) and records
   the library versions it used in the fixture's metadata.
 - **Format:** safetensors (tensors) + a JSON sidecar (inputs, attributes, tolerances, versions).
-- **Small fixtures** (< 1 MB each, < 50 MB total) are committed in `fixtures/small/`.
+- **Small fixtures** (< 1 MiB each, < 50 MiB total) are committed in `fixtures/small/`.
 - **Large fixtures and test models** are listed in `fixtures/manifest.json` (URL, SHA-256, size,
   license). `tools/reference/fetch_fixtures.py` downloads them into `fixtures/cache/` (git-ignored).
   Tests that need them skip with a clear message when they are missing. In CI they are a failure, not a skip.
 - Test models are the smallest representative models available (for example tiny Llama-architecture
   test models, Whisper tiny, SD 1.5 at low resolution and few steps).
+
+### 3.1 Layout
+
+```text
+fixtures/
+  manifest.json                    large fixtures and test models (§3.4)
+  cache/                           downloads from the manifest, git-ignored
+  small/                           committed, size-checked in CI
+    ops/<op>/<case>.safetensors    one op case: inputs and expected outputs
+    ops/<op>/<case>.json           its sidecar (§3.2)
+```
+
+- `<op>` is the IR op name from [graph-ir.md §3](specs/graph-ir.md#3-opsets), for example
+  `fixtures/small/ops/core.add/broadcast_row_f32.json`. `<case>` is `[a-z0-9_]`, unique per op,
+  and usually ends in the dtype under test.
+- A **fixture** is one case: its `.safetensors` file and its `.json` sidecar. The size budget counts
+  both together.
+- Other areas (`quant/`, `tokenizers/`, …) get their own directories under `small/` when they get
+  their first fixtures, with the same pairing of tensors and sidecar.
+
+### 3.2 Op sidecar (schema version 1)
+
+The safetensors file holds every input and every expected output under the names the sidecar
+gives, **in the dtype under test** (`F32`, `F16`, `BF16`, `I64`, `I32`, `BOOL`; little-endian,
+row-major) and with no `__metadata__`. safetensors stores raw bytes, so `-0.0`, NaN, infinities and
+f16/bf16 values round-trip exactly. The sidecar is UTF-8 JSON with exactly these keys, in this order
+(2-space indent, LF line endings, written by the generator only):
+
+| Key | Type | Meaning |
+|---|---|---|
+| `schema_version` | int | `1` |
+| `op` | string | IR op name, equal to the directory name |
+| `case` | string | Case name, equal to the file name without extension |
+| `description` | string | What the case covers |
+| `attributes` | object | The op's attributes (for example `{"dtype": "f16"}` for `core.cast`, `{"shape": [4, 6]}` for `core.reshape`). Names follow the op catalog; the generator is the only place that writes them |
+| `inputs` | array | The op's inputs **in order**: `{"name", "dtype", "shape"}` with dtype `f32`/`f16`/`bf16`/`i64`/`i32`/`bool` |
+| `outputs` | array | Expected outputs in order, same form. Tensor names are unique across inputs and outputs |
+| `tolerance` | object | `{"exact", "atol", "rtol"}`, see below |
+| `reference` | string | The reference expression, for example `torch.add(lhs, rhs)` |
+| `notes` | string | Semantics the case relies on and inputs left out on purpose (may be empty) |
+| `seed` | int | Seed of the case's input data |
+| `generator` | string | Script that wrote it, relative to the repository root |
+| `versions` | object | Versions it was generated with: `python` (major.minor), `torch`, `safetensors`, `numpy` |
+
+**Comparing with the tolerance.** With `exact: true` (then `atol` and `rtol` are `0`), the output
+must equal the expected tensor bit for bit, except that any NaN matches any NaN (NaN payloads and
+signs are not part of op semantics). Otherwise every element must satisfy
+`|actual − expected| ≤ atol + rtol · |expected|`, a NaN is expected exactly where the expected
+tensor has one, and an expected ±inf must be the same inf. Tolerances default to §2 (f32:
+`atol 1e-5`, `rtol 1e-4`, matmul `rtol 1e-3`; f16/bf16: `rtol 1e-2`; ints, bool, reshape and cast:
+exact) and are written into every sidecar, so a test reads them from there and never hard-codes them.
+
+### 3.3 Generating and checking
+
+- Each generator declares all its cases in one place, each with a fixed seed. Input data comes from
+  NumPy's PCG64 generator, so it is the same on every CPU and OS. Where a library's result depends
+  on the CPU's kernels (matmul summation order), the generator computes in f64 and rounds once to the
+  dtype under test, and checks that the library's own result in that dtype meets the tolerance.
+- Generators need the exact versions pinned in `tools/reference/requirements.txt` and refuse to run
+  with others. `--check` regenerates into a temporary directory and fails on a fixture that differs
+  from the committed one, a generated fixture that is not committed (missing), and a committed file
+  that no case produces (extra). See [`tools/reference/README.md`](../tools/reference/README.md).
+- CI runs `tools/ci/check_fixtures.py` (standard library only): the size budget, and every sidecar
+  against the schema and its safetensors header. CI does not run PyTorch.
+
+**How tests find fixtures.** Paths are relative to the repository root: Rust tests build them from
+`CARGO_MANIFEST_DIR` (`../../fixtures/small/ops/<op>/`), read every `.json` in the op's directory,
+load the safetensors file next to it, and compare with the sidecar's tolerance. A missing committed
+fixture is a test failure, never a skip. The Rust loader comes with the first backend op task, through
+`polypous-formats`.
+
+### 3.4 Manifest
+
+`fixtures/manifest.json` is `{"schema_version": 1, "entries": [...]}`. Every entry has exactly
+`name` (unique, `[A-Za-z0-9._-]`), `url` (`https`, or `file` for local mirrors), `sha256` (lowercase
+hex), `size` (bytes), `license` and `path` (relative, `/`-separated, inside `fixtures/cache/`).
+`fetch_fixtures.py` validates the whole manifest first, never reads more than `size` bytes of a
+download (or `--max-bytes`, default 8 GiB, for any entry), writes to a temporary file, checks the
+SHA-256 and only then moves the file into place. A file already in the cache with the right hash is
+kept.
 
 ## 4. Backends in tests
 
@@ -66,7 +146,7 @@ helper scripts in [`tools/ci/`](../tools/ci/). The toolchain is always the one i
 | `Lint & test (Linux)` | `ci.yml` | every PR, push to `main` | `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace` (CPU features) |
 | `Lint & test (Windows)` | `ci.yml` | every PR, push to `main` | same on Windows |
 | `cargo-deny (licenses, advisories)` | `ci.yml` | every PR, push to `main` | `cargo deny check` with [`deny.toml`](../deny.toml): MIT-compatible licenses only ([ADR-0010](adr/0010-mit-license.md)), RustSec advisories, crates.io only |
-| `Dependency boundary` | `ci.yml` | every PR, push to `main` | `tools/ci/check_dependency_boundary.py` (and its tests): Burn/CubeCL only in `polypous-backend`/`polypous-quant` ([ADR-0007](adr/0007-burn-version-pinning.md)); no GPU dependency, direct or transitive, in `polypous-ir`/`-formats`/`-polyp` |
+| `Dependency boundary` | `ci.yml` | every PR, push to `main` | `tools/ci/check_dependency_boundary.py` (and its tests): Burn/CubeCL only in `polypous-backend`/`polypous-quant` ([ADR-0007](adr/0007-burn-version-pinning.md)); no GPU dependency, direct or transitive, in `polypous-ir`/`-formats`/`-polyp`. Also the fixture checks (§3.3): `tools/ci/check_fixtures.py` and the standard-library tests of `tools/reference/` |
 | `Vulkan tests (Linux, lavapipe)` | `ci.yml` | every PR, push to `main` | `cargo test --workspace --features polypous-backend/vulkan -- --include-ignored` on Mesa lavapipe (software Vulkan) |
 | `Build (macOS, Metal)` | `macos.yml` | push to `main`, manual dispatch, PRs touching `crates/polypous-backend/**`, `crates/polypous-quant/**`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | `cargo build --workspace --all-targets --features polypous-backend/metal` (build only, no Mac hardware) |
 
