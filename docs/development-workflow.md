@@ -141,7 +141,7 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
 ### 8.4 Reviewing and merging
 
 1. **Checks:**
-   - All seven required checks are green.
+   - All required checks are green (six; see [status.md §2](status.md#2-what-exists-after-m0)), and Build (macOS, Metal) too when it ran on the PR.
    - Every commit ends with `Co-Authored-By: Claude <noreply@anthropic.com>` and has no session link or model name.
    - Commit authors:
      - Commits from local sessions use the owner's no-reply address.
@@ -186,6 +186,7 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
 
 - **Cloud sessions:**
   - The harness appends a session-link footer to PR descriptions written through `gh api`. The PR-text job fails on it. Edit the description (or write it with the GitHub tool) until only the required footer remains.
+  - It appends a `claude.ai/code` footer to issue bodies written through `gh api` too (seen in M1), and re-appends it on every `gh api` edit. Write and edit issues with the GitHub MCP tool (`issue_write`), which leaves the body alone, and re-read the body afterwards.
   - The app's **Auto-fix** CI monitor can only be turned on for a PR the app knows the session opened. Otherwise the lead checks CI itself.
   - On GitHub, cloud sessions act as the owner's account: their PRs show as opened by the owner,
     and their commits as authored by `Claude <noreply@anthropic.com>`. Commit messages from cloud
