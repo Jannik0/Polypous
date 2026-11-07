@@ -7,6 +7,13 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `polypous-formats`: safetensors reader and writer (`docs/specs/formats.md` §1, #37). Memory-mapped
+  reader with a copy fallback that validates the whole header before exposing tensors (100 MB header
+  limit, contiguous offsets covering the data buffer, checked sizes, no duplicate keys, rank ≤ 64),
+  zero-copy tensor views, all safetensors dtypes recognized and F32/F16/BF16/I64/I32/BOOL decodable;
+  sharded checkpoints (`*.safetensors.index.json`, 64 MiB limit, plain shard file names, every
+  tensor in exactly one shard); a writer whose output is ordered by element size, then name, so every
+  tensor is aligned to its element size, checked against Python `safetensors`.
 - Project brief, architecture, roadmap, specifications, ADRs and contributor/agent guides.
 - Cloud environment setup script (`tools/cloud/setup.sh`) and documentation for cloud agents.
 - Cargo workspace with empty skeleton crates (`polypous-ir`, `-formats`, `-polyp`, `-backend`, `-quant`,

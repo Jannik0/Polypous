@@ -9,6 +9,19 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Read-only memory maps of model files (docs/specs/formats.md §1.4). MIT OR Apache-2.0; already in
+# the lock file through Burn's tree.
+memmap2 = "0.9.12"
+# JSON headers of safetensors files and sharded indices. Only the `Deserializer`/`Visitor` traits are
+# used (hand-written visitors that reject duplicate keys and bound shapes), so no derive feature.
+# MIT OR Apache-2.0; already in the lock file.
+serde = "1.0.229"
+# MIT OR Apache-2.0; already in the lock file.
+serde_json = "1.0.154"
+# Logs the mmap copy fallback (CLAUDE.md conventions). MIT; already in the lock file.
+tracing = "0.1.44"
+# Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file.
+thiserror = "2.0.21"
 
 [lints]
 workspace = true
