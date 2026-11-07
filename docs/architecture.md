@@ -71,7 +71,7 @@ Other top-level directories:
 - **`.polyp` definition** ([spec](specs/polyp-format.md)): a data-only package that describes an
   architecture *family*. It contains match rules, hyperparameter bindings, one or more graph templates, a
   weight-name map and a pipeline description.
-- **Weights source:** safetensors or GGUF files. They are memory-mapped and never fully copied into
+- **Weights source** ([spec](specs/formats.md)): safetensors or GGUF files. They are memory-mapped and never fully copied into
   RAM unless placement says so.
 - **Model** = graph(s) + weights + placement plan, loaded on an `Engine`.
 - **Placement plan** ([spec](specs/placement.md)): assigns every *placement block* (usually one
