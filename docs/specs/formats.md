@@ -211,15 +211,18 @@ the operating system resolves them: a link inside the model directory is the use
 `__metadata__` entries, and produce a file that the reader of §1.2 and the reference implementation
 accept:
 
-- Tensors are ordered by name (byte-wise), in both the header and the data buffer, so the output
-  depends only on the input set, not on its order. Offsets are contiguous from 0.
-- The header lists `__metadata__` first (omitted when empty), then the tensors in name order, as
+- Tensors are ordered by **descending element alignment, then by name** (byte-wise), in both the
+  header and the data buffer (the reference sorts by its dtype order, descending, for the same
+  reason). The alignment is the element size in bytes (8, 4, 2, 1); 1-byte and sub-byte dtypes
+  (`F4`, `F6_*`) both count as 1. The output depends only on the input set, not on its order.
+  Offsets are contiguous from 0.
+- The header lists `__metadata__` first (omitted when empty), then the tensors in output order, as
   compact JSON. Each tensor entry is `{"dtype":…,"shape":[…],"data_offsets":[b,e]}`.
 - The header is padded with spaces (`0x20`) to a multiple of 8 bytes, so the data buffer starts at an
-  8-byte aligned file offset, as the reference does. Individual tensors are aligned only as far as
-  their order allows: the reference sorts by descending dtype size first to keep each tensor aligned,
-  while this writer sorts by name only (the task's stable order). Readers must not assume alignment
-  (§1.1 decodes by copying).
+  8-byte aligned file offset, as the reference does. Since element sizes are powers of two and
+  larger ones come first, **every tensor's file offset is a multiple of its element size**, which
+  zero-copy loading and disk streaming rely on. The reader still doesn't assume alignment in files
+  from other writers (§1.1 decodes by copying).
 - Rejected input: a duplicate tensor name or the name `__metadata__` (`DuplicateKey`), data whose
   length isn't `numel × bits / 8` (`LengthMismatch`, checked by `WriteTensor::new`), and a header
   larger than `MAX_HEADER_LEN` (`HeaderTooLarge`).

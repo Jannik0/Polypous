@@ -134,6 +134,13 @@ impl Dtype {
         }
     }
 
+    /// Alignment in bytes the writer gives tensors of this dtype: the element size, at least 1
+    /// (sub-byte dtypes are byte-aligned). `docs/specs/formats.md` §1.6.
+    pub const fn alignment(self) -> usize {
+        let bytes = self.bits() / 8;
+        if bytes == 0 { 1 } else { bytes }
+    }
+
     /// Whether [`TensorView::values`](super::TensorView::values) can decode this dtype
     /// (F32, F16, BF16, I64, I32, BOOL).
     pub const fn is_readable_as_values(self) -> bool {

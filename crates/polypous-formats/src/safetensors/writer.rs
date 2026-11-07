@@ -87,6 +87,12 @@ fn prepare<'a, N: Into<String>>(
         }
     }
 
+    // Output order (§1.6): descending element alignment, then name. Element sizes are powers of
+    // two, so every tensor's offset is a multiple of its element size. The map is name-sorted, and
+    // the sort is stable.
+    let mut ordered: Vec<(String, WriteTensor<'a>)> = sorted.into_iter().collect();
+    ordered.sort_by_key(|(_, t)| std::cmp::Reverse(t.dtype.alignment()));
+
     let json_err = |e: serde_json::Error| ErrorKind::InvalidHeader(e.to_string());
     let mut header = String::from("{");
     let mut first = true;
@@ -96,7 +102,7 @@ fn prepare<'a, N: Into<String>>(
         first = false;
     }
     let mut offset = 0usize;
-    for (name, tensor) in &sorted {
+    for (name, tensor) in &ordered {
         let end = offset
             .checked_add(tensor.data.len())
             .ok_or(ErrorKind::SizeOverflow)?;
@@ -135,13 +141,14 @@ fn prepare<'a, N: Into<String>>(
     header.resize(padded, b' ');
     Ok(Prepared {
         header,
-        tensors: sorted.into_values().collect(),
+        tensors: ordered.into_iter().map(|(_, t)| t).collect(),
     })
 }
 
 /// Serializes tensors and `__metadata__` entries into a complete safetensors file in memory.
 ///
-/// Tensors are ordered by name; see `docs/specs/formats.md` §1.6 for the exact output. Fails on
+/// Tensors are ordered by descending element alignment, then by name, so every tensor is aligned to
+/// its element size; see `docs/specs/formats.md` §1.6 for the exact output. Fails on
 /// a duplicate tensor name, the name `__metadata__` ([`ErrorKind::DuplicateKey`]) or a header
 /// larger than [`MAX_HEADER_LEN`] ([`ErrorKind::HeaderTooLarge`]).
 pub fn serialize<'a, N: Into<String>>(

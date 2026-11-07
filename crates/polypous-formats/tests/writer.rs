@@ -210,3 +210,49 @@ fn rejects_a_header_over_the_limit() {
     let err = serialize(Vec::<(&str, WriteTensor<'_>)>::new(), &meta).unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::HeaderTooLarge { .. }));
 }
+
+#[test]
+fn every_tensor_is_aligned_to_its_element_size() {
+    // Names chosen so that name order alone would misalign the wider tensors.
+    let b = [1u8, 0, 1];
+    let h = [0u8; 6];
+    let f = [0u8; 12];
+    let d = [0u8; 16];
+    let l = [0u8; 8];
+    let tensors = vec![
+        ("a_bool", WriteTensor::new(Dtype::Bool, &[3], &b).unwrap()),
+        ("b_f16", WriteTensor::new(Dtype::F16, &[3], &h).unwrap()),
+        ("c_f32", WriteTensor::new(Dtype::F32, &[3], &f).unwrap()),
+        ("d_f64", WriteTensor::new(Dtype::F64, &[2], &d).unwrap()),
+        ("e_i64", WriteTensor::new(Dtype::I64, &[1], &l).unwrap()),
+        ("f_u8", WriteTensor::new(Dtype::U8, &[3], &b).unwrap()),
+        ("g_f4", WriteTensor::new(Dtype::F4, &[2], &[0]).unwrap()),
+    ];
+    let bytes = serialize(tensors, &BTreeMap::new()).unwrap();
+    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let data_start = 8 + n;
+    assert_eq!(data_start % 8, 0);
+    let file = SafetensorsFile::from_bytes(bytes).unwrap();
+    let mut order: Vec<(usize, &str)> = file
+        .names()
+        .map(|name| (file.info(name).unwrap().data_offsets().0, name))
+        .collect();
+    order.sort();
+    let order: Vec<&str> = order.into_iter().map(|(_, n)| n).collect();
+    // Descending element size, then name; 1-byte and sub-byte dtypes last.
+    assert_eq!(
+        order,
+        ["d_f64", "e_i64", "c_f32", "b_f16", "a_bool", "f_u8", "g_f4"]
+    );
+    for name in file.names() {
+        let info = file.info(name).unwrap();
+        let size = info.dtype().alignment();
+        let (begin, _) = info.data_offsets();
+        assert_eq!(
+            begin % size,
+            0,
+            "{name}: offset {begin}, element size {size}"
+        );
+        assert_eq!((data_start + begin) % size, 0, "{name}: file offset");
+    }
+}

@@ -12,7 +12,8 @@ All notable changes to Polypous are documented here. The format follows
   limit, contiguous offsets covering the data buffer, checked sizes, no duplicate keys, rank ≤ 64),
   zero-copy tensor views, all safetensors dtypes recognized and F32/F16/BF16/I64/I32/BOOL decodable;
   sharded checkpoints (`*.safetensors.index.json`, 64 MiB limit, plain shard file names, every
-  tensor in exactly one shard); a writer with name-sorted output and an 8-byte aligned data buffer,
+  tensor in exactly one shard); a writer whose output is ordered by element size, then name, so every
+  tensor is aligned to its element size,
   checked against Python `safetensors`.
 - Project brief, architecture, roadmap, specifications, ADRs and contributor/agent guides.
 - Cloud environment setup script (`tools/cloud/setup.sh`) and documentation for cloud agents.
