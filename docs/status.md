@@ -2,14 +2,14 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-06, M0 closed.
+2026-11-07, M1 issues filed.
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | Next. No issues filed yet | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
 ## 2. What exists after M0
@@ -25,14 +25,18 @@ Specs that describe implemented behavior: [placement.md §1](specs/placement.md#
 (discovery, probing, cache, fingerprints, enumeration rules) and [public-api.md §1.1, §1.2, §2](specs/public-api.md).
 All other specs are drafts until their milestone starts.
 
-CI (`.github/workflows/`): seven checks, all required by the `main` ruleset:
+CI (`.github/workflows/`): seven checks. Six are required by the `main` ruleset:
 - Lint & test (Linux)
 - Lint & test (Windows)
 - cargo-deny (licenses, advisories)
 - Dependency boundary
 - Vulkan tests (Linux, lavapipe)
-- Build (macOS, Metal)
 - PR title and description
+
+The seventh, Build (macOS, Metal), runs only on pushes to `main`, by hand, and on PRs that touch
+the backend crates or the dependency set, so it can't be required ([testing-strategy.md §5](testing-strategy.md#5-ci)).
+When it runs on a PR, it must be green too. CodeQL code scanning (Rust, Actions, Python, GitHub's
+default setup) also runs on PRs; it isn't required, but its findings are reviewed.
 
 ## 3. Verified on the reference machine
 
@@ -84,7 +88,8 @@ Nothing here blocks M1. Fix an item when its area is touched, or file an issue f
 - [testing-strategy.md](testing-strategy.md): reference fixtures.
 - [public-api.md](specs/public-api.md): the facade surface for graphs.
 
-Suggested order, to be turned into issues on a new M1 milestone:
+The order below is filed as issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2).
+Each issue names its dependencies and whether it runs in the cloud or on the reference machine.
 
 1. **Spec pass on `graph-ir.md` for the core opset.** Decide the M1 op list and its exact semantics, with a Proposed ADR for anything that changes a decision.
 2. **Reference fixture tooling.** Write `tools/reference/requirements.txt`, the first PyTorch generators and the fixture layout from testing-strategy.md. The cloud environment already allows `download.pytorch.org`.
