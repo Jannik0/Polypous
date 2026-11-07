@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.cast",
+  "case": "f16_to_f16",
+  "description": "Tensor.to(f16) from f16.",
+  "attributes": {
+    "dtype": "f16"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "f16",
+      "shape": [
+        24
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        24
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "input.to(f16)",
+  "notes": "Includes \u00b10.0, \u00b1inf, NaN, subnormals, f16/bf16 rounding ties and overflow to inf.",
+  "seed": 408,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -105,13 +105,21 @@ jobs:
       - name: Install Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
 
-      - name: Test the boundary check script
+      - name: Test the CI scripts
         run: python3 -m unittest discover -s tools/ci -p 'test_*.py' -v
 
       # ADR-0007: Burn/CubeCL only in polypous-backend and polypous-quant.
       # CLAUDE.md: polypous-ir, -formats and -polyp have no GPU dependency.
       - name: Check dependency boundary
         run: python3 tools/ci/check_dependency_boundary.py
+
+      # Reference fixtures (docs/testing-strategy.md §3): size budget and sidecar schema of
+      # fixtures/small/, plus the fixture tooling tests. Standard library only; the tests that
+      # need PyTorch skip themselves here (they run where tools/reference/requirements.txt is installed).
+      - name: Check reference fixtures
+        run: |
+          python3 tools/ci/check_fixtures.py
+          python3 -m unittest discover -s tools/reference -p 'test_*.py' -v
 
   vulkan-lavapipe:
     name: Vulkan tests (Linux, lavapipe)

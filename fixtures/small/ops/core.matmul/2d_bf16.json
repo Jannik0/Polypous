@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.matmul",
+  "case": "2d_bf16",
+  "description": "[3, 5] @ [5, 4] in bf16.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "lhs",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        5
+      ]
+    },
+    {
+      "name": "rhs",
+      "dtype": "bf16",
+      "shape": [
+        5,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.matmul(lhs.double(), rhs.double()).to(lhs.dtype)",
+  "notes": "out is torch.matmul in f64, rounded once to the dtype under test, so the bytes don't depend on the CPU's BLAS kernel; torch.matmul in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 207,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

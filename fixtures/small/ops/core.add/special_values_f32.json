@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.add",
+  "case": "special_values_f32",
+  "description": "Signed zeros, infinities, NaN and overflow to inf, same shape [3, 4].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "lhs",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "rhs",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "torch.add(lhs, rhs)",
+  "notes": "Expected NaN must be NaN and expected \u00b1inf must be the same inf; -0.0 + -0.0 is -0.0, -0.0 + 0.0 is 0.0 (the tolerance can't see the sign of zero, the bytes keep it).",
+  "seed": 0,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
