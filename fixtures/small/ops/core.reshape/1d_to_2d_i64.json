@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.reshape",
+  "case": "1d_to_2d_i64",
+  "description": "i64 [12] -> [3, 4], row-major order kept.",
+  "attributes": {
+    "shape": [
+      3,
+      4
+    ]
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "i64",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.reshape(input, shape)",
+  "notes": "",
+  "seed": 304,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "op": "core.reshape",
+  "case": "3d_to_2d_f32",
+  "description": "f32 [2, 3, 4] -> [4, 6], row-major order kept.",
+  "attributes": {
+    "shape": [
+      4,
+      6
+    ]
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.reshape(input, shape)",
+  "notes": "",
+  "seed": 301,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
