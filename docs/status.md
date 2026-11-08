@@ -69,9 +69,9 @@ Nothing here blocks M1. Fix an item when its area is touched, or file an issue f
   - The upstream report and a standalone reproduction are handled outside this repository, so there's no issue here. Re-check when Burn is updated (ADR-0007).
 - **Burn 0.22.1 / CubeCL 0.11.3 numerics found in M1 (#40, PR 54)**, each worked around in `polypous-backend` (`ops/mod.rs` documents them). Re-check when Burn is updated (ADR-0007):
   - `flex` computes `i64` `add`/`sub`/`mul` with plain arithmetic, which panics on overflow in debug builds. The CPU runs these on the host with wrapping arithmetic.
-  - `flex`'s `max_pair` drops a NaN in its second operand. `maximum`, `minimum` and `clamp` use NaN masks.
-  - CubeCL compares ordered: `ne` with NaN and float → `bool` casts of NaN gave `false`. Explicit masks.
-  - CubeCL's `pow` (`exp2(b · log2(a))`) is wrong for `1^NaN`, `NaN^0`, `0^0` and `0^-1`. Explicit C99 special cases.
+  - `max_pair`/`min_pair` (generic code in `burn-tensor`, so every backend) drop a NaN in the second operand. `maximum`, `minimum` and `clamp` use NaN masks.
+  - CubeCL's SPIR-V lowering maps float `!=` to `OpFOrdNotEqual`: `ne` with NaN and float → `bool` casts of NaN gave `false` on Vulkan. The LLVM path (CUDA) uses the unordered form. Explicit masks.
+  - CubeCL's `powf` polyfill falls back to the native pow (`GLSL.std.450 Pow` on SPIR-V, undefined for some inputs), which is wrong for `1^NaN`, `NaN^0`, `0^0` and `0^-1` on lavapipe. Explicit C99 special cases.
   - CubeCL's f16 `tanh` missed `rtol 1e-2` near zero on lavapipe. f16/bf16 transcendentals and `pow` compute in f32 on every backend.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
