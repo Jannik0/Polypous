@@ -398,8 +398,11 @@ fn in_f32<const D: usize>(x: Tensor<D>, f: impl FnOnce(Tensor<D>) -> Tensor<D>) 
 
 /// `pow` with the special cases of C99 Annex F / IEEE 754 `pow`, which `torch.pow` follows, set
 /// explicitly: the CubeCL backends compute `pow` as `exp2(b · log2(a))` (with a sign fix for
-/// negative bases), which gets `pow(1, NaN)`, `pow(NaN, 0)`, `pow(0, 0)` and `pow(0, -1)` wrong
-/// (seen on lavapipe). Finite non-zero bases with finite exponents keep the backend's result.
+/// negative bases and integer exponents), which gets `pow(1, NaN)`, `pow(NaN, 0)`, `pow(0, 0)`
+/// and `pow(0, -1)` wrong (seen on lavapipe). For a negative base with a non-integer exponent
+/// CubeCL falls through to the driver's `pow`, which is undefined there: lavapipe and NVIDIA
+/// return NaN, Intel's Vulkan driver returns `pow(|a|, b)`. So that case is set to NaN too.
+/// Every other finite non-zero base with a finite exponent keeps the backend's result.
 /// Later rules win over earlier ones.
 fn pow_ieee<const D: usize>(a: Tensor<D>, b: Tensor<D>) -> Tensor<D> {
     let inf = f64::INFINITY;
@@ -452,6 +455,16 @@ fn pow_ieee<const D: usize>(a: Tensor<D>, b: Tensor<D>) -> Tensor<D> {
         .mask_fill(neg_inf.clone().bool_and(small), inf)
         .mask_fill(neg_inf.bool_and(large), 0.0)
         .mask_fill(exp_inf.bool_and(magnitude.equal_elem(1.0)), 1.0);
+    // A finite base < 0 (not -0.0, which the zero rules cover) with a finite non-integer
+    // exponent: NaN (no real result).
+    let fractional = b.clone().floor().not_equal(b.clone());
+    let no_real_result = a
+        .clone()
+        .lower_elem(0.0)
+        .bool_and(a.clone().is_finite())
+        .bool_and(b.clone().is_finite())
+        .bool_and(fractional);
+    let p = p.mask_fill(no_real_result, f64::NAN);
     // NaN propagates, except pow(1, b) = 1 and pow(a, ±0) = 1 for every a and b.
     let nan = a.clone().is_nan().bool_or(b.clone().is_nan());
     p.mask_fill(nan, f64::NAN)

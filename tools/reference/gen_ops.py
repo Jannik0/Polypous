@@ -640,6 +640,13 @@ POW_SPECIAL = (
     [1.0, 0.0, 0.0, -2.0, -2.0, NAN, -8.0, 2.0, INF, -INF, 4.0, -3.0],
     [NAN, 0.0, -1.0, 3.0, 0.5, 0.0, 1.0 / 3.0, 1000.0, -1.0, 3.0, 0.5, 2.0],
 )
+# Negative finite bases: even and odd integer exponents (real results) and non-integer exponents
+# (NaN), each sign of exponent.
+POW_NEGATIVE_MIXED = (
+    [-2.0, -2.0, -2.0, -0.5, -3.0, -1.5, -4.0, -1.0, -2.5, -8.0, -0.25, -1.0],
+    [2.0, 3.0, 0.5, -2.0, -1.0, 2.5, 0.25, -0.5, 4.0, 1.0 / 3.0, -3.0, 1000.0],
+)
+
 # Zero and infinite bases and exponents (C99 Annex F pow, which torch.pow follows).
 POW_SPECIAL_LIMITS = (
     [0.0, -0.0, -0.0, -0.0, 0.0, INF, -INF, -INF, -INF, -1.0, 0.5, 0.5, 2.0, 2.0, -1.0, 1.0],
@@ -664,6 +671,12 @@ def elementwise_cases() -> list[Case]:
             POW, "negative_base_f32", 552, "f32", "Negative bases with integer exponents give real results, [12].",
             values=[[-2.0, -2.0, -2.0, -0.5, -3.0, -1.0, -1.0, -1.5, -4.0, -10.0, -0.25, -7.0],
                     [2.0, 3.0, -1.0, -2.0, 0.0, 1001.0, 1000.0, 4.0, 5.0, 3.0, -3.0, 1.0]]),
+        ew_case(POW, "negative_base_mixed_f32", 557, "f32",
+                "Negative bases with even, odd and non-integer exponents, [12]: non-integer exponents give NaN.",
+                values=list(POW_NEGATIVE_MIXED), notes=NAN_NOTES),
+        ew_case(POW, "negative_base_mixed_f16", 558, "f16",
+                "Negative bases with even, odd and non-integer exponents in f16, [12].",
+                values=list(POW_NEGATIVE_MIXED), notes=NAN_NOTES),
         ew_case(POW, "broadcast_f16", 553, "f16", "Positive bases [3, 4], exponents [3, 1] in f16.", [[3, 4], [3, 1]]),
         ew_case(POW, "broadcast_bf16", 554, "bf16", "Positive bases [3, 4], exponents [4] in bf16.", [[3, 4], [4]]),
         ew_case(POW, "special_values_f32", 555, "f32", "0^0, 1^NaN, NaN^0, 0^-1, negative bases with fractional exponents, overflow, [12].",
