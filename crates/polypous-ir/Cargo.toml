@@ -9,6 +9,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# JSON parsing of graph documents through a hand-written visitor that keeps key order and duplicate
+# keys (`json.rs`). Only the `Deserializer`/`Visitor` traits are used, no derive. MIT OR Apache-2.0;
+# already in the lock file.
+serde = "1.0.229"
+# `unbounded_depth` lets the parser accept the spec's 128 nesting levels (serde_json's own limit
+# stops at 127); our pre-scan enforces the 128-level limit before parsing. The feature adds no
+# dependency. MIT OR Apache-2.0; already in the lock file.
+serde_json = { version = "1.0.154", features = ["unbounded_depth"] }
+# Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file.
+thiserror = "2.0.21"
 
 [lints]
 workspace = true
