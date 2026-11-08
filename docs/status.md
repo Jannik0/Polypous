@@ -67,6 +67,12 @@ Nothing here blocks M1. Fix an item when its area is touched, or file an issue f
   - Burn hands native bool storage to CubeCL, which panics on storage that isn't its own.
   - `DynTensor` works around it by going through host memory (`tensor/dyn_tensor.rs`).
   - The upstream report and a standalone reproduction are handled outside this repository, so there's no issue here. Re-check when Burn is updated (ADR-0007).
+- **Burn 0.22.1 / CubeCL 0.11.3 numerics found in M1 (#40, PR 54)**, each worked around in `polypous-backend` (`ops/mod.rs` documents them). Re-check when Burn is updated (ADR-0007):
+  - `flex` computes `i64` `add`/`sub`/`mul` with plain arithmetic, which panics on overflow in debug builds. The CPU runs these on the host with wrapping arithmetic.
+  - `flex`'s `max_pair` drops a NaN in its second operand. `maximum`, `minimum` and `clamp` use NaN masks.
+  - CubeCL compares ordered: `ne` with NaN and float → `bool` casts of NaN gave `false`. Explicit masks.
+  - CubeCL's `pow` (`exp2(b · log2(a))`) is wrong for `1^NaN`, `NaN^0`, `0^0` and `0^-1`. Explicit C99 special cases.
+  - CubeCL's f16 `tanh` missed `rtol 1e-2` near zero on lavapipe. f16/bf16 transcendentals and `pow` compute in f32 on every backend.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work.
