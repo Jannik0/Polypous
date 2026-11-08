@@ -1,0 +1,45 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "opsets": { "core": 1, "nn": 1 },
+  "name": "tiny-stack",
+  "meta": { "builder": { "zoom": 1.5, "tags": ["a", "b"], "nested": { "z": null, "a": [1, { "k": true }] } } },
+  "dims": { "batch": { "min": 1, "max": 64 }, "seq": {}, "unused": { "min": 2 } },
+  "inputs": [ { "name": "x", "dtype": "float", "shape": ["batch", "seq", 16] } ],
+  "outputs": [
+    { "name": "logits", "value": "head" },
+    { "name": "rest", "value": "split:1", "meta": { "note": "second half" } }
+  ],
+  "params": [
+    { "name": "layers.0.norm.weight", "dtype": "float", "shape": [16], "init": { "kind": "ones" } },
+    { "name": "layers.0.fc.weight", "dtype": "float", "shape": [16, 16], "init": { "kind": "kaiming_uniform", "a": 2.2360679 } },
+    { "name": "layers.0.fc.bias", "dtype": "float", "shape": [16], "init": { "kind": "zeros" }, "trainable": false },
+    { "name": "layers.1.norm.weight", "dtype": "float", "shape": [16], "init": { "kind": "constant", "value": 1 } },
+    { "name": "layers.1.fc.weight", "dtype": "float", "shape": [16, 16], "init": { "kind": "normal", "mean": 0, "std": 0.02 } },
+    { "name": "layers.1.fc.bias", "dtype": "float", "shape": [16], "init": { "kind": "uniform", "low": -0.1, "high": 0.1 } },
+    { "name": "head.weight", "dtype": "float", "shape": [4, 8], "init": { "kind": "xavier_uniform" } }
+  ],
+  "state": [ { "name": "step", "dtype": "i64", "shape": [1], "init": "zeros" } ],
+  "nodes": [
+    { "id": "layers", "op": "repeat", "count": 2,
+      "carry": { "h": "x" },
+      "body": {
+        "params_prefix": "layers.{i}.",
+        "state_prefix": "layers.{i}.",
+        "state": [ { "name": "cache", "dtype": "float", "shape": ["batch", "seq", "4 * 4"] } ],
+        "nodes": [
+          { "id": "norm", "op": "nn.rms_norm", "inputs": { "x": "h" }, "params": { "weight": "norm.weight" }, "attrs": { "eps": 1e-6 } },
+          { "id": "fc", "op": "nn.linear", "inputs": { "x": "norm" }, "params": { "weight": "fc.weight", "bias": "fc.bias" } },
+          { "id": "res", "op": "core.add", "inputs": { "a": "h", "b": "fc" } }
+        ],
+        "state_updates": { "cache": "res" },
+        "carry_out": { "h": "res" }
+      },
+      "meta": { "builder": { "collapsed": true } } },
+    { "id": "split", "op": "core.split", "inputs": { "x": "layers:h" }, "attrs": { "dim": -1, "sizes": [8, 8] } },
+    { "id": "head", "op": "nn.linear", "inputs": { "x": "split:0" }, "params": { "weight": "head.weight" } },
+    { "id": "one", "op": "core.ones", "attrs": { "shape": [1], "dtype": "i64" } },
+    { "id": "next_step", "op": "core.add", "inputs": { "a": "step", "b": "one" } }
+  ],
+  "state_updates": { "step": "next_step" }
+}

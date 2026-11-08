@@ -5,3 +5,77 @@
 //!
 //! Pure Rust, with no GPU or Burn dependency. See `docs/architecture.md` §2 and
 //! `docs/specs/graph-ir.md`.
+//!
+//! - [`model`]: the typed graph document (§2), [`Graph`].
+//! - [`load`]: loading untrusted JSON under the limits of §4.3, collecting every error with its JSON
+//!   pointer, then validating ([`load::load`], [`Graph::from_json`]).
+//! - [`validate`]: structural validation (§4.1 checks 2–5, 9 and the structural parts of 8).
+//!   Dtype and shape inference are not implemented yet (#39).
+//! - [`save`]: the canonical JSON form (§6), [`Graph::to_json`].
+//! - [`dim`]: dim expressions, their normal form and equality (§2.3).
+//! - [`diag`]: error codes (§4.2) and the [`ValidationReport`].
+//!
+//! Validation problems are data: a [`ValidationReport`] with a list of [`Diagnostic`]s, not `Err`.
+//!
+//! ```
+//! use polypous_ir::{Graph, ValidateOptions};
+//!
+//! let json = br#"{
+//!   "format": "polypous.graph", "format_version": 1, "opsets": { "nn": 1 },
+//!   "dims": { "batch": {} },
+//!   "inputs": [ { "name": "x", "dtype": "float", "shape": ["batch", 4] } ],
+//!   "outputs": [ { "name": "y", "value": "act" } ],
+//!   "nodes": [ { "id": "act", "op": "nn.relu", "inputs": { "x": "x" } } ]
+//! }"#;
+//! let graph = Graph::from_json(json).expect("valid graph");
+//! assert!(graph.validate(&ValidateOptions::default()).is_ok());
+//! let saved = graph.to_json();
+//! assert_eq!(Graph::from_json(saved.as_bytes()).unwrap(), graph);
+//! ```
+
+pub mod diag;
+pub mod dim;
+pub mod dtype;
+pub mod json;
+pub mod limits;
+pub mod load;
+pub mod model;
+pub mod names;
+pub mod ops;
+pub mod save;
+pub mod validate;
+
+pub use diag::{Diagnostic, ErrorCode, Item, ValidationReport};
+pub use dim::{DimError, DimExpr};
+pub use dtype::{ComputeDtype, Dtype, DtypeSpec};
+pub use load::{LoadOutcome, load};
+pub use model::Graph;
+pub use validate::ValidateOptions;
+
+impl Graph {
+    /// Loads a graph document and validates it with the default options (compute dtype `f32`).
+    ///
+    /// Returns the graph only if it has no errors at all; otherwise the report lists every error.
+    /// Use [`load()`] to get a graph that converted but has validation errors (for editors).
+    pub fn from_json(bytes: &[u8]) -> Result<Graph, ValidationReport> {
+        let outcome = load(bytes, &ValidateOptions::default());
+        match outcome.graph {
+            Some(graph) if outcome.report.is_ok() => Ok(graph),
+            _ => Err(outcome.report),
+        }
+    }
+
+    /// Validates the graph (§4.1, structural checks; see [`validate`]).
+    ///
+    /// The graph is checked as its canonical JSON ([`Graph::to_json`]) would be loaded, so the JSON
+    /// limits of §4.3 (document size, nesting depth, string lengths, in `meta` too) apply as well,
+    /// and the JSON pointers of the diagnostics point into the canonical form.
+    pub fn validate(&self, options: &ValidateOptions) -> ValidationReport {
+        load(self.to_json().as_bytes(), options).report
+    }
+
+    /// Writes the graph in the canonical JSON form (§6).
+    pub fn to_json(&self) -> String {
+        save::to_json(self)
+    }
+}
