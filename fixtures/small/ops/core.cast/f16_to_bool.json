@@ -30,7 +30,7 @@
     "rtol": 0.0
   },
   "reference": "x.to(bool)",
-  "notes": "Includes \u00b10.0, \u00b1inf, NaN, subnormals, f16/bf16 rounding ties and overflow to inf. Non-zero is true, NaN is true, -0.0 is false.",
+  "notes": "Includes \u00b10.0, \u00b1inf, NaN, the smallest normal f16, f16/bf16 rounding ties and overflow to inf (no subnormals: backend-defined, graph-ir.md \u00a73.1.8). Non-zero is true, NaN is true, -0.0 is false.",
   "seed": 412,
   "generator": "tools/reference/gen_ops.py",
   "versions": {

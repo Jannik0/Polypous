@@ -195,6 +195,15 @@ def reshape_case(name: str, seed: int, dtype: str, shape: list[int], new_shape: 
     )
 
 
+# Subnormal numbers are deliberately left out of every fixture: a device may flush subnormal inputs
+# and results to zero (graph-ir.md §3.1.8; the Vulkan drivers of the reference machine do), so
+# results that involve them are backend-defined. The harness can't tell which devices keep
+# subnormals, so a subnormal case would fail by design on a valid device. The smallest normal
+# numbers test the "tiny but non-zero" edge instead. `write_case` refuses subnormal values, and
+# tools/ci/check_fixtures.py checks the committed files (fixturelib.subnormal_problems).
+F32_MIN_NORMAL = 2.0**-126  # 1.1754944e-38, also the smallest normal bf16
+F16_MIN_NORMAL = 2.0**-14  # 6.1035156e-05
+
 # Cast inputs. Values are rounded once to the source dtype; per target, values whose result is not
 # pinned down by PyTorch's documented semantics are left out (see `cast_values`).
 CAST_FLOAT_VALUES = [
@@ -206,7 +215,7 @@ CAST_FLOAT_VALUES = [
     65504.0,  # largest f16
     65520.0,  # rounds to inf in f16
     1e5, -1e5,  # inf in f16
-    6e-8,  # f16 subnormal
+    F16_MIN_NORMAL,  # smallest normal f16 (2^-14); exact in every float dtype
     1e-30,  # underflows to 0 in f16, normal in bf16
     3.0e38,  # finite in f32 and bf16
     float("inf"), float("-inf"), float("nan"),
@@ -241,7 +250,7 @@ def cast_values(src: str, dst: str) -> tuple[Any, str]:
             "after rounding to the source dtype; out-of-range and NaN conversions are undefined in PyTorch."
         )
     if src in FLOATS:
-        note = "Includes ±0.0, ±inf, NaN, subnormals, f16/bf16 rounding ties and overflow to inf."
+        note = "Includes ±0.0, ±inf, NaN, the smallest normal f16, f16/bf16 rounding ties and overflow to inf (no subnormals: backend-defined, graph-ir.md §3.1.8)."
         if dst == "bool":
             note += " Non-zero is true, NaN is true, -0.0 is false."
         if dst in FLOATS and dst != src:
@@ -484,8 +493,8 @@ UNARY_SPECIAL = {
     "core.sin": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 3.14159265, 100.0, -100.0, 1e-30, 1.5707964],
     "core.cos": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 3.14159265, 100.0, -100.0, 1e-30, 1.5707964],
     "core.tanh": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 20.0, -20.0, 1e-30, 0.5, 9.0],
-    "core.neg": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 3e38, -3e38, 1e-45, 0.5, -2.5],
-    "core.abs": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 3e38, -3e38, -1e-45, 0.5, -2.5],
+    "core.neg": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 3e38, -3e38, F32_MIN_NORMAL, 0.5, -2.5],
+    "core.abs": [0.0, -0.0, INF, -INF, NAN, 1.0, -1.0, 3e38, -3e38, -F32_MIN_NORMAL, 0.5, -2.5],
 }
 
 
@@ -569,7 +578,7 @@ def clamp_cases(seed: int) -> list[Case]:
 
 
 def compare_cases(spec: OpSpec, seed: int) -> list[Case]:
-    nan_a = [NAN, 1.0, NAN, INF, -INF, INF, 0.0, -0.0, 2.0, -INF, NAN, 1e-45]
+    nan_a = [NAN, 1.0, NAN, INF, -INF, INF, 0.0, -0.0, 2.0, -INF, NAN, F32_MIN_NORMAL]
     nan_b = [1.0, NAN, NAN, INF, INF, -INF, -0.0, 0.0, 2.0, -INF, INF, 0.0]
     a64, b64 = [I64_MIN, I64_MAX, 2**53 + 1, -(2**40), 7, 0], [I64_MAX, I64_MAX, 2**53, -(2**40), -7, 0]
     cases = [
@@ -769,6 +778,11 @@ def write_case(case: Case, out_dir: str, versions: dict[str, str]) -> None:
     inputs = [(n, t.contiguous().clone()) for n, t in case.inputs(rng)]
     outputs = [(n, t.contiguous().clone()) for n, t in case.reference([t for _, t in inputs])]
     check_native(case, [t for _, t in inputs], outputs)
+    for n, t in inputs + outputs:
+        if t.is_floating_point():
+            d = t.double()
+            if ((d != 0) & (d.abs() < torch.finfo(t.dtype).tiny)).any():
+                raise SystemExit(f"{case.op}/{case.name}: tensor {n} has subnormal values (see F32_MIN_NORMAL)")
     names = [n for n, _ in inputs + outputs]
     if len(set(names)) != len(names):
         raise SystemExit(f"{case.op}/{case.name}: tensor names are not unique: {names}")

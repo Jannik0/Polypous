@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -92,6 +93,37 @@ class SidecarValidationTest(unittest.TestCase):
     def test_undeclared_tensor(self) -> None:
         self.edit_sidecar(lambda s: s["inputs"].pop())
         self.assertTrue(any("undeclared tensors ['b']" in p for p in check_fixtures.check(self.root)))
+
+    def test_subnormal_values_are_rejected(self) -> None:
+        # The last element of the file's data: the smallest positive f32 subnormal.
+        with open(self.st, "r+b") as f:
+            f.seek(-4, os.SEEK_END)
+            f.write(struct.pack("<I", 1))
+        self.assertTrue(any("has subnormal values at flat indices [11]" in p for p in check_fixtures.check(self.root)))
+
+    def test_subnormal_detection_per_float_dtype(self) -> None:
+        # f16 0x0001 and bf16 0x0001 are subnormal; 0x0400 (f16) and 0x0080 (bf16) are the smallest
+        # normals, 0x8000 is -0.0, and ints are never checked.
+        tensors = {
+            "h": ("F16", [0x0400, 0x8000, 0x0001]),
+            "b": ("BF16", [0x0080, 0x0000, 0x0001]),
+            "f": ("F32", [0x00800000, 0x80000000, 0x7FC00000]),
+            "i": ("I32", [1, 2, 3]),
+        }
+        header, data = {}, b""
+        for name, (dtype, bits) in tensors.items():
+            code = "H" if dtype in ("F16", "BF16") else "I"
+            chunk = struct.pack(f"<{len(bits)}{code}", *bits)
+            header[name] = {"dtype": dtype, "shape": [len(bits)], "data_offsets": [len(data), len(data) + len(chunk)]}
+            data += chunk
+        raw = json.dumps(header).encode()
+        path = os.path.join(self.root, "t.safetensors")
+        with open(path, "wb") as f:
+            f.write(struct.pack("<Q", len(raw)) + raw + data)
+        problems = fixturelib.subnormal_problems(path, fixturelib.read_safetensors_header(path))
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(any("'h' has subnormal values at flat indices [2]" in p for p in problems))
+        self.assertTrue(any("'b' has subnormal values at flat indices [2]" in p for p in problems))
 
     def test_case_name_must_match_file(self) -> None:
         self.edit_sidecar(lambda s: s.update(case="other"))

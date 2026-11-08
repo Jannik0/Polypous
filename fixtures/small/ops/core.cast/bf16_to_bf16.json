@@ -30,7 +30,7 @@
     "rtol": 0.0
   },
   "reference": "x.to(bf16)",
-  "notes": "Includes \u00b10.0, \u00b1inf, NaN, subnormals, f16/bf16 rounding ties and overflow to inf.",
+  "notes": "Includes \u00b10.0, \u00b1inf, NaN, the smallest normal f16, f16/bf16 rounding ties and overflow to inf (no subnormals: backend-defined, graph-ir.md \u00a73.1.8).",
   "seed": 415,
   "generator": "tools/reference/gen_ops.py",
   "versions": {

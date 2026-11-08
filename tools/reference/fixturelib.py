@@ -48,6 +48,16 @@ SIDECAR_KEYS = (
 )
 
 
+# Float formats by safetensors dtype: (struct code of the bit pattern, mantissa bits, exponent bits).
+# Used to find subnormal values, which fixtures must not contain (docs/specs/graph-ir.md §3.1.8:
+# devices may flush them to zero, so results involving them are backend-defined).
+FLOAT_BITS: dict[str, tuple[str, int, int]] = {
+    "F32": ("I", 23, 8),
+    "F16": ("H", 10, 5),
+    "BF16": ("H", 7, 8),
+}
+
+
 class FixtureError(Exception):
     """A fixture file is malformed or does not match its sidecar."""
 
@@ -172,6 +182,31 @@ def validate_case(json_path: str) -> list[str]:
     extra = sorted(set(header) - set(declared))
     if extra:
         problems.append(f"{json_path}: {st_path} has undeclared tensors {extra}")
+    return problems + subnormal_problems(st_path, header)
+
+
+def subnormal_problems(st_path: str, header: dict[str, Any]) -> list[str]:
+    """Float tensors of a safetensors file that contain subnormal values (non-zero, exponent bits all
+    zero). `header` comes from `read_safetensors_header`, which checked the offsets."""
+    with open(st_path, "rb") as f:
+        (n,) = struct.unpack("<Q", f.read(8))
+        f.seek(8 + n)
+        data = f.read()
+    problems = []
+    for name, info in sorted(header.items()):
+        if info["dtype"] not in FLOAT_BITS:
+            continue
+        code, mantissa, _ = FLOAT_BITS[info["dtype"]]
+        start, end = info["data_offsets"]
+        count = (end - start) // struct.calcsize(code)
+        values = struct.unpack(f"<{count}{code}", data[start:end])
+        exponent_mask = ((1 << (struct.calcsize(code) * 8 - 1)) - 1) & ~((1 << mantissa) - 1)
+        bad = [i for i, v in enumerate(values) if v & exponent_mask == 0 and v & ((1 << mantissa) - 1)]
+        if bad:
+            problems.append(
+                f"{st_path}: tensor {name!r} has subnormal values at flat indices {bad[:8]}; devices may "
+                "flush them to zero (graph-ir.md §3.1.8), so fixtures use normal values"
+            )
     return problems
 
 

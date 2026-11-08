@@ -19,6 +19,8 @@ All notable changes to Polypous are documented here. The format follows
 - Op reference tests for these ops against PyTorch fixtures on the CPU and on every GPU device
   (`tests/reference_*.rs`, shared harness in `tests/reference/common.rs`), with fixture cases for
   every op in `fixtures/small/ops/` (`tools/reference/gen_ops.py`).
+- graph-ir.md §3.1.8: subnormal float values are backend-defined (a device may flush them to
+  zero). Fixtures contain none; `tools/ci/check_fixtures.py` rejects them.
 - `polypous-formats`: safetensors reader and writer (`docs/specs/formats.md` §1, #37). Memory-mapped
   reader with a copy fallback that validates the whole header before exposing tensors (100 MB header
   limit, contiguous offsets covering the data buffer, checked sizes, no duplicate keys, rank ≤ 64),
