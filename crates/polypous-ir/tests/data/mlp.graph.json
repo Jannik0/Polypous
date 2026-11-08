@@ -1,0 +1,28 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "opsets": { "core": 1, "nn": 1 },
+  "name": "mnist-mlp",
+  "meta": { "builder": { "canvas": { "zoom": 1.0 } } },
+
+  "dims": { "batch": { "min": 1 } },
+
+  "inputs":  [ { "name": "image", "dtype": "float", "shape": ["batch", 784] } ],
+  "outputs": [ { "name": "logits", "value": "fc2" } ],
+
+  "params": [
+    { "name": "fc1.weight", "dtype": "float", "shape": [128, 784], "init": { "kind": "kaiming_uniform" } },
+    { "name": "fc1.bias",   "dtype": "float", "shape": [128],      "init": { "kind": "zeros" } },
+    { "name": "fc2.weight", "dtype": "float", "shape": [10, 128],  "init": { "kind": "kaiming_uniform" } },
+    { "name": "fc2.bias",   "dtype": "float", "shape": [10],       "init": { "kind": "zeros" } }
+  ],
+
+  "nodes": [
+    { "id": "fc1",  "op": "nn.linear", "inputs": { "x": "image" },
+      "params": { "weight": "fc1.weight", "bias": "fc1.bias" } },
+    { "id": "act1", "op": "nn.relu",   "inputs": { "x": "fc1" } },
+    { "id": "fc2",  "op": "nn.linear", "inputs": { "x": "act1" },
+      "params": { "weight": "fc2.weight", "bias": "fc2.bias" },
+      "meta": { "builder": { "x": 420, "y": 80 } } }
+  ]
+}

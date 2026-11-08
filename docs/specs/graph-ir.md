@@ -74,8 +74,10 @@ Optional inputs, params and attrs may be left out. A name the op doesn't define 
   referred to by their name only. Port names of multi-output ops are listed in the op tables (§3).
 - Parameter names are separate from value names and may contain dots (`layers.3.attn.q.weight`).
 - **Names.** Node ids, graph input, output and state names: 1–128 bytes of ASCII letters, digits,
-  `_`, `-` and `.`, never `:`. Parameter names: 1–256 bytes of the same characters, plus `{i}` in
-  `repeat` bodies (§2.6). Dim symbols: see §2.3.
+  `_`, `-` and `.`, never `:`. Parameter names: 1–256 bytes of the same characters. `{i}` may
+  appear only in `params_prefix` and `state_prefix` (§2.6), which are up to 256 bytes of these
+  characters and `{i}`; body param references themselves are plain parameter names. Dim symbols:
+  see §2.3.
 - `outputs` entries are `{ "name": …, "value": <reference> }`. Output names are their own
   namespace and must be unique.
 
@@ -198,9 +200,17 @@ whose arguments are themselves in normal form. Normalization works bottom-up:
    argument. Otherwise it is an opaque atom whose two arguments are sorted by their canonical string.
 
 **Canonical order and string.** Atoms in a monomial are sorted by their canonical string (symbols
-by name). Terms are sorted by degree (descending), then by monomial string, with the constant last.
-The canonical string uses the grammar's syntax: `2*seq + past - 1`, `(H + 1) // 2`,
-`min(seq, 10)`. It parses back to the same normal form. Error messages and inferred shapes print it.
+by name, byte order). Terms are sorted by degree (descending), then by monomial string (the atoms'
+strings joined with `*`, without the coefficient), with the constant last.
+The canonical string uses the grammar's syntax: `past + 2*seq - 1`, `(H + 1) // 2`,
+`min(10, seq)`. It parses back to the same normal form. Error messages and inferred shapes print it.
+- Coefficients `±1` are not written; other coefficients are written as `c*m`.
+- An opaque `//` atom is written in parentheses when it is multiplied by a coefficient or another
+  atom (`2*((H + 1) // 2)`), because `*` and `//` bind equally and associate to the left. Its
+  dividend is written in parentheses unless it is a single symbol or `min`/`max` (`H // 2`).
+- There is no unary minus, so a normal form whose first term is negative starts with `0 - `
+  (`0 - seq + 1` for `1 - seq`). The zero dim is `0`. A coefficient of `i64::MIN` is `dim_overflow`,
+  so every coefficient's absolute value is an `i64` and the string parses back.
 
 #### 2.3.3 Equality
 
@@ -259,6 +269,9 @@ Dim expressions come from untrusted documents:
   `xavier_uniform`, `xavier_normal`, `kaiming_uniform{a}`, `kaiming_normal`. Fan-in and fan-out are
   derived from the op that uses the parameter. Pretrained models ignore `init`: weights come from
   files. M1 parses and validates `init` but doesn't apply it; that is M2 (training).
+- `init` fields: `constant.value`, `uniform.low`/`high` and `normal.mean`/`std` are required,
+  `kaiming_uniform.a` is optional (default as in `torch.nn.init.kaiming_uniform_`, `0`). All are
+  JSON numbers and must be finite. Other fields are `unknown_field`. `init` itself is optional.
 - `trainable` defaults to `true`. It has no effect before M2.
 
 ### 2.5 State
@@ -276,7 +289,10 @@ The runtime keeps state per **session** and places it on the device of the block
 **What M1 implements:**
 - `state` entries on the graph root and in `repeat` bodies (§2.6), with a concrete value dtype
   or `float` (the compute dtype, §2.2), and `init: "zeros"` (the only init kind in M1).
-- `state_updates`: each state entry is updated at most once per call. The update's dtype must equal
+- `state_updates`: each state entry is updated at most once per call (JSON object keys are unique,
+  §4.2 `invalid_json`). Root `state_updates` target root state entries; a body's `state_updates`
+  target the body's own state entries, by their local names. Any other target is
+  `unknown_reference`. The update's dtype must equal
   the entry's dtype and its shape must be provably equal to the entry's shape. Nodes that read a
   state entry during a call see the value from the start of the call; the update takes effect for
   the next call.
@@ -312,9 +328,13 @@ The runtime keeps state per **session** and places it on the device of the block
   `state_prefix(i) + n`, so `state_prefix` must contain `{i}` if the body declares state.
 - Scoping: body nodes may reference the carry names, other body nodes, and every value of the
   enclosing scope (graph inputs, state, nodes of the enclosing scope that don't depend on this
-  repeat). Body ids must not reuse a name of the enclosing scope. Outside the body, only
+  repeat). Body ids, carry names and body state names must not reuse a name of any enclosing scope
+  (`duplicate_name`), so a name never shadows another. Outside the body, only
   `"<repeat id>:<carry name>"` refers to the final carried value; the repeat node has no `out` port.
 - Repeats may nest (at most 8 levels). Prefixes of nested repeats concatenate, outer first.
+- Expanded names follow the naming rules: `params_prefix(i) + n` is a parameter name (≤ 256 bytes)
+  and must be declared in `params` for every iteration, and `state_prefix(i) + n` is a state name
+  (≤ 128 bytes) that must be unique among all root-level state names after expansion.
 - Each iteration is a **placement block** by default ([placement.md](placement.md)). In M1 the
   interpreter runs on a single device, so this has no effect yet.
 
@@ -329,9 +349,29 @@ on the graph or a node with `op: "call"` is the validation error `unsupported_in
 
 ### 2.8 `meta`
 
-`meta` may appear on the graph, on nodes, params, inputs and outputs. Its content is opaque. Polypous preserves it
-through load/save and never interprets it. The `meta.builder` namespace is reserved for visual tools.
-`meta` is subject to the JSON limits of §4.3.
+`meta` may appear on the graph, on nodes, params, inputs and outputs. Its content is opaque (any JSON
+value). Polypous preserves it through load/save and never interprets it. The `meta.builder` namespace
+is reserved for visual tools. `meta` is subject to the JSON limits of §4.3.
+
+### 2.9 Fields
+
+Every object of the document has exactly these fields; any other field is `unknown_field`
+(outside `meta`), a missing required field is `missing_field`.
+
+| Object | Required | Optional |
+|---|---|---|
+| Graph | `format`, `format_version`, `opsets`, `outputs` (at least one entry), `nodes` | `name`, `meta`, `dims`, `inputs`, `params`, `state`, `state_updates` |
+| `dims` entry | — | `min`, `max` |
+| Input | `name`, `dtype`, `shape` | `meta` |
+| Output | `name`, `value` | `meta` |
+| Param | `name`, `dtype`, `shape` | `init`, `trainable`, `meta` |
+| State entry | `name`, `dtype`, `shape` | `init` (default `"zeros"`) |
+| Op node | `id`, `op` | `inputs`, `params`, `attrs`, `meta` |
+| `repeat` node | `id`, `op`, `count`, `carry`, `body` | `meta` |
+| `repeat` body | `nodes`, `carry_out` | `params_prefix`, `state_prefix` (both default `""`), `state`, `state_updates` |
+
+`format` and `format_version` are checked first; if either is missing or unsupported, nothing else
+is checked. `functions` on the graph is `unsupported_in_version` (§2.7), not `unknown_field`.
 
 ## 3. Opsets
 
@@ -757,7 +797,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 
 | Code | Raised when |
 |---|---|
-| `invalid_json` | The document isn't valid UTF-8 JSON, or a field has the wrong JSON type |
+| `invalid_json` | The document isn't valid UTF-8 JSON, a field has the wrong JSON type, or an object has a duplicate key (anywhere, `meta` included; JSON parsers disagree on which value wins) |
 | `document_too_large` | The document exceeds the size limit |
 | `json_too_deep` | JSON nesting exceeds the depth limit |
 | `string_too_long` | A JSON string exceeds its length limit |
@@ -765,10 +805,10 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `unsupported_opset` | An opset in `opsets` is unknown or its version isn't supported |
 | `unknown_field` | A field that the schema doesn't define (except inside `meta`) |
 | `missing_field` | A required field is missing (for example a node's `op`, a param's `shape`) |
-| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, `min`/`max` of a dim) |
+| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, `min`/`max` of a dim, an empty shape, a literal dim above 2^32, an expression where §2.3 allows only literals or plain symbols, no `outputs`), or a list exceeds its §4.3 limit (`dims`, inputs, outputs, state entries) |
 | `invalid_name` | A name or id breaks the naming rules (§2.1, §2.3.1) |
 | `duplicate_name` | Two values, params, dims, state entries or outputs share a name |
-| `unknown_reference` | A reference to an undeclared value, port, param, state entry or dim symbol |
+| `unknown_reference` | A reference to an undeclared value, port, param, state entry or dim symbol (a shape entry that is a plain symbol; an undeclared symbol inside a longer expression is `invalid_dim_expr`) |
 | `ambiguous_output` | A bare node id refers to a node without an `out` port |
 | `cycle` | The nodes form a cycle |
 | `unknown_op` | The op isn't in the catalog of the declared opset version, or its opset isn't declared |
@@ -789,7 +829,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `state_update_mismatch` | A state update has a different dtype or not provably the same shape, or updates an entry twice |
 | `repeat_carry_mismatch` | `carry` and `carry_out` have different keys, or a carry's dtype or shape differs between them |
 | `invalid_repeat` | `count` is out of range, `carry` is empty, or a body with state has a `state_prefix` without `{i}` |
-| `too_many_nodes` | More than 1,000,000 nodes after expanding repeats |
+| `too_many_nodes` | More than 1,000,000 nodes, or more than 4,000,000 param bindings, after expanding repeats |
 | `repeat_too_deep` | `repeat` nesting exceeds 8 levels |
 | `too_many_elements` | A param's or constant's element count, or the total param element count, doesn't fit in `u64` or exceeds its limit |
 
@@ -806,14 +846,18 @@ Graph documents are untrusted. Each limit is checked before the memory it protec
 | Any other JSON string (enum values, `meta` content) | ≤ 64 KiB |
 | Rank of any value, param or state entry | 1–6 |
 | Nodes after expanding repeats | ≤ 1,000,000, computed from counts before expanding |
+| Param bindings after expanding repeats (node `params` entries × iterations) | ≤ 4,000,000, computed from counts before expanding |
 | `repeat` nesting | ≤ 8 levels |
 | `repeat` `count` | 1–65,536 |
 | Declared `dims` symbols | ≤ 256 |
-| Graph inputs, outputs, state entries | ≤ 4,096 each |
+| Graph inputs, outputs, state entries | ≤ 4,096 each; state entries counted after expanding repeats |
 | `core.concat` inputs, `core.split` outputs | ≤ 1,024 |
 | `core.constant` elements | ≤ 65,536 |
 | Literal dims | ≤ 2^32 |
 | Total declared param elements | fits in `u64` (checked arithmetic) |
+
+The param binding limit bounds the work of checking that every iteration's params exist (§2.6):
+no M1 op has more than 4 params, so a graph within the node limit is within it too.
 
 The repeat nesting limit is 8 (the earlier draft said 64) because each nesting level costs about four
 JSON levels, and real models nest at most twice.
@@ -837,7 +881,23 @@ These are not validation codes; the runtime raises them as `polypous::Error` kin
 
 ## 6. Serialization
 
-- Canonical form: UTF-8 JSON, keys in a stable order, so diffs are readable.
+- Canonical form: UTF-8 JSON, keys in a stable order, so diffs are readable:
+  - Fields defined by the schema are written in schema order, as in the §2 example: graph
+    `format`, `format_version`, `opsets`, `name`, `meta`, `dims`, `inputs`, `outputs`, `params`,
+    `state`, `nodes`, `state_updates`; nodes `id`, `op`, `count`, `carry`, `body`, `inputs`,
+    `params`, `attrs`, `meta`; bodies `params_prefix`, `state_prefix`, `state`, `nodes`,
+    `state_updates`, `carry_out`; inputs, params and state entries `name`, `dtype`, `shape`, `init`,
+    `trainable`, `meta`; outputs `name`, `value`, `meta`; `init` objects `kind` first; `dims`
+    entries `min`, `max`.
+  - Maps keyed by names (`opsets`, `dims`, node `inputs`, `params` and `attrs`, `carry`,
+    `carry_out`, `state_updates`) keep the order they were written or built in. `meta` and
+    attribute values are written exactly as stored, key order included.
+  - Optional fields are written only if present; optional lists and maps only if non-empty.
+    Values are written as written (`"float"` stays `"float"`, dims stay literal or string).
+  - Layout: two-space indentation, one object member per line; arrays that contain only scalars on
+    one line (`[128, 784]`); a trailing newline. Integers are written exactly; other numbers in
+    the shortest form that parses back to the same `f64`.
+  - load → save → load gives the same graph, and save → load → save the same bytes.
 - A trained or exported model is `model.graph.json` + `model.safetensors` (param names = graph
   param names). A bundled single-file container may be added later.
 
