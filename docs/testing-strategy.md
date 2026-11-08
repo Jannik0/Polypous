@@ -82,7 +82,7 @@ f16/bf16 values round-trip exactly. The sidecar is UTF-8 JSON with exactly these
 | `inputs` | array | The op's inputs **in order**: `{"name", "dtype", "shape"}` with dtype `f32`/`f16`/`bf16`/`i64`/`i32`/`bool` |
 | `outputs` | array | Expected outputs in order, same form. Tensor names are unique across inputs and outputs |
 | `tolerance` | object | `{"exact", "atol", "rtol"}`, see below |
-| `reference` | string | The reference expression, for example `torch.add(lhs, rhs)` |
+| `reference` | string | The reference expression, for example `torch.add(a, b)` |
 | `notes` | string | Semantics the case relies on and inputs left out on purpose (may be empty) |
 | `seed` | int | Seed of the case's input data |
 | `generator` | string | Script that wrote it, relative to the repository root |

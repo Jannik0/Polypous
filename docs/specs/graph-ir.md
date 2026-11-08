@@ -458,6 +458,9 @@ A wrong JSON type, a value outside the listed range, an unknown enum value or a 
   the op and returns an error; the facade maps it to `InvalidInput`, naming the node.
 - Float-to-integer `cast` truncates toward zero. NaN, infinities and values outside the integer
   range give a backend-defined value, but never undefined behavior or a panic. Fixtures avoid them.
+- **Half-precision transcendentals:** for `f16` and `bf16`, the transcendental ops (`exp`, `log`,
+  `sqrt`, `rsqrt`, `sin`, `cos`, `tanh`) and `pow` compute in `f32` and round once to the dtype,
+  so results don't depend on a backend's half-precision kernels. The output dtype is unchanged.
 
 #### 3.1.9 The PyTorch column
 
