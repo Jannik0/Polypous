@@ -4,6 +4,9 @@
 pub const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum nesting depth of JSON arrays and objects, `meta` included.
 pub const MAX_JSON_DEPTH: usize = 128;
+/// Maximum number of JSON values (scalars, arrays and objects; keys don't count) in a document.
+/// Bounds the parsed tree (about 32 bytes per value) to about 128 MiB.
+pub const MAX_JSON_VALUES: usize = 4_000_000;
 /// Maximum length in bytes of any JSON string (and object key) without a tighter limit.
 pub const MAX_STRING_BYTES: usize = 64 * 1024;
 /// Maximum length of node ids and graph input, output and state names.

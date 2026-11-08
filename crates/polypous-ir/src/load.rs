@@ -36,15 +36,17 @@ pub struct LoadOutcome {
 /// less than 256 KiB of stack in debug builds (measured), so call this from a thread with at least
 /// that much (Rust's default for spawned threads is 2 MiB).
 ///
-/// Memory is bounded by the document size limit, but not tightly: the parsed tree of a 64 MiB
-/// document of tiny values (`[0,0,…]`) takes about 32 bytes per value.
+/// Memory is bounded: the pre-scan rejects documents with more than 4,000,000 JSON values before
+/// the parser allocates, which bounds the parsed tree to about 128 MiB.
 pub fn load(bytes: &[u8], options: &ValidateOptions) -> LoadOutcome {
     let mut report = ValidationReport::default();
     let value = match json::parse(bytes) {
         Ok(v) => v,
         Err(e) => {
             let code = match e {
-                ParseError::TooLarge { .. } => ErrorCode::DocumentTooLarge,
+                ParseError::TooLarge { .. } | ParseError::TooManyValues { .. } => {
+                    ErrorCode::DocumentTooLarge
+                }
                 ParseError::TooDeep { .. } => ErrorCode::JsonTooDeep,
                 ParseError::Syntax(_) => ErrorCode::InvalidJson,
             };

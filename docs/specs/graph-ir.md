@@ -798,7 +798,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | Code | Raised when |
 |---|---|
 | `invalid_json` | The document isn't valid UTF-8 JSON, a field has the wrong JSON type, or an object has a duplicate key (anywhere, `meta` included; JSON parsers disagree on which value wins) |
-| `document_too_large` | The document exceeds the size limit |
+| `document_too_large` | The document exceeds the size limit or the JSON value limit (§4.3) |
 | `json_too_deep` | JSON nesting exceeds the depth limit |
 | `string_too_long` | A JSON string exceeds its length limit |
 | `unsupported_format` | `format` isn't `polypous.graph`, or `format_version` is unknown |
@@ -841,6 +841,7 @@ Graph documents are untrusted. Each limit is checked before the memory it protec
 |---|---|
 | Document size | ≤ 64 MiB |
 | JSON nesting depth (arrays and objects, including `meta`) | ≤ 128 |
+| JSON values (scalars, arrays and objects, including `meta`; object keys don't count) | ≤ 4,000,000 (`document_too_large`), counted before parsing |
 | Names, ids, dim symbols | §2.1, §2.3.1 (≤ 256 bytes) |
 | Dim expressions | §2.3.5 (≤ 256 bytes, depth 16, 64 terms, degree 8) |
 | Any other JSON string (enum values, `meta` content) | ≤ 64 KiB |
@@ -855,6 +856,10 @@ Graph documents are untrusted. Each limit is checked before the memory it protec
 | `core.constant` elements | ≤ 65,536 |
 | Literal dims | ≤ 2^32 |
 | Total declared param elements | fits in `u64` (checked arithmetic) |
+
+The value limit bounds the memory of the parsed document: without it, a 64 MiB document of tiny
+values (`[0,0,…]`) parses into a tree of about 1 GiB. Builder and `.polyp`-generated graphs are far
+below it (repeats keep big models small; a maximal `core.constant` is 65,536 values).
 
 The param binding limit bounds the work of checking that every iteration's params exist (§2.6):
 no M1 op has more than 4 params, so a graph within the node limit is within it too.

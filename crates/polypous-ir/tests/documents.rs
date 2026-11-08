@@ -246,6 +246,31 @@ fn document_too_large() {
     // Exactly at the limit is fine.
     doc.truncate(64 * 1024 * 1024);
     assert!(errors(&doc).is_empty());
+    // At most 4,000,000 JSON values, checked before parsing.
+    let with_meta = |zeros: usize| {
+        let mut doc = mlp();
+        doc["meta"] = serde_json::Value::Array(vec![json!(0); zeros]);
+        doc.to_string()
+    };
+    let small = with_meta(0);
+    let other = 4_000_000 - values_of(&small); // values besides the zeros in `meta`
+    assert!(errors(with_meta(other).as_bytes()).is_empty());
+    assert_eq!(
+        errors(with_meta(other + 1).as_bytes()),
+        vec![("document_too_large".into(), "".into())]
+    );
+}
+
+/// Counts JSON values (not keys) with serde_json, as an independent check of the pre-scan.
+fn values_of(doc: &str) -> usize {
+    fn count(v: &serde_json::Value) -> usize {
+        1 + match v {
+            serde_json::Value::Array(a) => a.iter().map(count).sum(),
+            serde_json::Value::Object(o) => o.values().map(count).sum(),
+            _ => 0,
+        }
+    }
+    count(&serde_json::from_str(doc).unwrap())
 }
 
 #[test]

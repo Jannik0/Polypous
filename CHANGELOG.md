@@ -10,7 +10,8 @@ All notable changes to Polypous are documented here. The format follows
 - `polypous-ir`: graph document model, canonical JSON and structural validation
   (`docs/specs/graph-ir.md` §2, §4, §6, #38). Typed `Graph` for every M1 document field (dims,
   inputs, outputs, params with `init`, state, nodes, `repeat` bodies, `meta`); loading untrusted JSON
-  under the §4.3 limits (64 MiB, nesting depth 128, 64 KiB strings, duplicate keys rejected) with
+  under the §4.3 limits (64 MiB, nesting depth 128, 4,000,000 JSON values, 64 KiB strings, duplicate
+  keys rejected) with
   every error collected as a stable code, message, node id and JSON pointer; canonical save (schema
   key order, `meta` and `"float"` kept as written, load → save → load identity); structural checks
   (versions, names and namespaces, references including `node:port` and `repeat:carry`, cycles, op

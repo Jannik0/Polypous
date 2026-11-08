@@ -176,6 +176,14 @@ pub enum ParseError {
         /// The limit.
         max: usize,
     },
+    /// The document has more than [`limits::MAX_JSON_VALUES`] JSON values.
+    #[error("document has more than {max} JSON values (byte offset {offset})")]
+    TooManyValues {
+        /// Byte offset of the value that exceeds the limit.
+        offset: usize,
+        /// The limit.
+        max: usize,
+    },
     /// Not valid UTF-8 JSON.
     #[error("invalid JSON: {0}")]
     Syntax(String),
@@ -193,7 +201,7 @@ pub fn parse(bytes: &[u8]) -> Result<Value, ParseError> {
             max: limits::MAX_DOCUMENT_BYTES,
         });
     }
-    check_depth(bytes)?;
+    prescan(bytes)?;
     let mut de = serde_json::Deserializer::from_slice(bytes);
     // serde_json's own limit allows only 127 levels (one less than the spec's 128). The depth was
     // checked above, so the parser's recursion is bounded by MAX_JSON_DEPTH.
@@ -203,12 +211,19 @@ pub fn parse(bytes: &[u8]) -> Result<Value, ParseError> {
     Ok(value)
 }
 
-/// Scans the raw bytes for the bracket nesting depth, skipping string contents. The scan does not
-/// validate JSON; the parser does that afterwards.
-fn check_depth(bytes: &[u8]) -> Result<(), ParseError> {
+/// Scans the raw bytes, before anything is allocated, for the bracket nesting depth and the number
+/// of JSON values (scalars, arrays and objects; object keys don't count). String contents are
+/// skipped. The scan does not validate JSON; the parser does that afterwards. Returns the value
+/// count.
+pub(crate) fn prescan(bytes: &[u8]) -> Result<usize, ParseError> {
     let mut depth = 0usize;
+    let mut values = 0usize;
     let mut in_string = false;
     let mut escaped = false;
+    // Inside a bare token (number, `true`, `false`, `null`).
+    let mut in_token = false;
+    // The previous non-whitespace token was a string: if a `:` follows, it was a key.
+    let mut after_string = false;
     for (offset, &b) in bytes.iter().enumerate() {
         if in_string {
             if escaped {
@@ -217,12 +232,29 @@ fn check_depth(bytes: &[u8]) -> Result<(), ParseError> {
                 escaped = true;
             } else if b == b'"' {
                 in_string = false;
+                after_string = true;
             }
             continue;
         }
-        match b {
-            b'"' => in_string = true,
+        if matches!(b, b' ' | b'\t' | b'\n' | b'\r') {
+            in_token = false;
+            continue;
+        }
+        if after_string {
+            after_string = false;
+            if b == b':' {
+                // The string was an object key, not a value.
+                values = values.saturating_sub(1);
+            }
+        }
+        let starts_value = match b {
+            b'"' => {
+                in_string = true;
+                in_token = false;
+                true
+            }
             b'[' | b'{' => {
+                in_token = false;
                 depth += 1;
                 if depth > limits::MAX_JSON_DEPTH {
                     return Err(ParseError::TooDeep {
@@ -230,12 +262,34 @@ fn check_depth(bytes: &[u8]) -> Result<(), ParseError> {
                         max: limits::MAX_JSON_DEPTH,
                     });
                 }
+                true
             }
-            b']' | b'}' => depth = depth.saturating_sub(1),
-            _ => {}
+            b']' | b'}' => {
+                in_token = false;
+                depth = depth.saturating_sub(1);
+                false
+            }
+            b',' | b':' => {
+                in_token = false;
+                false
+            }
+            _ => {
+                let start = !in_token;
+                in_token = true;
+                start
+            }
+        };
+        if starts_value {
+            values += 1;
+            if values > limits::MAX_JSON_VALUES {
+                return Err(ParseError::TooManyValues {
+                    offset,
+                    max: limits::MAX_JSON_VALUES,
+                });
+            }
         }
     }
-    Ok(())
+    Ok(values)
 }
 
 /// Escapes one reference token of a JSON pointer (RFC 6901): `~` becomes `~0`, `/` becomes `~1`.
@@ -386,6 +440,38 @@ mod tests {
         // Escaped quotes don't end a string.
         let s = format!("[\"\\\"{}\"]", "{".repeat(1000));
         assert!(parse(s.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn value_count() {
+        assert_eq!(prescan(b"0").unwrap(), 1);
+        assert_eq!(
+            prescan(br#"{"a": 1, "b": [true, null, -1.5e3, "x"]}"#).unwrap(),
+            7
+        );
+        assert_eq!(prescan(br#"{"a":"b","c":{}}"#).unwrap(), 3);
+        assert_eq!(prescan(br#"["a\"b", "c:"]"#).unwrap(), 3);
+        assert_eq!(prescan(b"[1,2 ,3]").unwrap(), 4);
+        // The limit: 4,000,000 values is fine, one more isn't (checked before parsing).
+        let doc = |zeros: usize| {
+            let mut s = String::with_capacity(2 * zeros + 2);
+            s.push('[');
+            for i in 0..zeros {
+                if i > 0 {
+                    s.push(',');
+                }
+                s.push('0');
+            }
+            s.push(']');
+            s
+        };
+        let max = limits::MAX_JSON_VALUES;
+        assert_eq!(prescan(doc(max - 1).as_bytes()).unwrap(), max);
+        assert!(parse(doc(max - 1).as_bytes()).is_ok());
+        assert!(matches!(
+            parse(doc(max).as_bytes()),
+            Err(ParseError::TooManyValues { .. })
+        ));
     }
 
     #[test]
