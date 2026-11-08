@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.mul",
+  "case": "wrap_i64",
+  "description": "Overflow at the i64 limits wraps around, [12].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "i64",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "i64",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.mul(a, b)",
+  "notes": "Integer overflow wraps (two's complement), as in PyTorch (graph-ir.md \u00a73.1.8).",
+  "seed": 531,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

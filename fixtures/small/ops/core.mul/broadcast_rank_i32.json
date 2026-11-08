@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.mul",
+  "case": "broadcast_rank_i32",
+  "description": "[2, 3, 4] and [3, 1] in i32: different ranks.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "i32",
+      "shape": [
+        3,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.mul(a, b)",
+  "notes": "",
+  "seed": 530,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

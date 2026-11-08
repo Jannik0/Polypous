@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "op": "core.where",
+  "case": "broadcast_i32",
+  "description": "i32, cond [1, 3], a [2, 1], b [2, 3].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "cond",
+      "dtype": "bool",
+      "shape": [
+        1,
+        3
+      ]
+    },
+    {
+      "name": "a",
+      "dtype": "i32",
+      "shape": [
+        2,
+        1
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.where(cond, a, b)",
+  "notes": "",
+  "seed": 737,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

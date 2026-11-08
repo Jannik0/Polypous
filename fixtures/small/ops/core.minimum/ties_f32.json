@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.minimum",
+  "case": "ties_f32",
+  "description": "Small integers in f32 [4, 4]: many equal pairs.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f32",
+      "shape": [
+        4,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f32",
+      "shape": [
+        4,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "torch.minimum(a, b)",
+  "notes": "Equal values pick either operand; inputs avoid -0.0/0.0 ties, where the choice would show.",
+  "seed": 582,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

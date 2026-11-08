@@ -8,7 +8,7 @@
   },
   "inputs": [
     {
-      "name": "input",
+      "name": "x",
       "dtype": "f16",
       "shape": [
         24
@@ -29,7 +29,7 @@
     "atol": 0.0,
     "rtol": 0.0
   },
-  "reference": "input.to(bf16)",
+  "reference": "x.to(bf16)",
   "notes": "Includes \u00b10.0, \u00b1inf, NaN, subnormals, f16/bf16 rounding ties and overflow to inf. NaN payloads are not part of the semantics: any NaN matches any NaN.",
   "seed": 409,
   "generator": "tools/reference/gen_ops.py",

@@ -4487,7 +4487,7 @@ dependencies = [
  "burn",
  "cubecl",
  "cudarc",
- "polypous-ir",
+ "polypous-formats",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

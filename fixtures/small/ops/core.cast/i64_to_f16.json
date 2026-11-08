@@ -8,7 +8,7 @@
   },
   "inputs": [
     {
-      "name": "input",
+      "name": "x",
       "dtype": "i64",
       "shape": [
         14
@@ -29,7 +29,7 @@
     "atol": 0.0,
     "rtol": 0.0
   },
-  "reference": "input.to(f16)",
+  "reference": "x.to(f16)",
   "notes": "Int to float rounds to nearest, ties to even. Values are below 2^24 (no double rounding through f32) and inside the f16 range.",
   "seed": 420,
   "generator": "tools/reference/gen_ops.py",

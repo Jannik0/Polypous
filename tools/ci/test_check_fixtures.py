@@ -87,11 +87,11 @@ class SidecarValidationTest(unittest.TestCase):
 
     def test_wrong_dtype_in_sidecar(self) -> None:
         self.edit_sidecar(lambda s: s["inputs"][0].update(dtype="f16"))
-        self.assertTrue(any("'lhs' is f16" in p for p in check_fixtures.check(self.root)))
+        self.assertTrue(any("'a' is f16" in p for p in check_fixtures.check(self.root)))
 
     def test_undeclared_tensor(self) -> None:
         self.edit_sidecar(lambda s: s["inputs"].pop())
-        self.assertTrue(any("undeclared tensors ['rhs']" in p for p in check_fixtures.check(self.root)))
+        self.assertTrue(any("undeclared tensors ['b']" in p for p in check_fixtures.check(self.root)))
 
     def test_case_name_must_match_file(self) -> None:
         self.edit_sidecar(lambda s: s.update(case="other"))

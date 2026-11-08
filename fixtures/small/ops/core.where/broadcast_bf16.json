@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "op": "core.where",
+  "case": "broadcast_bf16",
+  "description": "bf16, cond [3, 4], a [4], b [3, 1].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "cond",
+      "dtype": "bool",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "a",
+      "dtype": "bf16",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.where(cond, a, b)",
+  "notes": "",
+  "seed": 735,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

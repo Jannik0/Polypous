@@ -87,6 +87,16 @@ pub enum TensorError {
         reason: String,
     },
 
+    /// A plain argument of an operation is invalid (for example a `clamp` bound that doesn't
+    /// fit the tensor's dtype, or `min > max`).
+    #[error("invalid argument to `{op}`: {reason}")]
+    InvalidArgument {
+        /// The operation.
+        op: &'static str,
+        /// What is wrong.
+        reason: String,
+    },
+
     /// The backend failed while running or reading back a tensor.
     #[error("backend error: {message}")]
     Backend {

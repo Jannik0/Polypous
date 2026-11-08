@@ -8,7 +8,7 @@
   },
   "inputs": [
     {
-      "name": "input",
+      "name": "x",
       "dtype": "i64",
       "shape": [
         20
@@ -29,7 +29,7 @@
     "atol": 0.0,
     "rtol": 0.0
   },
-  "reference": "input.to(bool)",
+  "reference": "x.to(bool)",
   "notes": "Non-zero is true.",
   "seed": 424,
   "generator": "tools/reference/gen_ops.py",

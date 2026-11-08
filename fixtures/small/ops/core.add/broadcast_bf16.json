@@ -2,11 +2,11 @@
   "schema_version": 1,
   "op": "core.add",
   "case": "broadcast_bf16",
-  "description": "[2, 3, 4] + [2, 1, 4] in bf16.",
+  "description": "[2, 3, 4] and [2, 1, 4] in bf16.",
   "attributes": {},
   "inputs": [
     {
-      "name": "lhs",
+      "name": "a",
       "dtype": "bf16",
       "shape": [
         2,
@@ -15,7 +15,7 @@
       ]
     },
     {
-      "name": "rhs",
+      "name": "b",
       "dtype": "bf16",
       "shape": [
         2,
@@ -40,9 +40,9 @@
     "atol": 0.0,
     "rtol": 0.01
   },
-  "reference": "torch.add(lhs, rhs)",
+  "reference": "torch.add(a, b)",
   "notes": "",
-  "seed": 107,
+  "seed": 108,
   "generator": "tools/reference/gen_ops.py",
   "versions": {
     "python": "3.14",

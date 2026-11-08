@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "core.abs",
+  "case": "limits_i32",
+  "description": "The i32 limits: the minimum stays unchanged (wraps).",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.abs(x)",
+  "notes": "Integer overflow wraps (two's complement), as in PyTorch (graph-ir.md \u00a73.1.8).",
+  "seed": 634,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
