@@ -187,6 +187,7 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
 - **Cloud sessions:**
   - The harness appends a session-link footer to PR descriptions written through `gh api`. The PR-text job fails on it. Edit the description (or write it with the GitHub tool) until only the required footer remains.
   - It appends a `claude.ai/code` footer to issue bodies written through `gh api` too (seen in M1), and re-appends it on every `gh api` edit. Write and edit issues with the GitHub MCP tool (`issue_write`), which leaves the body alone, and re-read the body afterwards. A PR created with the MCP tool (`create_pull_request`) still got the session-link footer; an edit with `update_pull_request` removed it.
+  - **Comments can't be cleaned.** The footer is appended to issue and PR comments, through `gh api` and the MCP tools, and re-appended on every edit. Cloud sessions post no comments: put the content in an issue or PR body, or ask the owner to post it. This includes the milestone results comment on the exit-check issue.
   - The app's **Auto-fix** CI monitor can only be turned on for a PR the app knows the session opened. Otherwise the lead checks CI itself.
   - On GitHub, cloud sessions act as the owner's account: their PRs show as opened by the owner,
     and their commits as authored by `Claude <noreply@anthropic.com>`. Commit messages from cloud

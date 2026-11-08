@@ -21,6 +21,17 @@ All notable changes to Polypous are documented here. The format follows
   every op in `fixtures/small/ops/` (`tools/reference/gen_ops.py`).
 - graph-ir.md §3.1.8: subnormal float values are backend-defined (a device may flush them to
   zero). Fixtures contain none; `tools/ci/check_fixtures.py` rejects them.
+- `polypous-ir`: graph document model, canonical JSON and structural validation
+  (`docs/specs/graph-ir.md` §2, §4, §6, #38). Typed `Graph` for every M1 document field (dims,
+  inputs, outputs, params with `init`, state, nodes, `repeat` bodies, `meta`); loading untrusted JSON
+  under the §4.3 limits (64 MiB, nesting depth 128, 4,000,000 JSON values, 64 KiB strings, duplicate
+  keys rejected) with
+  every error collected as a stable code, message, node id and JSON pointer; canonical save (schema
+  key order, `meta` and `"float"` kept as written, load → save → load identity); structural checks
+  (versions, names and namespaces, references including `node:port` and `repeat:carry`, cycles, op
+  names of the M1 opsets, dim declarations and binding, repeat limits computed without expanding,
+  carry keys and state update targets); dim expressions with their normal form, canonical string
+  and equality (§2.3). Dtype and shape inference follow in #39.
 - `polypous-formats`: safetensors reader and writer (`docs/specs/formats.md` §1, #37). Memory-mapped
   reader with a copy fallback that validates the whole header before exposing tensors (100 MB header
   limit, contiguous offsets covering the data buffer, checked sizes, no duplicate keys, rank ≤ 64),
