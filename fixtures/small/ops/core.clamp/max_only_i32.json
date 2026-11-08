@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.clamp",
+  "case": "max_only_i32",
+  "description": "max only (7) in i32.",
+  "attributes": {
+    "max": 7
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.clamp(x, min, max)",
+  "notes": "Bounds are exact in the dtype under test.",
+  "seed": 719,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

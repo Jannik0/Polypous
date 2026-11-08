@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "core.sin",
+  "case": "special_values_f32",
+  "description": "Signed zeros, infinities, NaN, tiny and large values, [12].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "torch.sin(x) in f64, rounded once to f32",
+  "notes": "Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf. out is computed in f64 from the inputs and rounded once to the dtype under test, so the bytes don't depend on the CPU's vectorized kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 685,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

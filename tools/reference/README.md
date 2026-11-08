@@ -32,21 +32,29 @@ Commit the regenerated files together with the generator change. Never edit a fi
 
 ## Add an op case
 
-1. Add a `Case` to `build_cases()` in `gen_ops.py`, usually with a helper such as `add_case` or
-   `matmul_case`, or write a new helper for a new op:
+1. Add a `Case` to `build_cases()` in `gen_ops.py`, usually through a helper:
+   - Elementwise, comparison and logic ops: an `OpSpec` (op name, input names, PyTorch call) and
+     `ew_case(spec, name, seed, dtype, description, shapes=..., values=...)`. The family helpers
+     (`binary_arith_cases`, `unary_float_cases`, `minmax_cases`, `compare_cases`, …) build the
+     standard case lists.
+   - `matmul_case`, `reshape_case`, `cast_case` for those ops, or a new helper for a new op.
    - `op`: the IR op name (`core.add`), `name`: unique per op, ending in the dtype (`broadcast_row_f32`).
    - `seed`: a new fixed number, not shared with another case.
-   - `inputs`: builds the named inputs in the op's input order from the seeded NumPy generator
+   - `inputs`: builds the inputs in the op's input order, **named like the op's inputs** in
+     graph-ir.md §3 (`a`, `b`, `x`, `cond`; the output is `out`), from the seeded NumPy generator
      (`uniform`, `integers`, `from_list`). Pick values the reference defines: no NaN or
      out-of-range values where PyTorch's result is undefined, and say so in `notes`.
    - `reference`: the PyTorch computation, in the dtype under test. If its bytes depend on the CPU
-     (reductions, matmul), compute in f64 and round once, as `ref_matmul` does, and check the
-     native result against the tolerance.
+     (reductions, matmul, transcendentals), compute in f64 and round once (`ref_matmul`,
+     `OpSpec(f64=True)`), and set `native` so the generator checks PyTorch's own result in the
+     dtype against the tolerance.
    - `attributes`: the op's attributes, named as in the op catalog.
    - `tolerance`: the defaults from testing-strategy.md §2 (`elementwise_tol`, `matmul_tol`, `EXACT`).
      A looser tolerance needs a comment here and an explanation in the PR.
 2. Run the generator, then `--check` twice, the unit tests and `tools/ci/check_fixtures.py`.
-3. Keep fixtures small: each case under 1 MiB, `fixtures/small/` under 50 MiB. A few KB per case is enough.
+3. Add the op to a Rust reference test (`crates/polypous-backend/tests/reference_*.rs`), which
+   loads every case of the op directory.
+4. Keep fixtures small: each case under 1 MiB, `fixtures/small/` under 50 MiB. A few KB per case is enough.
 
 ## Large fixtures
 

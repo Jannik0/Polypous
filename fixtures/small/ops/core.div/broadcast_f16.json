@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.div",
+  "case": "broadcast_f16",
+  "description": "[3, 4] and [3, 1] in f16.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f16",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f16",
+      "shape": [
+        3,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.div(a, b)",
+  "notes": "",
+  "seed": 543,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

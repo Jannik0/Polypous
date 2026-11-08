@@ -29,7 +29,6 @@ metal = ["burn/metal", "dep:cubecl", "cubecl/metal"]
 test-fault-injection = []
 
 [dependencies]
-polypous-ir.workspace = true
 burn = { workspace = true, features = ["std"] }
 # The exact CubeCL pin (ADR-0007), the same CubeCL Burn uses. Device discovery reads memory, identity
 # and capabilities from a device's CubeCL client (src/device); `polypous-quant` uses it for kernels.
@@ -54,6 +53,11 @@ thiserror = "2.0.21"
 # windows-result, windows-strings) are already in the lock file through Burn's tree.
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6.1"
+
+# Op reference tests load their fixtures (safetensors + JSON sidecar) with the project's own reader
+# (tests/reference/common.rs, testing-strategy.md §6). Workspace crate, no new external crates.
+[dev-dependencies]
+polypous-formats.workspace = true
 
 [lints]
 workspace = true

@@ -8,7 +8,7 @@
   },
   "inputs": [
     {
-      "name": "input",
+      "name": "x",
       "dtype": "i32",
       "shape": [
         18
@@ -29,7 +29,7 @@
     "atol": 0.0,
     "rtol": 0.0
   },
-  "reference": "input.to(i32)",
+  "reference": "x.to(i32)",
   "notes": "Cast to the same dtype is the identity.",
   "seed": 429,
   "generator": "tools/reference/gen_ops.py",

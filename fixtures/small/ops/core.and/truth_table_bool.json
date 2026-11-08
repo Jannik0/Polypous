@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.and",
+  "case": "truth_table_bool",
+  "description": "Every input pair, [4].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "bool",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "bool",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.logical_and(a, b)",
+  "notes": "",
+  "seed": 813,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

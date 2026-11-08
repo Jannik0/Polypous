@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.clamp",
+  "case": "max_only_f32",
+  "description": "max only (-0.5) on [12].",
+  "attributes": {
+    "max": -0.5
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "torch.clamp(x, min, max)",
+  "notes": "Bounds are exact in the dtype under test.",
+  "seed": 713,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

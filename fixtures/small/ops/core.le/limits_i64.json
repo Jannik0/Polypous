@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.le",
+  "case": "limits_i64",
+  "description": "Large i64 values (beyond 2^53) and the limits, [6].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "i64",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "i64",
+      "shape": [
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.le(a, b)",
+  "notes": "",
+  "seed": 786,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

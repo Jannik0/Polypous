@@ -7,6 +7,20 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `polypous-backend`: the first IR ops on `DynTensor` (`ops` module, graph-ir.md §3.2, #40):
+  elementwise `add sub mul div pow maximum minimum neg abs exp log sqrt rsqrt sin cos tanh clamp`,
+  `where_` (`core.where`), comparisons `equal not_equal less less_equal greater greater_equal`, logic
+  `logical_and logical_or logical_not`, and `cast`. Broadcasting across different ranks, strict
+  dtypes (typed errors, no promotion), NaN propagation in `maximum`/`minimum`/`clamp`, NaN in
+  comparisons and float → bool casts, IEEE special cases of `pow`, wrapping integer arithmetic, and
+  f16/bf16 transcendentals computed in f32 on every backend. New `Scalar` argument type,
+  `TensorError::InvalidArgument` and `DynTensor::device_supports`. `add` now broadcasts operands
+  of different ranks.
+- Op reference tests for these ops against PyTorch fixtures on the CPU and on every GPU device
+  (`tests/reference_*.rs`, shared harness in `tests/reference/common.rs`), with fixture cases for
+  every op in `fixtures/small/ops/` (`tools/reference/gen_ops.py`).
+- graph-ir.md §3.1.8: subnormal float values are backend-defined (a device may flush them to
+  zero). Fixtures contain none; `tools/ci/check_fixtures.py` rejects them.
 - `polypous-ir`: graph document model, canonical JSON and structural validation
   (`docs/specs/graph-ir.md` §2, §4, §6, #38). Typed `Graph` for every M1 document field (dims,
   inputs, outputs, params with `init`, state, nodes, `repeat` bodies, `meta`); loading untrusted JSON
@@ -104,6 +118,9 @@ All notable changes to Polypous are documented here. The format follows
   budget and sidecars (`tools/ci/check_fixtures.py`) in the "Dependency boundary" job.
 
 ### Changed
+- Op fixtures name their tensors after the op's inputs (`a`, `b`, `x`, `cond`; outputs `out`),
+  and `core.add/empty_dim_f32` is gone (zero-size dims are not allowed in M1, graph-ir.md §2.3).
+- `polypous-backend` no longer depends on `polypous-ir`.
 - `polyp devices` and `Engine::new` in apps that call `run_prober_if_requested()` report probe
   results as `isolated: true`. Apps without a prober probe in process as before, now with a crash
   journal and a warning in the report.

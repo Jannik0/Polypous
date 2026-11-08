@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.rsqrt",
+  "case": "random_f16",
+  "description": "Random [3, 4] in f16.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.rsqrt(x) in f64, rounded once to f16",
+  "notes": "out is computed in f64 from the inputs and rounded once to the dtype under test, so the bytes don't depend on the CPU's vectorized kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 673,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

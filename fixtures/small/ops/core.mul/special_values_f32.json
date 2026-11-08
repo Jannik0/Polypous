@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.mul",
+  "case": "special_values_f32",
+  "description": "Signed zeros, infinities, NaN and overflow, [3, 4].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "torch.mul(a, b)",
+  "notes": "Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf. The tolerance can't see the sign of zero; the bytes keep it.",
+  "seed": 534,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

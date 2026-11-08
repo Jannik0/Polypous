@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.minimum",
+  "case": "nan_bf16",
+  "description": "NaN propagation in bf16, [12].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "bf16",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "bf16",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.minimum(a, b)",
+  "notes": "Equal values pick either operand; inputs avoid -0.0/0.0 ties, where the choice would show. Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf.",
+  "seed": 589,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

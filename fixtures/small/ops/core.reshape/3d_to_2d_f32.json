@@ -11,7 +11,7 @@
   },
   "inputs": [
     {
-      "name": "input",
+      "name": "x",
       "dtype": "f32",
       "shape": [
         2,
@@ -35,7 +35,7 @@
     "atol": 0.0,
     "rtol": 0.0
   },
-  "reference": "torch.reshape(input, shape)",
+  "reference": "torch.reshape(x, shape)",
   "notes": "",
   "seed": 301,
   "generator": "tools/reference/gen_ops.py",

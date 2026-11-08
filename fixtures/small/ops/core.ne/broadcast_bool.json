@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.ne",
+  "case": "broadcast_bool",
+  "description": "bool [2, 3, 4] and [3, 1].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "bool",
+      "shape": [
+        3,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.ne(a, b)",
+  "notes": "",
+  "seed": 768,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
