@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.clamp",
+  "case": "both_bf16",
+  "description": "min -1.5, max 0.75 in bf16.",
+  "attributes": {
+    "min": -1.5,
+    "max": 0.75
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.clamp(x, min, max)",
+  "notes": "Bounds are exact in the dtype under test.",
+  "seed": 716,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

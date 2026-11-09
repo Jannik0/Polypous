@@ -27,8 +27,9 @@
 //!   `reshape`. Ranks outside 1–6 become [`TensorError::UnsupportedRank`].
 //!
 //! Adding an op means one method on `Ranked<D>` plus one public method on `DynTensor` that checks
-//! the inputs and calls a macro. Supporting rank 7 would mean one more variant and one more arm
-//! per macro.
+//! the inputs and calls a macro. The IR ops live in [`crate::ops`], which uses these macros and
+//! types crate-internally; see its documentation for the file layout. Supporting rank 7 would
+//! mean one more variant and one more arm per macro.
 //!
 //! # No panics on bad input
 //!
@@ -58,4 +59,7 @@ pub use data::TensorData;
 pub use dtype::DType;
 pub(crate) use dtype::Kind;
 pub use dyn_tensor::DynTensor;
+// For the ops module (`crate::ops`). `with_rank!` and `dispatch_rank!` can be re-exported the same
+// way when an op needs them.
+pub(crate) use dyn_tensor::{Inner, Ranked, check_device_supports, map_rank, zip_rank};
 pub use error::{Result, TensorError};

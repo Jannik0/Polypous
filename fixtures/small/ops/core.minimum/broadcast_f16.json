@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.minimum",
+  "case": "broadcast_f16",
+  "description": "[2, 3, 4] and [1, 4] in f16.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f16",
+      "shape": [
+        1,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.minimum(a, b)",
+  "notes": "Equal values pick either operand; inputs avoid -0.0/0.0 ties, where the choice would show.",
+  "seed": 583,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

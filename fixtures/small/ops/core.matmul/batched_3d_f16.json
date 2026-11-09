@@ -6,7 +6,7 @@
   "attributes": {},
   "inputs": [
     {
-      "name": "lhs",
+      "name": "a",
       "dtype": "f16",
       "shape": [
         2,
@@ -15,7 +15,7 @@
       ]
     },
     {
-      "name": "rhs",
+      "name": "b",
       "dtype": "f16",
       "shape": [
         2,
@@ -40,7 +40,7 @@
     "atol": 0.0,
     "rtol": 0.01
   },
-  "reference": "torch.matmul(lhs.double(), rhs.double()).to(lhs.dtype)",
+  "reference": "torch.matmul(a.double(), b.double()).to(a.dtype)",
   "notes": "out is torch.matmul in f64, rounded once to the dtype under test, so the bytes don't depend on the CPU's BLAS kernel; torch.matmul in the dtype itself meets the tolerance (checked by the generator).",
   "seed": 206,
   "generator": "tools/reference/gen_ops.py",

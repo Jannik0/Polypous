@@ -2,11 +2,11 @@
   "schema_version": 1,
   "op": "core.add",
   "case": "broadcast_rank_f32",
-  "description": "[2, 3, 4] + [4]: different ranks, PyTorch prepends size-1 dims.",
+  "description": "[2, 3, 4] and [4]: different ranks, size-1 dims are prepended.",
   "attributes": {},
   "inputs": [
     {
-      "name": "lhs",
+      "name": "a",
       "dtype": "f32",
       "shape": [
         2,
@@ -15,7 +15,7 @@
       ]
     },
     {
-      "name": "rhs",
+      "name": "b",
       "dtype": "f32",
       "shape": [
         4
@@ -38,7 +38,7 @@
     "atol": 1e-05,
     "rtol": 0.0001
   },
-  "reference": "torch.add(lhs, rhs)",
+  "reference": "torch.add(a, b)",
   "notes": "",
   "seed": 104,
   "generator": "tools/reference/gen_ops.py",

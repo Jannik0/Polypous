@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.gt",
+  "case": "ties_f32",
+  "description": "Small integers in f32, [2, 3, 4] and [3, 4]: many equal pairs.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.gt(a, b)",
+  "notes": "",
+  "seed": 791,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

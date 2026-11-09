@@ -7,7 +7,9 @@
 //! `docs/architecture.md` §2.
 
 pub mod device;
+pub mod ops;
 pub mod probe;
 pub mod tensor;
 
+pub use ops::Scalar;
 pub use tensor::{DType, DynTensor, TensorData, TensorError};

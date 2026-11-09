@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.pow",
+  "case": "negative_base_mixed_f16",
+  "description": "Negative bases with even, odd and non-integer exponents in f16, [12].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f16",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f16",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.pow(a, b) in f64, rounded once to f16",
+  "notes": "Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf. out is computed in f64 from the inputs and rounded once to the dtype under test, so the bytes don't depend on the CPU's vectorized kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 558,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

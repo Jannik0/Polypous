@@ -15,7 +15,7 @@ const MAX_RANK: usize = 6;
 
 /// A Burn tensor of compile-time rank `D`, with the tensor kind as a runtime value.
 #[derive(Clone)]
-enum Ranked<const D: usize> {
+pub(crate) enum Ranked<const D: usize> {
     Float(Tensor<D, Float>),
     Int(Tensor<D, Int>),
     Bool(Tensor<D, Bool>),
@@ -23,7 +23,7 @@ enum Ranked<const D: usize> {
 
 /// One variant per supported rank. The variant *is* the rank.
 #[derive(Clone)]
-enum Inner {
+pub(crate) enum Inner {
     R1(Ranked<1>),
     R2(Ranked<2>),
     R3(Ranked<3>),
@@ -37,12 +37,12 @@ enum Inner {
 macro_rules! with_rank {
     ($inner:expr, $t:ident => $body:expr) => {
         match $inner {
-            Inner::R1($t) => $body,
-            Inner::R2($t) => $body,
-            Inner::R3($t) => $body,
-            Inner::R4($t) => $body,
-            Inner::R5($t) => $body,
-            Inner::R6($t) => $body,
+            $crate::tensor::Inner::R1($t) => $body,
+            $crate::tensor::Inner::R2($t) => $body,
+            $crate::tensor::Inner::R3($t) => $body,
+            $crate::tensor::Inner::R4($t) => $body,
+            $crate::tensor::Inner::R5($t) => $body,
+            $crate::tensor::Inner::R6($t) => $body,
         }
     };
 }
@@ -52,29 +52,42 @@ macro_rules! with_rank {
 macro_rules! map_rank {
     ($inner:expr, $t:ident => $body:expr) => {
         match $inner {
-            Inner::R1($t) => Inner::R1($body),
-            Inner::R2($t) => Inner::R2($body),
-            Inner::R3($t) => Inner::R3($body),
-            Inner::R4($t) => Inner::R4($body),
-            Inner::R5($t) => Inner::R5($body),
-            Inner::R6($t) => Inner::R6($body),
+            $crate::tensor::Inner::R1($t) => $crate::tensor::Inner::R1($body),
+            $crate::tensor::Inner::R2($t) => $crate::tensor::Inner::R2($body),
+            $crate::tensor::Inner::R3($t) => $crate::tensor::Inner::R3($body),
+            $crate::tensor::Inner::R4($t) => $crate::tensor::Inner::R4($body),
+            $crate::tensor::Inner::R5($t) => $crate::tensor::Inner::R5($body),
+            $crate::tensor::Inner::R6($t) => $crate::tensor::Inner::R6($body),
         }
     };
 }
+pub(crate) use map_rank;
 
 /// Binary version of [`map_rank!`]. Callers check that both ranks are equal first; should they
 /// differ anyway, the enclosing function returns a `ShapeMismatch` error instead of panicking.
 macro_rules! zip_rank {
     ($op:expr, $lhs:expr, $rhs:expr, $a:ident, $b:ident => $body:expr) => {
         match ($lhs, $rhs) {
-            (Inner::R1($a), Inner::R1($b)) => Inner::R1($body),
-            (Inner::R2($a), Inner::R2($b)) => Inner::R2($body),
-            (Inner::R3($a), Inner::R3($b)) => Inner::R3($body),
-            (Inner::R4($a), Inner::R4($b)) => Inner::R4($body),
-            (Inner::R5($a), Inner::R5($b)) => Inner::R5($body),
-            (Inner::R6($a), Inner::R6($b)) => Inner::R6($body),
+            ($crate::tensor::Inner::R1($a), $crate::tensor::Inner::R1($b)) => {
+                $crate::tensor::Inner::R1($body)
+            }
+            ($crate::tensor::Inner::R2($a), $crate::tensor::Inner::R2($b)) => {
+                $crate::tensor::Inner::R2($body)
+            }
+            ($crate::tensor::Inner::R3($a), $crate::tensor::Inner::R3($b)) => {
+                $crate::tensor::Inner::R3($body)
+            }
+            ($crate::tensor::Inner::R4($a), $crate::tensor::Inner::R4($b)) => {
+                $crate::tensor::Inner::R4($body)
+            }
+            ($crate::tensor::Inner::R5($a), $crate::tensor::Inner::R5($b)) => {
+                $crate::tensor::Inner::R5($body)
+            }
+            ($crate::tensor::Inner::R6($a), $crate::tensor::Inner::R6($b)) => {
+                $crate::tensor::Inner::R6($body)
+            }
             (a, b) => {
-                return Err(TensorError::ShapeMismatch {
+                return Err($crate::tensor::TensorError::ShapeMismatch {
                     op: $op,
                     lhs: a.dims(),
                     rhs: b.dims(),
@@ -83,6 +96,7 @@ macro_rules! zip_rank {
         }
     };
 }
+pub(crate) use zip_rank;
 
 /// Turns a runtime rank into a compile-time one: evaluates `$body` with the constant `$n` set to
 /// `$rank` and wraps the resulting `Ranked<$n>` into an `Inner`. Ranks outside 1–6 return
@@ -92,29 +106,29 @@ macro_rules! dispatch_rank {
         match $rank {
             1 => {
                 const $n: usize = 1;
-                Inner::R1($body)
+                $crate::tensor::Inner::R1($body)
             }
             2 => {
                 const $n: usize = 2;
-                Inner::R2($body)
+                $crate::tensor::Inner::R2($body)
             }
             3 => {
                 const $n: usize = 3;
-                Inner::R3($body)
+                $crate::tensor::Inner::R3($body)
             }
             4 => {
                 const $n: usize = 4;
-                Inner::R4($body)
+                $crate::tensor::Inner::R4($body)
             }
             5 => {
                 const $n: usize = 5;
-                Inner::R5($body)
+                $crate::tensor::Inner::R5($body)
             }
             6 => {
                 const $n: usize = 6;
-                Inner::R6($body)
+                $crate::tensor::Inner::R6($body)
             }
-            rank => return Err(TensorError::UnsupportedRank { rank }),
+            rank => return Err($crate::tensor::TensorError::UnsupportedRank { rank }),
         }
     };
 }
@@ -250,6 +264,31 @@ impl DynTensor {
         with_rank!(&self.inner, t => t.device())
     }
 
+    /// Whether `device` can store and compute `dtype`. `bool` is supported everywhere.
+    ///
+    /// Ops on a tensor that exists on a device work for its dtype, except where an op's
+    /// documentation names a device restriction. Fails if the device is not available (see
+    /// [`DynTensor::from_data`]).
+    pub fn device_supports(device: DeviceId, dtype: DType) -> Result<bool> {
+        let burn = resolve(device)?;
+        Ok(check_device_supports(dtype, &burn, device).is_ok())
+    }
+
+    /// Builds a tensor from its parts. `inner` must live on the Burn device of `device` and hold
+    /// a tensor of `dtype`'s kind; the ops module keeps this invariant.
+    pub(crate) fn from_parts(inner: Inner, dtype: DType, device: DeviceId) -> Self {
+        DynTensor {
+            inner,
+            dtype,
+            device,
+        }
+    }
+
+    /// The rank/kind enum, the dtype and the device id.
+    pub(crate) fn into_parts(self) -> (Inner, DType, DeviceId) {
+        (self.inner, self.dtype, self.device)
+    }
+
     /// Returns a tensor with the same elements in row-major order and a new shape (rank 1–6).
     ///
     /// Fails if the element counts differ. Dimensions are given explicitly; there is no `-1`
@@ -271,58 +310,6 @@ impl DynTensor {
             inner,
             dtype,
             device: self.device,
-        })
-    }
-
-    /// Converts the elements to `dtype`.
-    ///
-    /// - float → int rounds toward zero; out-of-range values are backend-defined.
-    /// - any → `bool` gives `true` for non-zero elements (NaN is non-zero).
-    /// - `bool` → float or int gives `1` and `0`.
-    ///
-    /// Fails if the device's backend doesn't support `dtype`.
-    pub fn cast(self, dtype: DType) -> Result<Self> {
-        if dtype == self.dtype {
-            return Ok(self);
-        }
-        check_device_supports(dtype, &self.burn_device(), self.device)?;
-        let inner = map_rank!(self.inner, t => t.cast(dtype));
-        Ok(DynTensor {
-            inner,
-            dtype,
-            device: self.device,
-        })
-    }
-
-    /// Element-wise sum, with broadcasting.
-    ///
-    /// Not `std::ops::Add`, because it can fail.
-    ///
-    /// Both tensors need the same dtype (float or int), the same rank and the same device. Two
-    /// dimensions are compatible if they are equal or one of them is `1`.
-    #[expect(
-        clippy::should_implement_trait,
-        reason = "fallible, so `std::ops::Add` does not fit"
-    )]
-    pub fn add(self, other: Self) -> Result<Self> {
-        const OP: &str = "add";
-        self.check_binary(OP, &other)?;
-        if self.dtype.kind() == Kind::Bool {
-            return Err(TensorError::UnsupportedOperation {
-                op: OP,
-                dtype: self.dtype,
-            });
-        }
-        let (lhs, rhs) = (self.shape(), other.shape());
-        if broadcast(&lhs, &rhs).is_none() {
-            return Err(TensorError::ShapeMismatch { op: OP, lhs, rhs });
-        }
-        let (dtype, device) = (self.dtype, self.device);
-        let inner = zip_rank!(OP, self.inner, other.inner, a, b => a.add(b)?);
-        Ok(DynTensor {
-            inner,
-            dtype,
-            device,
         })
     }
 
@@ -385,7 +372,7 @@ impl DynTensor {
     }
 
     /// Checks dtype, rank and device of a binary operation's operands.
-    fn check_binary(&self, op: &'static str, other: &Self) -> Result<()> {
+    pub(crate) fn check_binary(&self, op: &'static str, other: &Self) -> Result<()> {
         if self.dtype != other.dtype {
             return Err(TensorError::DTypeMismatch {
                 op,
@@ -423,13 +410,13 @@ impl fmt::Debug for DynTensor {
 }
 
 impl Inner {
-    fn dims(&self) -> Vec<usize> {
+    pub(crate) fn dims(&self) -> Vec<usize> {
         with_rank!(self, t => t.dims())
     }
 }
 
 impl<const D: usize> Ranked<D> {
-    fn dims(&self) -> Vec<usize> {
+    pub(crate) fn dims(&self) -> Vec<usize> {
         let shape = match self {
             Ranked::Float(t) => t.shape(),
             Ranked::Int(t) => t.shape(),
@@ -442,7 +429,7 @@ impl<const D: usize> Ranked<D> {
         D
     }
 
-    fn device(&self) -> Device {
+    pub(crate) fn device(&self) -> Device {
         match self {
             Ranked::Float(t) => t.device(),
             Ranked::Int(t) => t.device(),
@@ -462,7 +449,7 @@ impl<const D: usize> Ranked<D> {
     }
 
     /// The caller checked that the element counts match.
-    fn reshape<const N: usize>(self, shape: &[usize]) -> Result<Ranked<N>> {
+    pub(crate) fn reshape<const N: usize>(self, shape: &[usize]) -> Result<Ranked<N>> {
         let dims: [usize; N] = shape
             .try_into()
             .map_err(|_| TensorError::UnsupportedRank { rank: shape.len() })?;
@@ -471,30 +458,6 @@ impl<const D: usize> Ranked<D> {
             Ranked::Int(t) => Ranked::Int(t.reshape(dims)),
             Ranked::Bool(t) => Ranked::Bool(t.reshape(dims)),
         })
-    }
-
-    /// The caller checked that the device supports `dtype`.
-    fn cast(self, dtype: DType) -> Self {
-        match (self, dtype.kind()) {
-            (Ranked::Float(t), Kind::Float) => Ranked::Float(t.cast(dtype.to_burn_float())),
-            (Ranked::Float(t), Kind::Int) => Ranked::Int(t.cast(dtype.to_burn_int())),
-            (Ranked::Float(t), Kind::Bool) => Ranked::Bool(t.bool()),
-            (Ranked::Int(t), Kind::Float) => Ranked::Float(t.cast(dtype.to_burn_float())),
-            (Ranked::Int(t), Kind::Int) => Ranked::Int(t.cast(dtype.to_burn_int())),
-            (Ranked::Int(t), Kind::Bool) => Ranked::Bool(t.bool()),
-            (Ranked::Bool(t), Kind::Float) => Ranked::Float(t.cast(dtype.to_burn_float())),
-            (Ranked::Bool(t), Kind::Int) => Ranked::Int(t.cast(dtype.to_burn_int())),
-            (Ranked::Bool(t), Kind::Bool) => Ranked::Bool(t),
-        }
-    }
-
-    /// The caller checked dtypes, shapes and devices.
-    fn add(self, other: Self) -> Result<Self> {
-        match (self, other) {
-            (Ranked::Float(a), Ranked::Float(b)) => Ok(Ranked::Float(a.add(b))),
-            (Ranked::Int(a), Ranked::Int(b)) => Ok(Ranked::Int(a.add(b))),
-            (a, _) => Err(a.kind_error("add")),
-        }
     }
 
     /// The caller checked dtypes, shapes and devices.
@@ -515,7 +478,7 @@ impl<const D: usize> Ranked<D> {
     }
 
     /// Error for a kind combination that the public checks should have rejected already.
-    fn kind_error(&self, op: &'static str) -> TensorError {
+    pub(crate) fn kind_error(&self, op: &'static str) -> TensorError {
         let dtype = match self {
             Ranked::Float(_) => DType::F32,
             Ranked::Int(_) => DType::I64,
@@ -541,7 +504,7 @@ fn id_of(device: &Device) -> Result<DeviceId> {
 
 /// Fails if `device`'s backend can't store or compute `dtype`. `bool` is always supported: Burn
 /// stores it in whatever form the device has.
-fn check_device_supports(dtype: DType, device: &Device, id: DeviceId) -> Result<()> {
+pub(crate) fn check_device_supports(dtype: DType, device: &Device, id: DeviceId) -> Result<()> {
     if dtype == DType::Bool || device.supports_dtype(dtype.to_burn()) {
         Ok(())
     } else {
@@ -553,7 +516,7 @@ fn check_device_supports(dtype: DType, device: &Device, id: DeviceId) -> Result<
 }
 
 /// How `device` stores bool tensors (1-byte native, `u8` or `u32`).
-fn bool_store(device: &Device) -> BoolStore {
+pub(crate) fn bool_store(device: &Device) -> BoolStore {
     device.settings().bool_dtype
 }
 

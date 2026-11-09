@@ -8,7 +8,7 @@
   },
   "inputs": [
     {
-      "name": "input",
+      "name": "x",
       "dtype": "bool",
       "shape": [
         2,
@@ -31,7 +31,7 @@
     "atol": 0.0,
     "rtol": 0.0
   },
-  "reference": "input.to(bf16)",
+  "reference": "x.to(bf16)",
   "notes": "",
   "seed": 433,
   "generator": "tools/reference/gen_ops.py",
