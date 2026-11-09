@@ -61,8 +61,12 @@ On PowerShell, refresh `PATH` first if `cargo` isn't found (development-workflow
 `cargo test`, rebuild `polyp` before using `target/debug/polyp`: the test build contains prober
 fault injection.
 
-Planned, not there yet: `polyp validate polyps/llama.polyp` (M3) and
-`python tools/reference/fetch_fixtures.py` (download large fixtures, hash-verified; M1).
+Reference fixtures (Python environment: [docs/dev-environment.md](docs/dev-environment.md#python-reference-environment)):
+`python tools/reference/gen_ops.py --check` (op fixtures match the generator),
+`python tools/ci/check_fixtures.py` (size budget, sidecars, no subnormals) and
+`python tools/reference/fetch_fixtures.py` (large fixtures, hash-verified).
+
+Planned, not there yet: `polyp validate polyps/llama.polyp` (M3).
 
 ## Conventions
 
