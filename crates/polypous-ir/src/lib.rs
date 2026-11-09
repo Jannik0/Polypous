@@ -7,10 +7,13 @@
 //! `docs/specs/graph-ir.md`.
 //!
 //! - [`model`]: the typed graph document (§2), [`Graph`].
-//! - [`load`]: loading untrusted JSON under the limits of §4.3, collecting every error with its JSON
+//! - [`load`](mod@load): loading untrusted JSON under the limits of §4.3, collecting every error with its JSON
 //!   pointer, then validating ([`load::load`], [`Graph::from_json`]).
-//! - [`validate`]: structural validation (§4.1 checks 2–5, 9 and the structural parts of 8).
-//!   Dtype and shape inference are not implemented yet (#39).
+//! - [`validate`]: structural validation (§4.1 checks 2–5, 9 and the structural parts of 8), then
+//!   op signatures, dtype and shape inference (checks 4, 6–8; `infer.rs`).
+//! - [`catalog`]: the M1 op catalog (§3.2, §3.3).
+//! - [`analysis`]: what validation proves, for the runtime ([`Graph::analyze`]), and the symbol
+//!   binding of §2.3.4 ([`Analysis::bind`]).
 //! - [`save`]: the canonical JSON form (§6), [`Graph::to_json`].
 //! - [`dim`]: dim expressions, their normal form and equality (§2.3).
 //! - [`diag`]: error codes (§4.2) and the [`ValidationReport`].
@@ -33,9 +36,12 @@
 //! assert_eq!(Graph::from_json(saved.as_bytes()).unwrap(), graph);
 //! ```
 
+pub mod analysis;
+pub mod catalog;
 pub mod diag;
 pub mod dim;
 pub mod dtype;
+pub(crate) mod infer;
 pub mod json;
 pub mod limits;
 pub mod load;
@@ -45,6 +51,12 @@ pub mod ops;
 pub mod save;
 pub mod validate;
 
+pub use analysis::{
+    Analysis, AttrValue, Attrs, BindError, Bindings, BoundDim, BoundNode, BoundOp, BoundRepeat,
+    DimCheck, NamedValue, NodeInfo, OpInfo, RepeatInfo, Scalar, SymbolInfo, TensorDesc, ValueInfo,
+    ValueKind,
+};
+pub use catalog::OpDef;
 pub use diag::{Diagnostic, ErrorCode, Item, ValidationReport};
 pub use dim::{DimError, DimExpr};
 pub use dtype::{ComputeDtype, Dtype, DtypeSpec};
@@ -65,7 +77,7 @@ impl Graph {
         }
     }
 
-    /// Validates the graph (§4.1, structural checks; see [`validate`]).
+    /// Validates the graph (§4.1: structure, op signatures, dtypes and shapes; see [`validate`]).
     ///
     /// The graph is checked as its canonical JSON ([`Graph::to_json`]) would be loaded, so the JSON
     /// limits of §4.3 (document size, nesting depth, string lengths, in `meta` too) apply as well,

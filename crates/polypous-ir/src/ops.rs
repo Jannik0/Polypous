@@ -1,97 +1,12 @@
-//! The M1 op names and their output ports, `docs/specs/graph-ir.md` §3.1.6, §3.2 and §3.3.
-//!
-//! This is the by-name lookup that structural validation needs (§4.1 check 4: the op exists in the
-//! declared opset). The full op catalog with signatures replaces it (#39); keep the list in this one
-//! place until then.
+//! Op names and output ports, `docs/specs/graph-ir.md` §3.1.6, for structural validation (§4.1
+//! checks 3–4: references to ports, the op exists in the declared opset). The signatures are in the
+//! op catalog ([`crate::catalog`]).
 
-/// The opsets this version supports, with their supported version.
-pub const SUPPORTED_OPSETS: &[(&str, u64)] = &[("core", 1), ("nn", 1)];
-
-/// Every M1 op name (first column of the §3.2 and §3.3 tables), in table order.
-pub const M1_OPS: &[&str] = &[
-    "core.add",
-    "core.sub",
-    "core.mul",
-    "core.div",
-    "core.pow",
-    "core.maximum",
-    "core.minimum",
-    "core.neg",
-    "core.abs",
-    "core.exp",
-    "core.log",
-    "core.sqrt",
-    "core.rsqrt",
-    "core.sin",
-    "core.cos",
-    "core.tanh",
-    "core.clamp",
-    "core.where",
-    "core.eq",
-    "core.ne",
-    "core.lt",
-    "core.le",
-    "core.gt",
-    "core.ge",
-    "core.and",
-    "core.or",
-    "core.not",
-    "core.reshape",
-    "core.flatten",
-    "core.permute",
-    "core.transpose",
-    "core.squeeze",
-    "core.unsqueeze",
-    "core.expand",
-    "core.concat",
-    "core.split",
-    "core.slice",
-    "core.pad",
-    "core.gather",
-    "core.index_select",
-    "core.constant",
-    "core.arange",
-    "core.zeros",
-    "core.ones",
-    "core.full",
-    "core.full_like",
-    "core.sum",
-    "core.mean",
-    "core.max",
-    "core.min",
-    "core.argmax",
-    "core.argmin",
-    "core.matmul",
-    "core.cast",
-    "core.softmax",
-    "core.log_softmax",
-    "core.cumsum",
-    "core.top_k",
-    "nn.linear",
-    "nn.embedding",
-    "nn.conv1d",
-    "nn.conv2d",
-    "nn.max_pool2d",
-    "nn.avg_pool2d",
-    "nn.adaptive_avg_pool2d",
-    "nn.dropout",
-    "nn.batch_norm",
-    "nn.layer_norm",
-    "nn.group_norm",
-    "nn.rms_norm",
-    "nn.relu",
-    "nn.leaky_relu",
-    "nn.gelu",
-    "nn.gelu_tanh",
-    "nn.silu",
-    "nn.sigmoid",
-    "nn.softplus",
-    "nn.mish",
-];
+pub use crate::catalog::SUPPORTED_OPSETS;
 
 /// Whether `op` (a full `opset.op_name`) is an M1 op.
 pub fn is_known_op(op: &str) -> bool {
-    M1_OPS.contains(&op)
+    crate::catalog::lookup(op).is_some()
 }
 
 /// The opset part of a full op name (`nn` for `nn.linear`), if it has one.
@@ -162,17 +77,6 @@ pub(crate) fn ports_of(op: &str, split_sizes: Option<usize>) -> Ports {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn op_list() {
-        assert_eq!(M1_OPS.len(), 78);
-        let unique: std::collections::HashSet<_> = M1_OPS.iter().collect();
-        assert_eq!(unique.len(), 78);
-        for op in M1_OPS {
-            let opset = opset_of(op).unwrap();
-            assert!(SUPPORTED_OPSETS.iter().any(|(s, _)| *s == opset), "{op}");
-        }
-    }
 
     #[test]
     fn ports() {

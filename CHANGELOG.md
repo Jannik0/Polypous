@@ -7,6 +7,25 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `polypous-ir`: the M1 op catalog, dtype inference and symbolic shape inference
+  (`docs/specs/graph-ir.md` §3, §4.1 checks 4, 6–8, #39). `catalog::OPS` has one entry per row of
+  the §3.2/§3.3 tables (inputs with dtype class and rank, params, attributes with type, default and
+  range, output ports with their dtype rule, shape rule, differentiable flag); a test parses the
+  spec tables and another checks every op fixture's output dtypes and shapes. Validation now checks
+  op inputs, params and attributes (types, ranges, axes, `float` only where allowed, dim attributes
+  and their symbols, the `concat`/`split` and `constant` limits), infers every value's dtype
+  (`float` resolved to the compute dtype, strict dtypes) and shape as normal forms (broadcasting,
+  `reshape` with `-1`, conv/pool sizes, clamped `slice` bounds), infers each `repeat` body once and
+  checks carries and state updates (`repeat_carry_mismatch`, `state_update_mismatch`).
+  `Graph::analyze` returns what validation proved for the runtime (resolved dtypes, inferred shapes,
+  normalized attributes, expanded state entries), and `Analysis::bind` binds the symbols for one
+  call (§2.3.4 steps 1–5: input and state checks, `min`/`max`, every inferred dim and dim attribute
+  evaluated with checked arithmetic), with a `BindError` that names the input, symbol or node.
+- graph-ir.md: clarifications from the inference work: body params must have the same shape in
+  every iteration; which code a range error gets (`invalid_attr`, `shape_mismatch`,
+  `nonpositive_dim`, `unbound_dim`); a NaN `clamp` bound is allowed; `squeeze` `dim` is non-empty;
+  `slice` bounds `≤ 1` aren't clamped; `pad`'s default value is the dtype's zero; variadic input
+  errors; the binding order of expanded state.
 - `polypous-backend`: the first IR ops on `DynTensor` (`ops` module, graph-ir.md §3.2, #40):
   elementwise `add sub mul div pow maximum minimum neg abs exp log sqrt rsqrt sin cos tanh clamp`,
   `where_` (`core.where`), comparisons `equal not_equal less less_equal greater greater_equal`, logic
@@ -31,7 +50,7 @@ All notable changes to Polypous are documented here. The format follows
   (versions, names and namespaces, references including `node:port` and `repeat:carry`, cycles, op
   names of the M1 opsets, dim declarations and binding, repeat limits computed without expanding,
   carry keys and state update targets); dim expressions with their normal form, canonical string
-  and equality (§2.3). Dtype and shape inference follow in #39.
+  and equality (§2.3).
 - `polypous-formats`: safetensors reader and writer (`docs/specs/formats.md` §1, #37). Memory-mapped
   reader with a copy fallback that validates the whole header before exposing tensors (100 MB header
   limit, contiguous offsets covering the data buffer, checked sizes, no duplicate keys, rank ≤ 64),

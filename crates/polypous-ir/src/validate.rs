@@ -1,9 +1,9 @@
-//! Structural validation of graph documents, `docs/specs/graph-ir.md` §4.1 checks 2–5, 9 and the
-//! structural parts of 8 (state update targets, `repeat` carry keys).
+//! Validation of graph documents, `docs/specs/graph-ir.md` §4.1.
 //!
-//! Dtype and shape inference (checks 6–7 and the dtype/shape parts of 8) and the per-op signature
-//! checks of check 4 (inputs, params, attrs) need the op catalog and are #39. This pass only knows
-//! op names ([`crate::ops`]).
+//! This module does the structural checks: 2–5, 9 and the structural parts of 8 (state update
+//! targets, `repeat` carry keys). It knows op names only ([`crate::ops`]). The per-op checks of
+//! check 4 (inputs, params, attributes), dtype and shape inference (checks 6–7) and the dtype and
+//! shape parts of check 8 run afterwards in `infer.rs`, with the op catalog ([`crate::catalog`]).
 //!
 //! Resource limits (§4.3) are computed from the unexpanded document with checked arithmetic before
 //! any other check; a repeat is never expanded to count it. Expanded names (param and state names
@@ -33,7 +33,14 @@ pub struct ValidateOptions {
 
 /// Validates a typed graph structurally. Assumes the graph came from conversion (repeat nesting is
 /// bounded); [`Graph::validate`] goes through the canonical JSON to guarantee that.
-pub(crate) fn validate_structure(graph: &Graph, _options: &ValidateOptions) -> ValidationReport {
+///
+/// With `infer`, the op signatures, dtypes and shapes are checked too (`infer.rs`); `load`
+/// skips that for a graph that lost parts in conversion.
+pub(crate) fn validate_structure(
+    graph: &Graph,
+    options: &ValidateOptions,
+    infer: bool,
+) -> ValidationReport {
     let mut v = Validator::new(graph);
     if !v.check_limits() {
         return v.report;
@@ -43,7 +50,12 @@ pub(crate) fn validate_structure(graph: &Graph, _options: &ValidateOptions) -> V
     v.check_params();
     v.check_root();
     v.check_unbound();
-    v.report
+    let mut report = v.report;
+    if infer {
+        let (inferred, _) = crate::infer::run(graph, options);
+        report.diagnostics.extend(inferred.diagnostics);
+    }
+    report
 }
 
 #[derive(Debug, Clone)]

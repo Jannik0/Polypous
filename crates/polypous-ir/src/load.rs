@@ -78,7 +78,7 @@ pub fn load(bytes: &[u8], options: &ValidateOptions) -> LoadOutcome {
             report: cx.report,
         };
     }
-    let structural = validate::validate_structure(&graph, options);
+    let structural = validate::validate_structure(&graph, options, !cx.lossy);
     // A location the conversion already reported (a missing or malformed field) would only repeat
     // the same problem from the placeholder the conversion left there.
     let reported: HashSet<String> = cx
