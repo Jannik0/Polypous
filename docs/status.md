@@ -2,21 +2,21 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-09, M1 in progress (#35–#40 done).
+2026-11-09, M1 in progress (#35–#41 done).
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops). Next: #41–#43 (remaining op families, one at a time), then #44 (interpreter) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops). Next: #42 and #43 (remaining op families, one at a time), then #44 (interpreter) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
 ## 2. What exists after M0
 
 | Crate | State |
 |---|---|
-| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40), with a fixture-based reference harness that runs every case on every device and dtype |
+| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40); shape, indexing (out-of-range indices checked before the op runs) and creation ops (#41), with a fixture-based reference harness that runs every case on every device and dtype |
 | `polypous` (facade) | Real code. `Engine`, `EngineConfig`, facade device types (`DeviceInfo` with `physical_gpu` and `primary`), probe API (`polypous::probe`), `Error`/`ErrorKind`, panics caught at the boundary |
 | `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json` |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
@@ -27,7 +27,7 @@ this file when a milestone closes or when a known limitation is fixed or found. 
 Specs that describe implemented behavior: [placement.md §1](specs/placement.md#1-device-discovery)
 (discovery, probing, cache, fingerprints, enumeration rules), [public-api.md §1.1, §1.2, §2](specs/public-api.md)
 and [formats.md §1](specs/formats.md) (safetensors). [graph-ir.md](specs/graph-ir.md) is binding for M1 as its
-status line says: validation and inference are implemented (#38, #39), the backend ops in part (#40), the interpreter not yet. All other specs are drafts until their milestone starts.
+status line says: validation and inference are implemented (#38, #39), the backend ops in part (#40, #41), the interpreter not yet. All other specs are drafts until their milestone starts.
 
 CI (`.github/workflows/`): seven checks. Six are required by the `main` ruleset:
 - Lint & test (Linux)
@@ -75,6 +75,7 @@ Nothing here blocks M1. Fix an item when its area is touched, or file an issue f
   - CubeCL's `powf` polyfill falls back to the native pow (`GLSL.std.450 Pow` on SPIR-V, undefined for some inputs), which is wrong for `1^NaN`, `NaN^0`, `0^0` and `0^-1` on lavapipe. Explicit C99 special cases.
   - CubeCL's f16 `tanh` missed `rtol 1e-2` near zero on lavapipe. f16/bf16 transcendentals and `pow` compute in f32 on every backend.
   - On the reference machine (Windows, NVIDIA 621.14, Intel 32.0.101.7092): Intel's Vulkan driver returns `pow(|a|, b)` for a negative base with a non-integer exponent (GLSL `pow` is undefined there). `pow` sets NaN explicitly for it. Both Vulkan drivers flush f32 subnormals to zero in comparisons. Subnormals are backend-defined (graph-ir.md §3.1.8, owner decision), and fixtures contain none.
+  - Found with #41 (PR 57): out-of-range indices in `gather`/`select` make `flex` panic, and on lavapipe they read out of bounds (wrong values; `select` with `-1` crashed the process with SIGSEGV). Polypous checks indices before every indexing op (one min/max read-back, one device sync on GPUs). `flex` also returns `gather`/`select` of a bool tensor in `u8` storage, which can't be read back as bool; bool indexing runs as `i32` on every backend.
   - The owner follows these up in Burn and CubeCL upstream, outside this repository.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
