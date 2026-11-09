@@ -1,0 +1,52 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "opsets": { "core": 1, "nn": 1 },
+  "name": "many-ops",
+  "dims": { "batch": { "min": 1, "max": 32 }, "H": { "min": 8 }, "W": { "min": 8 }, "seq": {}, "past": {} },
+  "inputs": [
+    { "name": "image", "dtype": "float", "shape": ["batch", 3, "H", "W"] },
+    { "name": "tokens", "dtype": "i64", "shape": ["batch", "seq"] },
+    { "name": "mask", "dtype": "bool", "shape": ["batch", 1, "seq"] }
+  ],
+  "outputs": [
+    { "name": "logits", "value": "head" },
+    { "name": "top", "value": "top:indices" },
+    { "name": "mixed", "value": "mixed" },
+    { "name": "tail", "value": "parts:1" }
+  ],
+  "params": [
+    { "name": "conv.weight", "dtype": "float", "shape": [8, 3, 3, 3] },
+    { "name": "conv.bias", "dtype": "float", "shape": [8] },
+    { "name": "gn.weight", "dtype": "float", "shape": [8] },
+    { "name": "embed.weight", "dtype": "float", "shape": [100, 16] },
+    { "name": "ln.weight", "dtype": "float", "shape": [16] },
+    { "name": "head.weight", "dtype": "float", "shape": [10, 8] }
+  ],
+  "state": [ { "name": "cache", "dtype": "float", "shape": ["batch", "past", 16] } ],
+  "nodes": [
+    { "id": "conv", "op": "nn.conv2d", "inputs": { "x": "image" },
+      "params": { "weight": "conv.weight", "bias": "conv.bias" }, "attrs": { "stride": [2, 2], "padding": [1, 1] } },
+    { "id": "gn", "op": "nn.group_norm", "inputs": { "x": "conv" }, "params": { "weight": "gn.weight" },
+      "attrs": { "num_groups": 4, "eps": 1e-5 } },
+    { "id": "act", "op": "nn.silu", "inputs": { "x": "gn" } },
+    { "id": "pool", "op": "nn.adaptive_avg_pool2d", "inputs": { "x": "act" }, "attrs": { "output_size": [1, 1] } },
+    { "id": "flat", "op": "core.flatten", "inputs": { "x": "pool" }, "attrs": { "start_dim": 1 } },
+    { "id": "head", "op": "nn.linear", "inputs": { "x": "flat" }, "params": { "weight": "head.weight" } },
+    { "id": "top", "op": "core.top_k", "inputs": { "x": "head" }, "attrs": { "k": 3, "dim": -1, "dtype": "i32" } },
+    { "id": "embed", "op": "nn.embedding", "inputs": { "ids": "tokens" }, "params": { "weight": "embed.weight" } },
+    { "id": "ctx", "op": "core.concat", "inputs": { "xs": ["cache", "embed"] }, "attrs": { "dim": 1 } },
+    { "id": "ln", "op": "nn.layer_norm", "inputs": { "x": "ctx" }, "params": { "weight": "ln.weight" } },
+    { "id": "last", "op": "core.slice", "inputs": { "x": "ln" }, "attrs": { "dim": 1, "start": -1 } },
+    { "id": "scores", "op": "core.matmul", "inputs": { "a": "last", "b": "keys" } },
+    { "id": "keys", "op": "core.transpose", "inputs": { "x": "embed" }, "attrs": { "dim0": 1, "dim1": 2 } },
+    { "id": "neg", "op": "core.full_like", "inputs": { "x": "scores" }, "attrs": { "value": "-inf" } },
+    { "id": "masked", "op": "core.where", "inputs": { "cond": "mask", "a": "scores", "b": "neg" } },
+    { "id": "probs", "op": "core.softmax", "inputs": { "x": "masked" }, "attrs": { "dim": -1 } },
+    { "id": "pos", "op": "core.arange", "attrs": { "end": "seq", "dtype": "float" } },
+    { "id": "pos2", "op": "core.reshape", "inputs": { "x": "pos" }, "attrs": { "shape": [1, 1, -1] } },
+    { "id": "mixed", "op": "core.mul", "inputs": { "a": "probs", "b": "pos2" } },
+    { "id": "padded", "op": "core.pad", "inputs": { "x": "mixed" }, "attrs": { "pad": [0, 2] } },
+    { "id": "parts", "op": "core.split", "inputs": { "x": "padded" }, "attrs": { "dim": -1, "sizes": ["seq", 2] } }
+  ]
+}

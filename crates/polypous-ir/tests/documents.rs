@@ -5,11 +5,12 @@
 
 use polypous_ir::json::Value;
 use polypous_ir::model::{Dim, NodeKind};
-use polypous_ir::{ErrorCode, Graph, ValidateOptions, load};
+use polypous_ir::{ErrorCode, Graph, TensorDesc, ValidateOptions, load};
 use serde_json::json;
 
 const MLP: &str = include_str!("data/mlp.graph.json");
 const REPEAT: &str = include_str!("data/repeat.graph.json");
+const OPS: &str = include_str!("data/ops.graph.json");
 
 fn opts() -> ValidateOptions {
     ValidateOptions::default()
@@ -861,13 +862,20 @@ fn too_many_param_bindings() {
 
 #[test]
 fn too_many_elements() {
+    // An unused param, so that no node's shape checks see it.
     let mut doc = mlp();
-    doc["params"][0]["shape"] = json!([1u64 << 32, 1u64 << 32, 1u64 << 32]);
-    assert_only(&doc, ErrorCode::TooManyElements, "/params/0/shape");
+    doc["params"].as_array_mut().unwrap().push(
+        json!({ "name": "unused", "dtype": "float", "shape": [1u64 << 32, 1u64 << 32, 1u64 << 32] }),
+    );
+    assert_only(&doc, ErrorCode::TooManyElements, "/params/4/shape");
     let mut doc = mlp();
     let big = json!([1u64 << 32, 1u64 << 31]); // 2^63 elements each
-    doc["params"][0]["shape"] = big.clone();
-    doc["params"][1]["shape"] = big;
+    for name in ["big0", "big1"] {
+        doc["params"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "name": name, "dtype": "float", "shape": big }));
+    }
     assert_only(&doc, ErrorCode::TooManyElements, "/params");
 }
 
@@ -959,10 +967,23 @@ fn validation_never_panics() {
         "\"\"",
         "9223372036854775808",
         "\"core.split\"",
+        "\"-inf\"",
+        "\"nan\"",
+        "\"seq - 3\"",
+        "[-1, 2]",
+        "[0, 0]",
+        "\"i32\"",
+        "\"core.concat\"",
+        "\"nn.conv2d\"",
+        "-9223372036854775808",
     ];
     let mut rng = Rng(0x5eed_1234_abcd_ef01);
     let start = std::time::Instant::now();
-    let docs = [MLP.as_bytes().to_vec(), REPEAT.as_bytes().to_vec()];
+    let docs = [
+        MLP.as_bytes().to_vec(),
+        REPEAT.as_bytes().to_vec(),
+        OPS.as_bytes().to_vec(),
+    ];
     let mut runs = 0;
     for doc in &docs {
         // Every truncation point (stepping to keep the time bounded).
@@ -971,8 +992,8 @@ fn validation_never_panics() {
             runs += 1;
         }
     }
-    for _ in 0..3000 {
-        let mut d = docs[rng.below(2)].clone();
+    for _ in 0..4500 {
+        let mut d = docs[rng.below(docs.len())].clone();
         for _ in 0..1 + rng.below(4) {
             let pos = rng.below(d.len() + 1);
             match rng.below(4) {
@@ -999,10 +1020,13 @@ fn validation_never_panics() {
             // A converted graph saves and reloads to the same graph.
             let again = load(g.to_json().as_bytes(), &opts());
             assert_eq!(again.graph.as_ref(), Some(&g));
+            if out.report.is_ok() {
+                bind_randomly(&g, &mut rng);
+            }
         }
         runs += 1;
     }
-    assert!(runs > 3000);
+    assert!(runs > 4500);
     assert!(
         start.elapsed().as_secs() < 60,
         "fuzz test took {:?}",
@@ -1057,4 +1081,188 @@ fn dim_parser_never_panics() {
             }
         }
     }
+}
+
+/// Analyzes a valid graph and binds random concrete shapes; must never panic.
+fn bind_randomly(g: &Graph, rng: &mut Rng) {
+    let Ok(a) = g.analyze(&opts()) else {
+        panic!("a graph that validates must analyze");
+    };
+    const SIZES: &[usize] = &[1, 2, 3, 7, 16, 1 << 31, usize::MAX];
+    let shapes: Vec<Vec<usize>> = a
+        .inputs
+        .iter()
+        .chain(&a.state)
+        .map(|v| {
+            v.info
+                .shape
+                .iter()
+                .map(|d| match d.as_literal() {
+                    Some(l) if rng.below(4) > 0 => l as usize,
+                    _ => SIZES[rng.below(SIZES.len())],
+                })
+                .collect()
+        })
+        .collect();
+    let mut given = Vec::new();
+    for (v, s) in a.inputs.iter().chain(&a.state).zip(&shapes) {
+        given.push((
+            v.name.as_str(),
+            TensorDesc {
+                dtype: v.info.dtype,
+                shape: s,
+            },
+        ));
+    }
+    let (inputs, state) = given.split_at(a.inputs.len());
+    let _ = a.bind(inputs, state);
+}
+
+/// Random JSON values that look like attribute values.
+fn random_attr(rng: &mut Rng, depth: usize) -> serde_json::Value {
+    const SCALARS: &[&str] = &[
+        "0",
+        "1",
+        "2",
+        "3",
+        "-1",
+        "-2",
+        "-7",
+        "7",
+        "1024",
+        "1025",
+        "65537",
+        "4294967297",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "0.5",
+        "1e-5",
+        "-0.0",
+        "1e300",
+        "\"inf\"",
+        "\"-inf\"",
+        "\"nan\"",
+        "true",
+        "false",
+        "null",
+        "\"batch\"",
+        "\"seq\"",
+        "\"batch * seq\"",
+        "\"seq - 3\"",
+        "\"min(seq, 2)\"",
+        "\"(seq + 1) // 2\"",
+        "\"seq * seq * seq * seq * seq * seq * seq * seq\"",
+        "\"9223372036854775807 * seq\"",
+        "\"undeclared\"",
+        "\"unbound\"",
+        "\"((\"",
+        "\"float\"",
+        "\"f16\"",
+        "\"i32\"",
+        "\"bool\"",
+        "\"constant\"",
+        "{}",
+    ];
+    if depth < 2 && rng.below(3) == 0 {
+        let n = rng.below(8);
+        return serde_json::Value::Array((0..n).map(|_| random_attr(rng, depth + 1)).collect());
+    }
+    serde_json::from_str(SCALARS[rng.below(SCALARS.len())]).unwrap()
+}
+
+/// Random one- and two-node graphs over the whole catalog, with random dtypes, shapes, params and
+/// attributes: validation, analysis and binding never panic.
+#[test]
+fn op_graphs_never_panic() {
+    use polypous_ir::catalog;
+    const DTYPES: &[&str] = &["f32", "f16", "bf16", "i64", "i32", "bool", "float"];
+    const DIMS: &[&str] = &["1", "2", "3", "4", "8", "\"batch\"", "\"seq\""];
+    let mut rng = Rng(0x0dd5_eed5_0f0f_1234);
+    let start = std::time::Instant::now();
+    let mut valid = 0;
+    for _ in 0..6000 {
+        let op = &catalog::OPS[rng.below(catalog::OPS.len())];
+        let shape = |rng: &mut Rng| -> serde_json::Value {
+            let r = 1 + rng.below(6);
+            serde_json::Value::Array(
+                (0..r)
+                    .map(|_| serde_json::from_str(DIMS[rng.below(DIMS.len())]).unwrap())
+                    .collect(),
+            )
+        };
+        let mut inputs = Vec::new();
+        let mut node_inputs = serde_json::Map::new();
+        for (k, i) in op.inputs.iter().enumerate() {
+            let s = shape(&mut rng);
+            let name = format!("in{k}");
+            inputs.push(
+                json!({ "name": name, "dtype": DTYPES[rng.below(DTYPES.len())], "shape": s }),
+            );
+            if i.variadic {
+                let n = 1 + rng.below(3);
+                node_inputs.insert(i.name.into(), json!(vec![name; n]));
+            } else if rng.below(20) > 0 {
+                node_inputs.insert(i.name.into(), json!(name));
+            }
+        }
+        // Sometimes the same symbols, sometimes the inputs share a shape.
+        if inputs.len() > 1 && rng.below(2) == 0 {
+            let s = inputs[0]["shape"].clone();
+            for i in inputs.iter_mut() {
+                i["shape"] = s.clone();
+            }
+        }
+        let mut params = Vec::new();
+        let mut node_params = serde_json::Map::new();
+        for (k, p) in op.params.iter().enumerate() {
+            if p.optional && rng.below(2) == 0 {
+                continue;
+            }
+            let r = 1 + rng.below(4);
+            let s: Vec<i64> = (0..r).map(|_| [1, 2, 3, 4, 8][rng.below(5)]).collect();
+            let name = format!("p{k}");
+            params.push(json!({ "name": name, "dtype": "float", "shape": s }));
+            node_params.insert(p.name.into(), json!(name));
+        }
+        let mut attrs = serde_json::Map::new();
+        for a in op.attrs {
+            if rng.below(3) > 0 {
+                attrs.insert(a.name.into(), random_attr(&mut rng, 0));
+            }
+        }
+        if rng.below(20) == 0 {
+            attrs.insert("bogus".into(), json!(1));
+        }
+        let port = match op.outputs {
+            catalog::Outputs::Fixed(o) => o[rng.below(o.len())].name.to_owned(),
+            catalog::Outputs::Split => rng.below(3).to_string(),
+        };
+        let mut nodes = vec![json!({ "id": "n", "op": op.name, "inputs": node_inputs,
+            "params": node_params, "attrs": attrs })];
+        let mut out = format!("n:{port}");
+        if rng.below(2) == 0 {
+            // A second node that uses the first.
+            nodes.push(json!({ "id": "m", "op": "core.add", "inputs": { "a": out, "b": out } }));
+            out = "m".into();
+        }
+        let doc = json!({
+            "format": "polypous.graph", "format_version": 1, "opsets": { "core": 1, "nn": 1 },
+            "dims": { "batch": { "max": 64 }, "seq": {}, "unbound": {} },
+            "inputs": inputs, "params": params,
+            "outputs": [ { "name": "y", "value": out } ],
+            "nodes": nodes
+        });
+        let outcome = load(doc.to_string().as_bytes(), &opts());
+        if let (Some(g), true) = (outcome.graph, outcome.report.is_ok()) {
+            bind_randomly(&g, &mut rng);
+            valid += 1;
+        }
+    }
+    // The generator hits valid graphs too, so analysis and binding are exercised.
+    assert!(valid > 100, "only {valid} valid graphs");
+    assert!(
+        start.elapsed().as_secs() < 60,
+        "fuzz test took {:?}",
+        start.elapsed()
+    );
 }

@@ -452,6 +452,34 @@ impl DimExpr {
         Ok(DimExpr::atom(kind))
     }
 
+    /// `self / divisor` if the division is exact on normal forms (`docs/specs/graph-ir.md` §3.2,
+    /// `reshape` note): `divisor` is a single term `c * m` with `c ≠ 0`, and every term of `self` is
+    /// a multiple of it (its coefficient is divisible by `c` and its monomial contains the atoms of
+    /// `m`). Returns `None` otherwise, or `Some(Err(_))` if the quotient breaks a limit.
+    pub fn exact_div(&self, divisor: &DimExpr) -> Option<Result<DimExpr, DimError>> {
+        let [d] = divisor.terms.as_slice() else {
+            return None;
+        };
+        let mut terms = Vec::with_capacity(self.terms.len());
+        for t in &self.terms {
+            // `d.coeff` is never 0 (normal form) and never i64::MIN (excluded by `collect`), so
+            // `%` and `/` can't panic or overflow.
+            if t.coeff % d.coeff != 0 {
+                return None;
+            }
+            let mut atoms = t.mono.atoms.clone();
+            for a in &d.mono.atoms {
+                let pos = atoms.iter().position(|b| b == a)?;
+                atoms.remove(pos);
+            }
+            terms.push(Term {
+                coeff: t.coeff / d.coeff,
+                mono: Monomial::new(atoms),
+            });
+        }
+        Some(collect(terms))
+    }
+
     fn atom(kind: AtomKind) -> DimExpr {
         DimExpr {
             terms: vec![Term {
@@ -789,6 +817,20 @@ mod tests {
 
     fn canon(s: &str) -> String {
         p(s).to_string()
+    }
+
+    #[test]
+    fn exact_division() {
+        let div = |a: &str, b: &str| p(a).exact_div(&p(b)).map(|r| r.unwrap().to_string());
+        assert_eq!(div("batch*seq*64", "64").as_deref(), Some("batch*seq"));
+        assert_eq!(div("batch*seq*64", "batch*16").as_deref(), Some("4*seq"));
+        assert_eq!(div("6*b*s + 12*b", "3*b").as_deref(), Some("2*s + 4"));
+        assert_eq!(div("b*b*s", "b").as_deref(), Some("b*s"));
+        assert_eq!(div("b*s + 1", "b"), None);
+        assert_eq!(div("6*b", "4"), None);
+        assert_eq!(div("b*s", "s + 1"), None);
+        assert_eq!(div("b*s", "0"), None);
+        assert_eq!(div("0", "b").as_deref(), Some("0"));
     }
 
     #[test]

@@ -41,3 +41,7 @@ pub const MAX_DIMS: usize = 256;
 pub const MAX_GRAPH_IO: usize = 4_096;
 /// Maximum literal dim (2^32).
 pub const MAX_LITERAL_DIM: i64 = 1 << 32;
+/// Maximum number of `core.concat` inputs and of `core.split` sizes (outputs).
+pub const MAX_CONCAT_SPLIT: usize = 1024;
+/// Maximum number of `core.constant` elements.
+pub const MAX_CONSTANT_ELEMENTS: u64 = 65_536;

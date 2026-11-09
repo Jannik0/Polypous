@@ -233,7 +233,9 @@ On each call, before any node runs, the runtime:
    compute dtype, §2.2), declared rank.
 2. Binds symbols: a plain-symbol dim of an input or state value (inputs in declaration order, then
    state, dims left to right) binds the symbol on its first occurrence. Every later occurrence must
-   have the same value. Literal dims must match exactly.
+   have the same value. Literal dims must match exactly. State means every root-level entry after
+   expanding repeats: root state in declaration order, then body state depth-first in node order,
+   iteration by iteration (`layers.0.k`, `layers.0.v`, `layers.1.k`, …).
 3. Checks every bound value against the symbol's declared `min`/`max`.
 4. Evaluates the expression dims of state shapes and compares them with the given state values.
 5. Evaluates every inferred dim and every dim attribute of every node with checked `i64`
@@ -332,6 +334,9 @@ The runtime keeps state per **session** and places it on the device of the block
   (`duplicate_name`), so a name never shadows another. Outside the body, only
   `"<repeat id>:<carry name>"` refers to the final carried value; the repeat node has no `out` port.
 - Repeats may nest (at most 8 levels). Prefixes of nested repeats concatenate, outer first.
+- Validation infers a body **once**, for all iterations. So a body param must have the same shape
+  in every iteration: if `params_prefix(i) + n` differs in shape between iterations, the node is
+  `shape_mismatch` (naming the param and the iteration).
 - Expanded names follow the naming rules: `params_prefix(i) + n` is a parameter name (≤ 256 bytes)
   and must be declared in `params` for every iteration, and `state_prefix(i) + n` is a state name
   (≤ 128 bytes) that must be unique among all root-level state names after expansion.
@@ -474,7 +479,17 @@ The rule "every dim ≥ 1" of §2.3 is for shapes. A `dim` attribute has the ran
 negative literals).
 
 A wrong JSON type, a value outside the listed range, an unknown enum value or a wrong list length is
-`invalid_attr`.
+`invalid_attr`. More precisely, for the codes of §4.2:
+- An attribute outside its own range (`pad` entry `< 0`, `top_k` `k < 1`, a `reshape` entry `0`) is
+  `invalid_attr`. A literal bound that is out of range for an input dim (`top_k` `k` above the dim
+  size, a negative `slice` bound below `-n`) is `shape_mismatch`. An inferred dim that folds to a
+  literal `≤ 0` (an empty `slice`, a conv output) is `nonpositive_dim`.
+- A `dim` attribute that uses an undeclared symbol is `invalid_dim_expr`; one that uses a declared
+  symbol that no input or state shape binds is `unbound_dim`.
+- A `dim` attribute with symbols whose range validation can't decide (for example `slice`
+  `start ≥ 0` for `"seq - 4"`) is checked by the runtime after binding (§2.3.4 step 5).
+- A missing required attribute is `missing_attr`, also where a rule asks for one of several
+  (`clamp` without `min` and `max` reports `min`).
 
 #### 3.1.8 Numerics
 
@@ -547,8 +562,9 @@ Binary ops broadcast `a` and `b` (§3.1.3). Their output shape is the broadcast 
   floor) and PyTorch's `torch.div` of integers returns a float, which the strict dtype rule
   forbids. Graphs that need it cast to a float dtype first.
 - `pow`: the exponent is a tensor. For `x²`, use a `[1]` constant and broadcasting, or `mul(x, x)`.
-- `clamp`: at least one of `min` and `max` is required. If both are given, `min ≤ max`
-  (`invalid_attr` otherwise; PyTorch's result for `min > max` is surprising).
+- `clamp`: at least one of `min` and `max` is required. If both are given, `min > max` is
+  `invalid_attr` (PyTorch's result for it is surprising). A NaN bound is allowed (it compares
+  false, so it is not `min > max`); the result is NaN (§3.1.8).
 
 #### Comparison and logic
 
@@ -589,8 +605,9 @@ All inputs `x`: `A`, outputs `T`. Differentiable for float `x`.
   the product of the other entries must be a single term `c * m` that divides every term of the
   input's element count. Otherwise (and if the element counts are not provably equal)
   `shape_mismatch`.
-- `squeeze`: with `dim`, every listed dim must be the literal `1` (`invalid_attr` otherwise; PyTorch
-  silently keeps non-1 dims, but a symbolic dim can't be decided at validation). Without `dim`, every
+- `squeeze`: `dim`, if given, is non-empty (as for the reductions). With `dim`, every listed dim must
+  be the literal `1` (`invalid_attr` otherwise; PyTorch silently keeps non-1 dims, but a symbolic
+  dim can't be decided at validation). Without `dim`, every
   literal-`1` dim is removed; symbolic dims are never removed, even if they bind to `1`. If every dim
   is removed, the result is `[1]`.
 - `expand`: right-aligned against `x.shape`, new leading dims allowed. An entry `-1` keeps the input
@@ -600,8 +617,13 @@ All inputs `x`: `A`, outputs `T`. Differentiable for float `x`.
   expressions are never negative (`InvalidInput` at runtime if one evaluates below 0). Missing `end`
   means `n`. As in PyTorch, `start` and `end` are clamped to `n`. The output dim is
   `(min(end, n) - min(start, n) + step - 1) // step`, which must be ≥ 1.
+  A negative literal below `-n` is `shape_mismatch` when `n` is a literal. A literal bound `≤ 1`
+  needs no clamp (every dim is `≥ 1`), so inference writes `min(v, n)` only for other bounds:
+  slicing `[seq]` with `end: -1` gives `seq - 1`, not an opaque `min`.
 - `pad`: as in `F.pad`, `pad` lists `(left, right)` pairs starting from the **last** dim. Entries are
   ≥ 0 (no cropping). Each padded dim becomes `d + left + right`. M1 supports only `mode: "constant"`.
+  The default `value` `0` means the zero of `x`'s dtype (`false` for `bool`); a given `value`
+  follows the `scalar` rule of §3.1.7.
 
 #### Indexing
 
@@ -804,7 +826,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 
 | Code | Raised when |
 |---|---|
-| `invalid_json` | The document isn't valid UTF-8 JSON, a field has the wrong JSON type, or an object has a duplicate key (anywhere, `meta` included; JSON parsers disagree on which value wins) |
+| `invalid_json` | The document isn't valid UTF-8 JSON, a field has the wrong JSON type (including a single reference for a variadic input, or an array for a non-variadic one), or an object has a duplicate key (anywhere, `meta` included; JSON parsers disagree on which value wins) |
 | `document_too_large` | The document exceeds the size limit or the JSON value limit (§4.3) |
 | `json_too_deep` | JSON nesting exceeds the depth limit |
 | `string_too_long` | A JSON string exceeds its length limit |
@@ -812,7 +834,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `unsupported_opset` | An opset in `opsets` is unknown or its version isn't supported |
 | `unknown_field` | A field that the schema doesn't define (except inside `meta`) |
 | `missing_field` | A required field is missing (for example a node's `op`, a param's `shape`) |
-| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, `min`/`max` of a dim, an empty shape, a literal dim above 2^32, an expression where §2.3 allows only literals or plain symbols, no `outputs`), or a list exceeds its §4.3 limit (`dims`, inputs, outputs, state entries) |
+| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, `min`/`max` of a dim, an empty shape, a literal dim above 2^32, an expression where §2.3 allows only literals or plain symbols, no `outputs`), or a list exceeds its §4.3 limit (`dims`, inputs, outputs, state entries, the references of a variadic input: 1–1,024) |
 | `invalid_name` | A name or id breaks the naming rules (§2.1, §2.3.1) |
 | `duplicate_name` | Two values, params, dims, state entries or outputs share a name |
 | `unknown_reference` | A reference to an undeclared value, port, param, state entry or dim symbol (a shape entry that is a plain symbol; an undeclared symbol inside a longer expression is `invalid_dim_expr`) |
@@ -820,7 +842,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `cycle` | The nodes form a cycle |
 | `unknown_op` | The op isn't in the catalog of the declared opset version, or its opset isn't declared |
 | `unsupported_in_version` | A feature that this version specifies but doesn't implement: `functions`, `call`, non-`float` params |
-| `missing_input` / `missing_param` / `missing_attr` | A required op input, param or attribute is absent |
+| `missing_input` / `missing_param` / `missing_attr` | A required op input, param or attribute is absent (reported at the node, with the input, param or attribute as the item) |
 | `unknown_input` / `unknown_param` / `unknown_attr` | The op defines no input, param or attribute of that name |
 | `invalid_attr` | An attribute has the wrong type, is out of range, has a wrong list length, or is an invalid axis (§3.1.4, §3.1.7) |
 | `unsupported_dtype` | An input's or param's dtype is outside the op's allowed class |
