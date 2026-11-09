@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "op": "core.arange",
+  "case": "large_f32",
+  "description": "f32: below 2^24: still exact.",
+  "attributes": {
+    "start": 16777200,
+    "end": 16777216,
+    "step": 4,
+    "dtype": "f32"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.arange(start, end, step, dtype=dtype)",
+  "notes": "",
+  "seed": 1215,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

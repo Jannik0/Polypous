@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.reshape",
+  "case": "strided_bool",
+  "description": "bool [4, 3]: a stepped slice, then reshape to [3, 4].",
+  "attributes": {
+    "shape": [
+      3,
+      4
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bool",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.reshape(x, shape)",
+  "notes": "x is fed as a stepped slice view (every second row along dim 0, from row 1).",
+  "seed": 311,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

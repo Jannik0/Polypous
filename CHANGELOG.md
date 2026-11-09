@@ -38,6 +38,21 @@ All notable changes to Polypous are documented here. The format follows
 - Op reference tests for these ops against PyTorch fixtures on the CPU and on every GPU device
   (`tests/reference_*.rs`, shared harness in `tests/reference/common.rs`), with fixture cases for
   every op in `fixtures/small/ops/` (`tools/reference/gen_ops.py`).
+- `polypous-backend`: shape, indexing and creation ops on `DynTensor` (graph-ir.md §3.2, #41):
+  `reshape` (moved into `ops`) `flatten permute transpose squeeze unsqueeze expand concat split
+  slice pad`, `gather index_select`, and `constant arange zeros ones full full_like` (associated
+  functions with a `DeviceId`). Plain, normalized arguments; every bad argument is a typed error
+  (no panics, sizes checked before allocating, zero-size results refused, §4.3 list limits).
+  Out-of-range `gather`/`index_select` indices are checked before the op runs and give the new
+  `TensorError::IndexOutOfRange` (Burn 0.22.1 panics on the CPU and reads stray memory, or crashes,
+  on Vulkan). `pad` and every op work for every dtype, including `bool`. Fill values follow
+  §3.1.7 and round through f32 to f16/bf16 like PyTorch.
+- Reference fixtures for these ops (190 cases: every op × every allowed dtype, rank 1 and 6,
+  size-1 dims, negative axes and `slice` bounds, steps > 1, `i32` and `i64` indices, and inputs fed
+  as permuted, transposed, expanded and stepped-slice views), `tests/reference_shape.rs`,
+  `reference_indexing.rs` (with out-of-range checks on every device) and `reference_creation.rs`.
+  The harness gains integer and list attribute getters, a runner that passes the device to
+  creation ops, and `feed_layout` for non-contiguous inputs; existing tests are unchanged.
 - graph-ir.md §3.1.8: subnormal float values are backend-defined (a device may flush them to
   zero). Fixtures contain none; `tools/ci/check_fixtures.py` rejects them.
 - `polypous-ir`: graph document model, canonical JSON and structural validation

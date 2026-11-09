@@ -2,7 +2,8 @@
 //!
 //! Each op family has its own test binary, `tests/reference_<family>.rs`, which includes this
 //! file with `#[path = "reference/common.rs"] mod common;` and gives [`run_cpu`] / [`run_gpu`] a
-//! function that runs one case. The harness:
+//! function that runs one case ([`run_cpu_on`] / [`run_gpu_on`] for ops that also need the device,
+//! such as the creation ops). The harness:
 //!
 //! - loads every `.json` sidecar of `fixtures/small/ops/<op>/` and the safetensors file next to it
 //!   through `polypous-formats`. A missing directory, an empty one or a missing tensor file is a
@@ -15,6 +16,10 @@
 //!   `--nocapture` to see them.
 //! - compares each output with the sidecar tolerance exactly as testing-strategy.md §3.2 defines
 //!   it, and on failure prints the max abs/rel error and the worst element's index.
+//!
+//! A run function may call [`feed_layout`] to get the first input of a case as a non-contiguous
+//! view (permuted, transposed, expanded or a stepped slice) when the case name asks for one
+//! ([`Layout`]); the sidecar and fixture stay plain.
 
 #![allow(
     dead_code,
@@ -70,7 +75,22 @@ impl Case {
     /// number or `"nan"`/`"inf"`/`"-inf"` is [`Scalar::Float`], a bool is [`Scalar::Bool`].
     pub fn scalar(&self, name: &str) -> Option<Scalar> {
         let value = self.attributes.get(name)?;
-        Some(match value {
+        Some(self.parse_scalar(name, value))
+    }
+
+    /// A `scalar[]` attribute (`core.constant` `values`), each entry as in [`Case::scalar`].
+    pub fn scalars(&self, name: &str) -> Option<Vec<Scalar>> {
+        let values = self.attributes.get(name)?.as_array().unwrap_or_else(|| {
+            panic!(
+                "{}/{}: attribute {name} is not an array",
+                self.op, self.name
+            )
+        });
+        Some(values.iter().map(|v| self.parse_scalar(name, v)).collect())
+    }
+
+    fn parse_scalar(&self, name: &str, value: &Value) -> Scalar {
+        match value {
             Value::Bool(b) => Scalar::Bool(*b),
             Value::Number(n) => match n.as_i64() {
                 Some(i) => Scalar::Int(i),
@@ -89,7 +109,32 @@ impl Case {
                 "{}/{}: bad scalar attribute {name}: {other}",
                 self.op, self.name
             ),
-        })
+        }
+    }
+
+    /// An `int` (or literal `dim`) attribute.
+    pub fn int(&self, name: &str) -> Option<i64> {
+        let value = self.attributes.get(name)?;
+        Some(value.as_i64().unwrap_or_else(|| {
+            panic!(
+                "{}/{}: attribute {name} is not an integer: {value}",
+                self.op, self.name
+            )
+        }))
+    }
+
+    /// An `int[]` (or literal `dim[]`) attribute.
+    pub fn ints(&self, name: &str) -> Option<Vec<i64>> {
+        let value = self.attributes.get(name)?;
+        let list = value
+            .as_array()
+            .and_then(|a| a.iter().map(Value::as_i64).collect());
+        Some(list.unwrap_or_else(|| {
+            panic!(
+                "{}/{}: attribute {name} is not an integer list: {value}",
+                self.op, self.name
+            )
+        }))
     }
 
     /// A `dtype` attribute.
@@ -203,6 +248,9 @@ fn load_case(op: &str, sidecar: &Path) -> Case {
 /// Runs one case: inputs (on the device under test) in, outputs out.
 pub type RunCase = fn(&Case, Vec<DynTensor>) -> Result<Vec<DynTensor>, TensorError>;
 
+/// Like [`RunCase`], with the device under test, for ops that create tensors (`core.zeros`, …).
+pub type RunCaseOn = fn(&Case, Vec<DynTensor>, DeviceId) -> Result<Vec<DynTensor>, TensorError>;
+
 /// Runs every case of `op` on the CPU.
 pub fn run_cpu(op: &str, run: RunCase) {
     run_on(op, &[DeviceId::Cpu], run);
@@ -210,13 +258,29 @@ pub fn run_cpu(op: &str, run: RunCase) {
 
 /// Runs every case of `op` on every GPU device of every compiled-in GPU backend.
 pub fn run_gpu(op: &str, run: RunCase) {
+    run_gpu_with(op, &move |case, inputs, _| run(case, inputs));
+}
+
+/// [`run_cpu`] for a [`RunCaseOn`].
+pub fn run_cpu_on(op: &str, run: RunCaseOn) {
+    run_with(op, &[DeviceId::Cpu], &run);
+}
+
+/// [`run_gpu`] for a [`RunCaseOn`].
+pub fn run_gpu_on(op: &str, run: RunCaseOn) {
+    run_gpu_with(op, &run);
+}
+
+fn run_gpu_with(op: &str, run: &Runner) {
     let devices = gpu_devices();
     if devices.is_empty() {
         eprintln!("SKIP {op}: no GPU device to test (see the messages above)");
         return;
     }
-    run_on(op, &devices, run);
+    run_with(op, &devices, run);
 }
+
+type Runner = dyn Fn(&Case, Vec<DynTensor>, DeviceId) -> Result<Vec<DynTensor>, TensorError>;
 
 /// Every listed GPU device, without software rasterizers unless `POLYPOUS_TEST_SOFTWARE_VULKAN=1`.
 /// Panics if a GPU backend is compiled in but lists no device at all.
@@ -252,6 +316,10 @@ struct Tally {
 
 /// Runs every case of `op` on `devices` and fails the test if any case fails.
 pub fn run_on(op: &str, devices: &[DeviceId], run: RunCase) {
+    run_with(op, devices, &move |case, inputs, _| run(case, inputs));
+}
+
+fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
     let cases = load_cases(op);
     let mut failures = Vec::new();
     let mut tally: BTreeMap<(String, String), Tally> = BTreeMap::new();
@@ -295,7 +363,7 @@ enum Outcome {
     Failed(String),
 }
 
-fn run_case(case: &Case, device: DeviceId, run: RunCase) -> Outcome {
+fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
     let mut dtypes: Vec<DType> = case.inputs.iter().map(|d| d.dtype).collect();
     dtypes.extend(case.outputs.iter().map(|(_, d)| d.dtype));
     for dtype in dtypes {
@@ -312,7 +380,7 @@ fn run_case(case: &Case, device: DeviceId, run: RunCase) -> Outcome {
             Err(err) => return Outcome::Failed(format!("upload: {err}")),
         }
     }
-    let outputs = match run(case, inputs) {
+    let outputs = match run(case, inputs, device) {
         Ok(outputs) => outputs,
         // An op that lacks an implementation for a dtype on this device (graph-ir.md §2.2).
         Err(err @ TensorError::UnsupportedDType { .. }) => {
@@ -495,6 +563,95 @@ fn unravel(mut i: usize, shape: &[u64]) -> Vec<usize> {
         i /= dim;
     }
     index
+}
+
+/// How [`feed_layout`] feeds a case's first input, chosen by the case name's prefix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// No prefix: the input as uploaded (contiguous).
+    Contiguous,
+    /// `permuted_`: uploaded with its dims reversed, then permuted back on the device.
+    Permuted,
+    /// `transposed_`: uploaded with its last two dims swapped, then transposed back.
+    Transposed,
+    /// `expanded_`: its first row uploaded alone, then expanded along dim 0 (stride 0). The
+    /// fixture's input repeats one row along dim 0.
+    Expanded,
+    /// `strided_`: every row along dim 0 uploaded twice, then every second row sliced out from row
+    /// 1 (a view with an offset and a step).
+    Strided,
+}
+
+impl Layout {
+    /// The layout a case name asks for.
+    pub fn of(case: &str) -> Layout {
+        [
+            ("permuted_", Layout::Permuted),
+            ("transposed_", Layout::Transposed),
+            ("expanded_", Layout::Expanded),
+            ("strided_", Layout::Strided),
+        ]
+        .into_iter()
+        .find(|(prefix, _)| case.starts_with(prefix))
+        .map_or(Layout::Contiguous, |(_, layout)| layout)
+    }
+}
+
+/// Feeds the first input of a case as a non-contiguous view if the case name asks for one
+/// ([`Layout`]), so that layout bugs of an op show up. Sidecars and fixtures stay plain: the input
+/// tensor holds the logical values, and the view is built on the device with the shape ops, then
+/// checked to read back exactly those values. Ops call this from their [`RunCase`]; cases without
+/// a prefix are unchanged.
+pub fn feed_layout(case: &Case, mut inputs: Vec<DynTensor>) -> Result<Vec<DynTensor>, TensorError> {
+    let layout = Layout::of(&case.name);
+    if layout == Layout::Contiguous || inputs.is_empty() {
+        return Ok(inputs);
+    }
+    let x = inputs.remove(0);
+    let (device, shape, rank) = (x.device(), x.shape(), x.rank());
+    let upload = |t: DynTensor| -> Result<DynTensor, TensorError> {
+        DynTensor::from_data(&t.into_data()?, device)
+    };
+    let view = match layout {
+        Layout::Contiguous => x.clone(),
+        Layout::Permuted => {
+            assert!(
+                rank >= 2,
+                "{}/{}: permuted_ needs rank ≥ 2",
+                case.op,
+                case.name
+            );
+            let reversed: Vec<usize> = (0..rank).rev().collect();
+            upload(x.clone().permute(&reversed)?)?.permute(&reversed)?
+        }
+        Layout::Transposed => {
+            assert!(
+                rank >= 2,
+                "{}/{}: transposed_ needs rank ≥ 2",
+                case.op,
+                case.name
+            );
+            upload(x.clone().transpose(rank - 2, rank - 1)?)?.transpose(rank - 2, rank - 1)?
+        }
+        Layout::Expanded => upload(x.clone().slice(0, 0, 1, 1)?)?.expand(&shape)?,
+        Layout::Strided => {
+            let rows = x.clone().unsqueeze(1)?;
+            let doubled = DynTensor::concat(&[rows.clone(), rows], 1)?;
+            let mut tall = shape.clone();
+            tall[0] *= 2;
+            upload(doubled.reshape(&tall)?)?.slice(0, 1, tall[0], 2)?
+        }
+    };
+    assert_eq!(
+        view.to_data()?,
+        x.to_data()?,
+        "{}/{}: the {layout:?} view doesn't hold the fixture's input (an expanded_ input must \
+         repeat one row along dim 0)",
+        case.op,
+        case.name
+    );
+    inputs.insert(0, view);
+    Ok(inputs)
 }
 
 #[test]

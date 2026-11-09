@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.reshape",
+  "case": "transposed_f16",
+  "description": "f16 [3, 4]: transpose, then reshape to [12].",
+  "attributes": {
+    "shape": [
+      12
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.reshape(x, shape)",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back.",
+  "seed": 309,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

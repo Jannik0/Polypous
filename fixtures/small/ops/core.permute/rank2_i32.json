@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.permute",
+  "case": "rank2_i32",
+  "description": "i32 [3, 4]: a transpose.",
+  "attributes": {
+    "dims": [
+      1,
+      0
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.permute(x, dims)",
+  "notes": "",
+  "seed": 915,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

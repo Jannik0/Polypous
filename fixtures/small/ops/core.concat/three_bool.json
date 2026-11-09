@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "three_bool",
+  "description": "bool [[2, 1, 2], [2, 2, 2], [2, 3, 2]] along dim 1: three inputs.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "bool",
+      "shape": [
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "bool",
+      "shape": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "name": "xs2",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        6,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "",
+  "seed": 966,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

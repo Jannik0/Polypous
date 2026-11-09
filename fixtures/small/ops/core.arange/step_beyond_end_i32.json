@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "op": "core.arange",
+  "case": "step_beyond_end_i32",
+  "description": "i32: a step past the end: one element.",
+  "attributes": {
+    "start": 5,
+    "end": 7,
+    "step": 10,
+    "dtype": "i32"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.arange(start, end, step, dtype=dtype)",
+  "notes": "",
+  "seed": 1219,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

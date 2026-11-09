@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.full_like",
+  "case": "i32",
+  "description": "x i32 [4]: i32.",
+  "attributes": {
+    "value": -7
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.full_like(x, value, dtype=dtype)",
+  "notes": "",
+  "seed": 1275,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "two_dims_f16",
+  "description": "f16 [2, 3]: pad [1, 0, 0, 2], value 1.5.",
+  "attributes": {
+    "pad": [
+      1,
+      0,
+      0,
+      2
+    ],
+    "value": 1.5
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        4,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "",
+  "seed": 1012,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

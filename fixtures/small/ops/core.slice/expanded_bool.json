@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "expanded_bool",
+  "description": "bool [4, 3]: expand, then slice.",
+  "attributes": {
+    "dim": 0,
+    "start": 1,
+    "end": 3
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bool",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "x is fed as an expanded view (stride 0 along dim 0): its rows along dim 0 are equal.",
+  "seed": 1004,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

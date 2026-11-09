@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.permute",
+  "case": "negative_f16",
+  "description": "f16 [2, 3, 4]: negative dims [-1, 0, -2].",
+  "attributes": {
+    "dims": [
+      -1,
+      0,
+      -2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        4,
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.permute(x, dims)",
+  "notes": "",
+  "seed": 912,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

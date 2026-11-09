@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "op": "core.full",
+  "case": "rank6_bf16",
+  "description": "bf16 [1, 2, 1, 1, 2, 1]: rank 6, value 0.1.",
+  "attributes": {
+    "shape": [
+      1,
+      2,
+      1,
+      1,
+      2,
+      1
+    ],
+    "value": 0.1,
+    "dtype": "bf16"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        1,
+        2,
+        1,
+        1,
+        2,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.full(shape, value, dtype=dtype)",
+  "notes": "",
+  "seed": 1257,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "op": "core.constant",
+  "case": "f32",
+  "description": "f32 [2, 4]: rounding, an integer value, overflow-free large values, \u00b1inf, NaN, -0.0.",
+  "attributes": {
+    "dtype": "f32",
+    "shape": [
+      2,
+      4
+    ],
+    "values": [
+      0.1,
+      -2.5,
+      3,
+      1e+30,
+      "inf",
+      "-inf",
+      "nan",
+      -0.0
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.tensor(values, dtype=dtype).reshape(shape)",
+  "notes": "",
+  "seed": 1201,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

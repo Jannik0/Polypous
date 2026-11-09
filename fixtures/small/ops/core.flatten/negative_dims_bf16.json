@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "op": "core.flatten",
+  "case": "negative_dims_bf16",
+  "description": "bf16 [2, 3, 4, 5]: dims -3..-2.",
+  "attributes": {
+    "start_dim": -3,
+    "end_dim": -2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        12,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.flatten(x, start_dim, end_dim)",
+  "notes": "",
+  "seed": 903,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

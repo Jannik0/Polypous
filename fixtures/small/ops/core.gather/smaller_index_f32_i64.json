@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "op": "core.gather",
+  "case": "smaller_index_f32_i64",
+  "description": "x f32 [4, 5, 3], index i64 [2, 6, 2], dim 1: index smaller than x outside dim (PyTorch reads the leading part).",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        5,
+        3
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i64",
+      "shape": [
+        2,
+        6,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        6,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.gather(x, dim, index)",
+  "notes": "",
+  "seed": 1107,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

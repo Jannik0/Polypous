@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "rank6_f32",
+  "description": "f32 [1, 2, 1, 2, 1, 2]: rank 6, the last three dims.",
+  "attributes": {
+    "pad": [
+      1,
+      0,
+      0,
+      1,
+      2,
+      1
+    ],
+    "value": 0.5
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        2,
+        1,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        5,
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "",
+  "seed": 1021,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

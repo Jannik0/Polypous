@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.gather",
+  "case": "transposed_f16_i32",
+  "description": "x f16 [4, 3], index i32 [2, 3], dim 0: transpose, then gather.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        4,
+        3
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.gather(x, dim, index)",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back.",
+  "seed": 1114,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "op": "core.squeeze",
+  "case": "listed_f16",
+  "description": "f16 [1, 3, 1, 4]: dim [2] only.",
+  "attributes": {
+    "dim": [
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        1,
+        3,
+        1,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        1,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.squeeze(x, dim)",
+  "notes": "",
+  "seed": 932,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

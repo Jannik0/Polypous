@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "core.constant",
+  "case": "scalar_f32",
+  "description": "f32 [1]: a scalar.",
+  "attributes": {
+    "dtype": "f32",
+    "shape": [
+      1
+    ],
+    "values": [
+      2.5
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.tensor(values, dtype=dtype).reshape(shape)",
+  "notes": "",
+  "seed": 1207,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

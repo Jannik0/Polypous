@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "step3_no_end_bf16",
+  "description": "bf16 [10]: from 1, step 3, no end.",
+  "attributes": {
+    "dim": 0,
+    "start": 1,
+    "step": 3
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        10
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "",
+  "seed": 993,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

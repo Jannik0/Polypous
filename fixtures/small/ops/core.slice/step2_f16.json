@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "step2_f16",
+  "description": "f16 [3, 9]: step 2.",
+  "attributes": {
+    "dim": 1,
+    "start": 0,
+    "end": 9,
+    "step": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        3,
+        9
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        3,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "",
+  "seed": 992,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

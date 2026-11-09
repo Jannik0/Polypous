@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.squeeze",
+  "case": "expanded_i32",
+  "description": "i32 [2, 1, 3]: expand, then squeeze dim 1.",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        2,
+        1,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.squeeze(x, dim)",
+  "notes": "x is fed as an expanded view (stride 0 along dim 0): its rows along dim 0 are equal.",
+  "seed": 939,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
