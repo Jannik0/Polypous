@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "op": "core.permute",
+  "case": "rank4_bool",
+  "description": "bool [2, 3, 1, 2]: rank 4 with a size-1 dim.",
+  "attributes": {
+    "dims": [
+      3,
+      1,
+      2,
+      0
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3,
+        1,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3,
+        1,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.permute(x, dims)",
+  "notes": "",
+  "seed": 916,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

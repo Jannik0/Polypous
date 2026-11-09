@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "rows_i32",
+  "description": "i32 [[2, 3], [1, 3]] along dim 0: dim 0.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "i32",
+      "shape": [
+        1,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "",
+  "seed": 965,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

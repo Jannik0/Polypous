@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "strided_i32",
+  "description": "i32 [6, 3]: a stepped slice of a stepped slice.",
+  "attributes": {
+    "dim": 0,
+    "start": 1,
+    "step": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        6,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "x is fed as a stepped slice view (every second row along dim 0, from row 1).",
+  "seed": 1003,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

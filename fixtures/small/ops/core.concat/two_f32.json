@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "two_f32",
+  "description": "f32 [[2, 3], [2, 4]] along dim 1: two inputs.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        7
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "",
+  "seed": 961,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

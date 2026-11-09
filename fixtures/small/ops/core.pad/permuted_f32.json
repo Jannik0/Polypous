@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "permuted_f32",
+  "description": "f32 [2, 3, 4]: permute, then pad.",
+  "attributes": {
+    "pad": [
+      1,
+      1,
+      0,
+      1
+    ],
+    "value": -1.0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+  "seed": 1023,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

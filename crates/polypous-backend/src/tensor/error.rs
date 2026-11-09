@@ -97,6 +97,18 @@ pub enum TensorError {
         reason: String,
     },
 
+    /// An index tensor holds a value outside `0..size` (graph-ir.md §3.1.8): `core.gather`,
+    /// `core.index_select`. Checked before the op runs; the op has not run.
+    #[error("index {index} is out of range in `{op}`: valid indices are 0 to {size} (exclusive)")]
+    IndexOutOfRange {
+        /// The operation.
+        op: &'static str,
+        /// The offending index: the smallest one if any is negative, else the largest one.
+        index: i64,
+        /// The size of the indexed dim.
+        size: usize,
+    },
+
     /// The backend failed while running or reading back a tensor.
     #[error("backend error: {message}")]
     Backend {

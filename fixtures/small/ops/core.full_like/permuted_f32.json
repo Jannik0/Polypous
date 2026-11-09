@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.full_like",
+  "case": "permuted_f32",
+  "description": "x f32 [2, 3, 4]: a permuted x, value NaN.",
+  "attributes": {
+    "value": "nan"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.full_like(x, value, dtype=dtype)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+  "seed": 1279,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

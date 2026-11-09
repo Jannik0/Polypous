@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "step_beyond_f32",
+  "description": "f32 [5, 2]: a step past the end: one row.",
+  "attributes": {
+    "dim": 0,
+    "start": 1,
+    "step": 10
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        5,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "",
+  "seed": 1000,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

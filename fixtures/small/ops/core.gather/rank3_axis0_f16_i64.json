@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "op": "core.gather",
+  "case": "rank3_axis0_f16_i64",
+  "description": "x f16 [3, 2, 4], index i64 [2, 2, 4], dim 0: rank 3, dim 0.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        3,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i64",
+      "shape": [
+        2,
+        2,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.gather(x, dim, index)",
+  "notes": "",
+  "seed": 1103,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

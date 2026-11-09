@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.flatten",
+  "case": "permuted_f32",
+  "description": "f32 [2, 3, 4]: permute, then flatten dims 0..1.",
+  "attributes": {
+    "start_dim": 0,
+    "end_dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        6,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.flatten(x, start_dim, end_dim)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+  "seed": 908,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

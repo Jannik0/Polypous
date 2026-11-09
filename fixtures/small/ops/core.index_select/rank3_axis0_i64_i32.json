@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "op": "core.index_select",
+  "case": "rank3_axis0_i64_i32",
+  "description": "x i64 [3, 2, 4], 1 i32 indices, dim 0: rank 3, dim 0, one index.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        3,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        1,
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.index_select(x, dim, index)",
+  "notes": "",
+  "seed": 1124,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

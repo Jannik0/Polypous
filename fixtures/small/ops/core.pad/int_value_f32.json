@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "int_value_f32",
+  "description": "f32 [2, 2]: an integer value for a float tensor.",
+  "attributes": {
+    "pad": [
+      1,
+      0
+    ],
+    "value": 3
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "",
+  "seed": 1020,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

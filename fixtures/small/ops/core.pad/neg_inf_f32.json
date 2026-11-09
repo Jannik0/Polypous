@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "neg_inf_f32",
+  "description": "f32 [3]: value -inf.",
+  "attributes": {
+    "pad": [
+      0,
+      2
+    ],
+    "value": "-inf"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "",
+  "seed": 1019,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

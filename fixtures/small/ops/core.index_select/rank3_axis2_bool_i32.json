@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "op": "core.index_select",
+  "case": "rank3_axis2_bool_i32",
+  "description": "x bool [3, 2, 4], 5 i32 indices, dim 2: rank 3, dim 2.",
+  "attributes": {
+    "dim": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bool",
+      "shape": [
+        3,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i32",
+      "shape": [
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        3,
+        2,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.index_select(x, dim, index)",
+  "notes": "",
+  "seed": 1126,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

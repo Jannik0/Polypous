@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "all_dims_i64",
+  "description": "i64 [2, 3]: both dims, value 7.",
+  "attributes": {
+    "pad": [
+      1,
+      1,
+      2,
+      0
+    ],
+    "value": 7
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        4,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "",
+  "seed": 1014,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

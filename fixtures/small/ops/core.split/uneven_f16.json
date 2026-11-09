@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "op": "core.split",
+  "case": "uneven_f16",
+  "description": "f16 [2, 7]: uneven sizes.",
+  "attributes": {
+    "dim": 1,
+    "sizes": [
+      1,
+      4,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        7
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out0",
+      "dtype": "f16",
+      "shape": [
+        2,
+        1
+      ]
+    },
+    {
+      "name": "out1",
+      "dtype": "f16",
+      "shape": [
+        2,
+        4
+      ]
+    },
+    {
+      "name": "out2",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.split(x, sizes, dim)",
+  "notes": "",
+  "seed": 982,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

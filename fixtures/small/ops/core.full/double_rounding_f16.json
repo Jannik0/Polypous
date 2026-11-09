@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "core.full",
+  "case": "double_rounding_f16",
+  "description": "f16 [2, 2]: a value that rounds differently through f32.",
+  "attributes": {
+    "shape": [
+      2,
+      2
+    ],
+    "value": 1.0004882812509095,
+    "dtype": "f16"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.full(shape, value, dtype=dtype)",
+  "notes": "Float values are rounded from f64 to f32 and then to f16/bf16, as PyTorch does: 1.0004882812509095 gives 1.0 in f16 (one rounding from f64 would give 1.0009765625).",
+  "seed": 1255,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

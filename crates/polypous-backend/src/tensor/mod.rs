@@ -59,7 +59,9 @@ pub use data::TensorData;
 pub use dtype::DType;
 pub(crate) use dtype::Kind;
 pub use dyn_tensor::DynTensor;
-// For the ops module (`crate::ops`). `with_rank!` and `dispatch_rank!` can be re-exported the same
-// way when an op needs them.
-pub(crate) use dyn_tensor::{Inner, Ranked, check_device_supports, map_rank, zip_rank};
+// For the ops module (`crate::ops`).
+pub(crate) use data::num_elements;
+pub(crate) use dyn_tensor::{
+    Inner, Ranked, check_device_supports, dispatch_rank, map_rank, resolve, with_rank, zip_rank,
+};
 pub use error::{Result, TensorError};

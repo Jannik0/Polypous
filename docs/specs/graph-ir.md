@@ -469,6 +469,11 @@ input rank.
 | `dtype` | string | `f32 f16 bf16 i64 i32 bool`, and `float` (the compute dtype, §2.2) where the op says so |
 | `scalar` | number, `"inf"`/`"-inf"`/`"nan"`, or `true`/`false` | A value of the dtype the op is filling: an integer for `I` (in range for the dtype), a `float` for `F` (rounded to the dtype), a bool for `B` |
 
+**Rounding fill values.** A `float` that fills an `F` tensor (`core.constant`, `core.full`,
+`core.full_like`, `core.pad`) rounds to nearest, ties to even, first to `f32` and then to `f16` or
+`bf16`, as PyTorch rounds Python floats (`torch.full`, `torch.tensor`). A finite value beyond the
+dtype's range becomes `±inf` (IEEE 754).
+
 **Shape-like arguments are attributes** (reshape target, `expand`, `slice` bounds, `pad`, `arange`,
 `zeros`/`ones`/`full` shape, `top_k` `k`, `split` sizes). They are `dim` or `dim[]` attributes,
 never tensor inputs, so no output shape depends on tensor values. An attribute refers to a `dims`

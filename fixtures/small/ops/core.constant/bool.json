@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.constant",
+  "case": "bool",
+  "description": "bool [3]: true and false.",
+  "attributes": {
+    "dtype": "bool",
+    "shape": [
+      3
+    ],
+    "values": [
+      true,
+      false,
+      true
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.tensor(values, dtype=dtype).reshape(shape)",
+  "notes": "",
+  "seed": 1206,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "negative_start_step2_i32",
+  "description": "i32 [7]: start -7 (= -n), step 2.",
+  "attributes": {
+    "dim": 0,
+    "start": -7,
+    "end": 7,
+    "step": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        7
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "",
+  "seed": 995,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

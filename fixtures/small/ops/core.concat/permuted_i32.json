@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "permuted_i32",
+  "description": "i32 [[2, 3, 2], [2, 3, 1]] along dim 2: permute, then concat.",
+  "attributes": {
+    "dim": 2
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3,
+        2
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+  "seed": 970,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

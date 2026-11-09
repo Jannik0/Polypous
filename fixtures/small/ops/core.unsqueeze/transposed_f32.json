@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.unsqueeze",
+  "case": "transposed_f32",
+  "description": "f32 [3, 4]: transpose, then unsqueeze dim 1.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        1,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.unsqueeze(x, dim)",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back.",
+  "seed": 948,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

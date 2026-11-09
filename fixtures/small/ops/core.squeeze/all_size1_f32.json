@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.squeeze",
+  "case": "all_size1_f32",
+  "description": "f32 [1, 3, 1, 4]: no dim: every size-1 dim removed.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        3,
+        1,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.squeeze(x, dim)",
+  "notes": "",
+  "seed": 931,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

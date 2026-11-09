@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "op": "core.split",
+  "case": "uneven_bool",
+  "description": "bool [2, 4]: uneven sizes.",
+  "attributes": {
+    "dim": 1,
+    "sizes": [
+      3,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bool",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out0",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "out1",
+      "dtype": "bool",
+      "shape": [
+        2,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.split(x, sizes, dim)",
+  "notes": "",
+  "seed": 986,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

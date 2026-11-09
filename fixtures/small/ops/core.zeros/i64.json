@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "op": "core.zeros",
+  "case": "i64",
+  "description": "i64 [2, 3]: i64.",
+  "attributes": {
+    "shape": [
+      2,
+      3
+    ],
+    "dtype": "i64"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.zeros(shape, dtype=dtype)",
+  "notes": "",
+  "seed": 1234,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

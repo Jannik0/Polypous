@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "op": "core.pad",
+  "case": "zero_widths_bf16",
+  "description": "bf16 [2, 3, 4]: only the middle dim padded, value -2.",
+  "attributes": {
+    "pad": [
+      0,
+      0,
+      1,
+      1,
+      0,
+      0
+    ],
+    "value": -2.0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        5,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.pad(x, pad, mode, value)",
+  "notes": "",
+  "seed": 1013,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

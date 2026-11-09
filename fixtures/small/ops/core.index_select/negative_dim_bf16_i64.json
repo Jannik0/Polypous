@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "op": "core.index_select",
+  "case": "negative_dim_bf16_i64",
+  "description": "x bf16 [2, 4], 4 i64 indices, dim -1: dim -1.",
+  "attributes": {
+    "dim": -1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        4
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i64",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.index_select(x, dim, index)",
+  "notes": "",
+  "seed": 1123,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

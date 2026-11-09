@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.transpose",
+  "case": "same_dim_bf16",
+  "description": "bf16 [3, 4]: the same dim twice: unchanged.",
+  "attributes": {
+    "dim0": 1,
+    "dim1": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.transpose(x, dim0, dim1)",
+  "notes": "",
+  "seed": 923,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

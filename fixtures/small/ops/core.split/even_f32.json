@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "op": "core.split",
+  "case": "even_f32",
+  "description": "f32 [6, 2]: even sizes.",
+  "attributes": {
+    "dim": 0,
+    "sizes": [
+      2,
+      2,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        6,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out0",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "out1",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "out2",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.split(x, sizes, dim)",
+  "notes": "",
+  "seed": 981,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "op": "core.ones",
+  "case": "f16",
+  "description": "f16 [2, 1, 3]: rank 3.",
+  "attributes": {
+    "shape": [
+      2,
+      1,
+      3
+    ],
+    "dtype": "f16"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        1,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.ones(shape, dtype=dtype)",
+  "notes": "",
+  "seed": 1242,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -45,8 +45,9 @@ try:
     import safetensors
     import safetensors.torch
     import torch
+    import torch.nn.functional as F  # noqa: N812 - PyTorch's usual name, as in the spec's `F.`
 except ImportError as e:  # pragma: no cover - depends on the environment
-    np = safetensors = torch = None  # type: ignore[assignment]
+    np = safetensors = torch = F = None  # type: ignore[assignment]
     IMPORT_ERROR: ImportError | None = e
 else:
     IMPORT_ERROR = None
@@ -288,6 +289,504 @@ def cast_case(src: str, dst: str, seed: int) -> Case:
         tolerance=EXACT,
         notes=note,
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Shape, indexing and creation ops (docs/specs/graph-ir.md §3.2 "Shape", "Indexing", "Creation").
+# All exact: they move or create values, they don't compute new ones. Attributes are written as a
+# graph would write them (negative axes, `-1`, negative `slice` bounds, defaults left out); the
+# Rust tests normalize them like the IR analysis does.
+#
+# Non-contiguous inputs: a case whose name starts with `permuted_`, `transposed_`, `expanded_` or
+# `strided_` builds its first input as that PyTorch view (`layout_input`), computes the reference on
+# the view, and stores the logical values. The Rust harness feeds the same kind of view on the device
+# (`feed_layout` in crates/polypous-backend/tests/reference/common.rs), so layout bugs show up.
+
+LAYOUTS = ("permuted", "transposed", "expanded", "strided")
+LAYOUT_NOTES = {
+    "permuted": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+    "transposed": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back.",
+    "expanded": "x is fed as an expanded view (stride 0 along dim 0): its rows along dim 0 are equal.",
+    "strided": "x is fed as a stepped slice view (every second row along dim 0, from row 1).",
+}
+
+
+def layout_of(name: str) -> str | None:
+    return next((layout for layout in LAYOUTS if name.startswith(layout + "_")), None)
+
+
+def rand(rng: Any, shape: list[int], dtype: str) -> Any:
+    """Random values of `dtype`: uniform floats in [-2, 2), integers in [-1000, 1000), random bools."""
+    if dtype == "bool":
+        return torch.from_numpy(rng.integers(0, 2, size=shape, dtype=np.int64)).to(torch.bool)
+    if dtype in INTS:
+        return integers(rng, shape, dtype, -1000, 1000)
+    return uniform(rng, shape, dtype)
+
+
+def layout_input(rng: Any, shape: list[int], dtype: str, layout: str | None) -> Any:
+    """A tensor of `shape`, as the PyTorch view `layout` names (see LAYOUTS above)."""
+    if layout is None:
+        return rand(rng, shape, dtype)
+    if layout == "permuted":
+        rev = list(reversed(range(len(shape))))
+        x = rand(rng, [shape[i] for i in rev], dtype).permute(rev)
+    elif layout == "transposed":
+        x = rand(rng, shape[:-2] + [shape[-1], shape[-2]], dtype).transpose(-2, -1)
+    elif layout == "expanded":
+        x = rand(rng, [1] + shape[1:], dtype).expand(shape)
+    else:
+        x = rand(rng, [2 * shape[0]] + shape[1:], dtype)[1::2]
+    assert not x.is_contiguous(), f"{layout} {shape}: not a non-contiguous view"
+    return x
+
+
+def exact_case(
+    op: str,
+    name: str,
+    seed: int,
+    description: str,
+    inputs: Callable[[Any], list[tuple[str, Any]]],
+    fn: Callable[[list[Any]], Any],
+    reference_text: str,
+    attributes: dict[str, Any],
+    notes: str = "",
+) -> Case:
+    """A case whose reference is `fn(inputs)`: one tensor (`out`) or a list (`out0`, `out1`, …)."""
+
+    def reference(xs: list[Any]) -> list[tuple[str, Any]]:
+        out = fn(xs)
+        if isinstance(out, (list, tuple)):
+            return [(f"out{i}", t) for i, t in enumerate(out)]
+        return [("out", out)]
+
+    layout = layout_of(name)
+    if layout is not None:
+        notes = (LAYOUT_NOTES[layout] + " " + notes).strip()
+    return Case(op=op, name=name, description=description, seed=seed, attributes=attributes, inputs=inputs,
+                reference=reference, reference_text=reference_text, tolerance=EXACT, notes=notes)
+
+
+def x_case(op: str, name: str, seed: int, dtype: str, shape: list[int], attributes: dict[str, Any],
+           fn: Callable[[Any], Any], text: str, description: str, notes: str = "") -> Case:
+    """A one-input shape op case: x of `dtype` and `shape` (as the view the name asks for)."""
+    layout = layout_of(name)
+    return exact_case(op, name, seed, f"{dtype} {shape}: {description}",
+                      lambda rng: [("x", layout_input(rng, shape, dtype, layout))],
+                      lambda xs: fn(xs[0]), text, attributes, notes)
+
+
+def as_rank1(t: Any) -> Any:
+    """PyTorch's 0-dim results are shape [1] here (graph-ir.md §3.1.5)."""
+    return t.reshape(1) if t.dim() == 0 else t
+
+
+def shape_cases() -> list[Case]:
+    cases = [
+        reshape_case("3d_to_2d_f32", 301, "f32", [2, 3, 4], [4, 6]),
+        reshape_case("1d_to_6d_f32", 302, "f32", [24], [2, 1, 3, 1, 2, 2]),
+        reshape_case("2d_to_3d_bf16", 303, "bf16", [4, 6], [2, 2, 6]),
+        reshape_case("1d_to_2d_i64", 304, "i64", [12], [3, 4]),
+        reshape_case("2d_to_3d_bool", 305, "bool", [2, 6], [3, 2, 2]),
+    ]
+
+    def reshape(name: str, seed: int, dtype: str, shape: list[int], target: list[int], description: str) -> Case:
+        return x_case("core.reshape", name, seed, dtype, shape, {"shape": target},
+                      lambda x: torch.reshape(x, target), "torch.reshape(x, shape)", description)
+
+    cases += [
+        reshape("minus_one_f16", 306, "f16", [3, 4], [2, -1], "-> [2, -1]: -1 stands for 6."),
+        reshape("rank6_to_1d_i32", 307, "i32", [1, 2, 1, 3, 1, 2], [-1], "rank 6 -> [-1]."),
+        reshape("permuted_f32", 308, "f32", [2, 3, 4], [4, -1], "permute, then reshape to [4, -1]."),
+        reshape("transposed_f16", 309, "f16", [3, 4], [12], "transpose, then reshape to [12]."),
+        reshape("expanded_i32", 310, "i32", [3, 2, 2], [2, 6], "expand, then reshape to [2, 6]."),
+        reshape("strided_bool", 311, "bool", [4, 3], [3, 4], "a stepped slice, then reshape to [3, 4]."),
+    ]
+
+    def flatten(name: str, seed: int, dtype: str, shape: list[int], start: int | None, end: int | None,
+                description: str) -> Case:
+        attrs = {k: v for k, v in (("start_dim", start), ("end_dim", end)) if v is not None}
+        s, e = (0 if start is None else start), (-1 if end is None else end)
+        return x_case("core.flatten", name, seed, dtype, shape, attrs, lambda x: torch.flatten(x, s, e),
+                      "torch.flatten(x, start_dim, end_dim)", description)
+
+    cases += [
+        flatten("default_f32", 901, "f32", [2, 3, 4], None, None, "defaults: everything into one dim."),
+        flatten("middle_f16", 902, "f16", [2, 3, 4, 5], 1, 2, "dims 1..2."),
+        flatten("negative_dims_bf16", 903, "bf16", [2, 3, 4, 5], -3, -2, "dims -3..-2."),
+        flatten("size1_i64", 904, "i64", [1, 1, 3], 0, 1, "two size-1 dims."),
+        flatten("rank6_i32", 905, "i32", [2, 1, 2, 1, 2, 2], 2, None, "rank 6, dims 2..-1."),
+        flatten("single_dim_bool", 906, "bool", [3, 4], 1, 1, "start_dim = end_dim: unchanged."),
+        flatten("rank1_f32", 907, "f32", [5], None, None, "rank 1: unchanged."),
+        flatten("permuted_f32", 908, "f32", [2, 3, 4], 0, 1, "permute, then flatten dims 0..1."),
+        flatten("strided_i64", 909, "i64", [3, 2, 2], 1, 2, "a stepped slice, then flatten dims 1..2."),
+    ]
+
+    def permute(name: str, seed: int, dtype: str, shape: list[int], dims: list[int], description: str) -> Case:
+        return x_case("core.permute", name, seed, dtype, shape, {"dims": dims}, lambda x: torch.permute(x, dims),
+                      "torch.permute(x, dims)", description)
+
+    cases += [
+        permute("rank3_f32", 911, "f32", [2, 3, 4], [2, 0, 1], "dims [2, 0, 1]."),
+        permute("negative_f16", 912, "f16", [2, 3, 4], [-1, 0, -2], "negative dims [-1, 0, -2]."),
+        permute("rank6_bf16", 913, "bf16", [1, 2, 3, 1, 2, 2], [5, 3, 1, 0, 2, 4], "rank 6."),
+        permute("identity_i64", 914, "i64", [3, 4], [0, 1], "the identity."),
+        permute("rank2_i32", 915, "i32", [3, 4], [1, 0], "a transpose."),
+        permute("rank4_bool", 916, "bool", [2, 3, 1, 2], [3, 1, 2, 0], "rank 4 with a size-1 dim."),
+        permute("rank1_f32", 917, "f32", [5], [0], "rank 1."),
+        permute("transposed_f32", 918, "f32", [3, 4, 5], [2, 1, 0], "transpose, then permute [2, 1, 0]."),
+        permute("expanded_i64", 919, "i64", [3, 2, 4], [1, 2, 0], "expand, then permute [1, 2, 0]."),
+    ]
+
+    def transpose(name: str, seed: int, dtype: str, shape: list[int], d0: int, d1: int, description: str) -> Case:
+        return x_case("core.transpose", name, seed, dtype, shape, {"dim0": d0, "dim1": d1},
+                      lambda x: torch.transpose(x, d0, d1), "torch.transpose(x, dim0, dim1)", description)
+
+    cases += [
+        transpose("last_two_f32", 921, "f32", [2, 3, 4], 1, 2, "dims 1 and 2."),
+        transpose("negative_f16", 922, "f16", [2, 3, 4], -1, 0, "dims -1 and 0."),
+        transpose("same_dim_bf16", 923, "bf16", [3, 4], 1, 1, "the same dim twice: unchanged."),
+        transpose("rank6_i64", 924, "i64", [2, 1, 3, 1, 2, 2], 0, 5, "rank 6, dims 0 and 5."),
+        transpose("rank2_i32", 925, "i32", [4, 3], 0, 1, "rank 2."),
+        transpose("rank3_bool", 926, "bool", [2, 3, 4], 0, 2, "dims 0 and 2."),
+        transpose("permuted_f32", 927, "f32", [2, 3, 4], 0, 1, "permute, then transpose dims 0 and 1."),
+        transpose("expanded_i32", 928, "i32", [3, 4], 0, 1, "expand, then transpose."),
+    ]
+
+    def squeeze(name: str, seed: int, dtype: str, shape: list[int], dims: list[int] | None, description: str) -> Case:
+        attrs = {} if dims is None else {"dim": dims}
+        fn = (lambda x: as_rank1(torch.squeeze(x))) if dims is None else (lambda x: as_rank1(torch.squeeze(x, tuple(dims))))
+        return x_case("core.squeeze", name, seed, dtype, shape, attrs, fn, "torch.squeeze(x, dim)", description,
+                      "PyTorch's 0-dim result is shape [1] here (graph-ir.md §3.1.5)." if all(d == 1 for d in shape) else "")
+
+    cases += [
+        squeeze("all_size1_f32", 931, "f32", [1, 3, 1, 4], None, "no dim: every size-1 dim removed."),
+        squeeze("listed_f16", 932, "f16", [1, 3, 1, 4], [2], "dim [2] only."),
+        squeeze("negative_bf16", 933, "bf16", [2, 1, 3, 1], [-1, 1], "dims [-1, 1]."),
+        squeeze("to_scalar_i64", 934, "i64", [1, 1, 1], None, "every dim removed: the result is [1]."),
+        squeeze("rank1_to_scalar_i32", 935, "i32", [1], [0], "squeeze [1] at dim 0: stays [1]."),
+        squeeze("rank6_bool", 936, "bool", [1, 2, 1, 3, 1, 2], None, "rank 6, no dim."),
+        squeeze("no_size1_f32", 937, "f32", [2, 3], None, "no size-1 dim: unchanged."),
+        squeeze("permuted_f32", 938, "f32", [1, 3, 1, 4], None, "permute, then squeeze."),
+        squeeze("expanded_i32", 939, "i32", [2, 1, 3], [1], "expand, then squeeze dim 1."),
+    ]
+
+    def unsqueeze(name: str, seed: int, dtype: str, shape: list[int], dim: int, description: str) -> Case:
+        return x_case("core.unsqueeze", name, seed, dtype, shape, {"dim": dim}, lambda x: torch.unsqueeze(x, dim),
+                      "torch.unsqueeze(x, dim)", description)
+
+    cases += [
+        unsqueeze("front_f32", 941, "f32", [3, 4], 0, "dim 0."),
+        unsqueeze("middle_f16", 942, "f16", [3, 4], 1, "dim 1."),
+        unsqueeze("end_bf16", 943, "bf16", [3, 4], 2, "dim 2 (= rank): a trailing 1."),
+        unsqueeze("negative_i64", 944, "i64", [3, 4], -1, "dim -1: a trailing 1."),
+        unsqueeze("negative_first_i32", 945, "i32", [3, 4], -3, "dim -3: a leading 1."),
+        unsqueeze("rank5_to_6_bool", 946, "bool", [2, 1, 2, 1, 2], 3, "rank 5 to rank 6."),
+        unsqueeze("rank1_f32", 947, "f32", [5], 0, "rank 1."),
+        unsqueeze("transposed_f32", 948, "f32", [3, 4], 1, "transpose, then unsqueeze dim 1."),
+    ]
+
+    def expand(name: str, seed: int, dtype: str, shape: list[int], target: list[int], description: str) -> Case:
+        return x_case("core.expand", name, seed, dtype, shape, {"shape": target}, lambda x: x.expand(target),
+                      "x.expand(shape)", description)
+
+    cases += [
+        expand("size1_f32", 951, "f32", [3, 1], [3, 4], "-> [3, 4]."),
+        expand("new_leading_f16", 952, "f16", [3], [2, 3], "-> [2, 3]: a new leading dim."),
+        expand("minus_one_bf16", 953, "bf16", [1, 4], [3, -1], "-> [3, -1]: -1 keeps 4."),
+        expand("rank6_i64", 954, "i64", [1, 2, 1], [2, 2, 2, 3, 2, 2], "-> rank 6."),
+        expand("same_i32", 955, "i32", [2, 3], [2, 3], "-> the same shape."),
+        expand("leading_bool", 956, "bool", [1, 3], [2, 4, 3], "-> [2, 4, 3]."),
+        expand("expanded_f32", 957, "f32", [3, 1], [2, 3, 5], "expand, then expand again."),
+        expand("transposed_i32", 958, "i32", [1, 3, 2], [4, 3, 2], "transpose, then expand."),
+    ]
+
+    def concat(name: str, seed: int, dtype: str, shapes: list[list[int]], dim: int, description: str) -> Case:
+        layout = layout_of(name)
+
+        def inputs(rng: Any) -> list[tuple[str, Any]]:
+            return [(f"xs{i}", layout_input(rng, s, dtype, layout if i == 0 else None)) for i, s in enumerate(shapes)]
+
+        return exact_case("core.concat", name, seed, f"{dtype} {shapes} along dim {dim}: {description}", inputs,
+                          lambda xs: torch.cat(xs, dim), "torch.cat(xs, dim)", {"dim": dim})
+
+    cases += [
+        concat("two_f32", 961, "f32", [[2, 3], [2, 4]], 1, "two inputs."),
+        concat("one_input_f16", 962, "f16", [[2, 3]], 0, "a single input."),
+        concat("many_bf16", 963, "bf16", [[1, 3], [2, 3], [1, 3], [3, 3], [1, 3]], 0, "five inputs."),
+        concat("negative_i64", 964, "i64", [[2, 2, 1], [2, 2, 3]], -1, "dim -1."),
+        concat("rows_i32", 965, "i32", [[2, 3], [1, 3]], 0, "dim 0."),
+        concat("three_bool", 966, "bool", [[2, 1, 2], [2, 2, 2], [2, 3, 2]], 1, "three inputs."),
+        concat("rank6_f32", 967, "f32", [[1, 2, 1, 2, 1, 2], [1, 2, 1, 1, 1, 2]], 3, "rank 6."),
+        concat("rank1_f32", 968, "f32", [[3], [2]], 0, "rank 1."),
+        concat("expanded_f32", 969, "f32", [[3, 4], [2, 4]], 0, "expand, then concat."),
+        concat("permuted_i32", 970, "i32", [[2, 3, 2], [2, 3, 1]], 2, "permute, then concat."),
+        concat("strided_bool", 971, "bool", [[2, 3], [2, 2]], 1, "a stepped slice, then concat."),
+    ]
+
+    def split(name: str, seed: int, dtype: str, shape: list[int], dim: int, sizes: list[int], description: str) -> Case:
+        return x_case("core.split", name, seed, dtype, shape, {"dim": dim, "sizes": sizes},
+                      lambda x: list(torch.split(x, sizes, dim)), "torch.split(x, sizes, dim)", description)
+
+    cases += [
+        split("even_f32", 981, "f32", [6, 2], 0, [2, 2, 2], "even sizes."),
+        split("uneven_f16", 982, "f16", [2, 7], 1, [1, 4, 2], "uneven sizes."),
+        split("single_bf16", 983, "bf16", [3, 4], 0, [3], "one piece: the whole tensor."),
+        split("negative_i64", 984, "i64", [2, 3, 5], -1, [2, 3], "dim -1."),
+        split("rank1_i32", 985, "i32", [5], 0, [1, 1, 3], "rank 1."),
+        split("uneven_bool", 986, "bool", [2, 4], 1, [3, 1], "uneven sizes."),
+        split("rank6_f32", 987, "f32", [1, 2, 1, 2, 1, 5], 5, [4, 1], "rank 6."),
+        split("transposed_f32", 988, "f32", [4, 6], 1, [1, 5], "transpose, then split."),
+        split("strided_i64", 989, "i64", [4, 3], 0, [3, 1], "a stepped slice, then split."),
+    ]
+
+    def slice_(name: str, seed: int, dtype: str, shape: list[int], dim: int, start: int | None, end: int | None,
+               step: int | None, description: str) -> Case:
+        attrs = {"dim": dim} | {k: v for k, v in (("start", start), ("end", end), ("step", step)) if v is not None}
+        sl = slice(start, end, step)
+        return x_case("core.slice", name, seed, dtype, shape, attrs, lambda x: x[(slice(None),) * (dim % len(shape)) + (sl,)],
+                      "x[(slice(None),) * dim + (slice(start, end, step),)]", description)
+
+    cases += [
+        slice_("basic_f32", 991, "f32", [5, 4], 0, 1, 4, None, "rows 1..4."),
+        slice_("step2_f16", 992, "f16", [3, 9], 1, 0, 9, 2, "step 2."),
+        slice_("step3_no_end_bf16", 993, "bf16", [10], 0, 1, None, 3, "from 1, step 3, no end."),
+        slice_("negative_bounds_i64", 994, "i64", [4, 8], 1, -5, -1, None, "start -5, end -1."),
+        slice_("negative_start_step2_i32", 995, "i32", [7], 0, -7, 7, 2, "start -7 (= -n), step 2."),
+        slice_("end_clamped_f32", 996, "f32", [3, 5], 1, 2, 100, None, "end 100 is clamped to 5."),
+        slice_("step2_bool", 997, "bool", [3, 4], 0, 1, None, 2, "from 1, step 2."),
+        slice_("rank6_f32", 998, "f32", [2, 1, 2, 1, 6, 2], 4, -4, None, 3, "rank 6, dim 4, start -4, step 3."),
+        slice_("single_element_f32", 999, "f32", [5], 0, 3, 4, None, "one element."),
+        slice_("step_beyond_f32", 1000, "f32", [5, 2], 0, 1, None, 10, "a step past the end: one row."),
+        slice_("negative_dim_f16", 1001, "f16", [2, 6], -1, None, -2, None, "dim -1, end -2."),
+        slice_("transposed_f32", 1002, "f32", [4, 6], 1, 1, 5, 2, "transpose, then slice with step 2."),
+        slice_("strided_i32", 1003, "i32", [6, 3], 0, 1, None, 2, "a stepped slice of a stepped slice."),
+        slice_("expanded_bool", 1004, "bool", [4, 3], 0, 1, 3, None, "expand, then slice."),
+    ]
+
+    def pad(name: str, seed: int, dtype: str, shape: list[int], widths: list[int], value: Any, description: str) -> Case:
+        attrs: dict[str, Any] = {"pad": widths}
+        if value is not None:
+            attrs["value"] = value
+        v = {"nan": NAN, "inf": INF, "-inf": -INF}.get(value, value) if isinstance(value, str) else value
+        fn = (lambda x: F.pad(x, widths, "constant")) if value is None else (lambda x: F.pad(x, widths, "constant", v))
+        return x_case("core.pad", name, seed, dtype, shape, attrs, fn, "F.pad(x, pad, mode, value)", description)
+
+    cases += [
+        pad("last_dim_f32", 1011, "f32", [2, 3], [1, 2], None, "pad [1, 2], default value 0."),
+        pad("two_dims_f16", 1012, "f16", [2, 3], [1, 0, 0, 2], 1.5, "pad [1, 0, 0, 2], value 1.5."),
+        pad("zero_widths_bf16", 1013, "bf16", [2, 3, 4], [0, 0, 1, 1, 0, 0], -2.0, "only the middle dim padded, value -2."),
+        pad("all_dims_i64", 1014, "i64", [2, 3], [1, 1, 2, 0], 7, "both dims, value 7."),
+        pad("rank1_i32", 1015, "i32", [3], [2, 3], -5, "rank 1, value -5."),
+        pad("default_bool", 1016, "bool", [2, 2], [1, 1], None, "default value: false."),
+        pad("true_bool", 1017, "bool", [2, 3], [0, 1, 1, 0], True, "value true."),
+        pad("nan_f32", 1018, "f32", [2, 2], [1, 1], "nan", "value NaN."),
+        pad("neg_inf_f32", 1019, "f32", [3], [0, 2], "-inf", "value -inf."),
+        pad("int_value_f32", 1020, "f32", [2, 2], [1, 0], 3, "an integer value for a float tensor."),
+        pad("rank6_f32", 1021, "f32", [1, 2, 1, 2, 1, 2], [1, 0, 0, 1, 2, 1], 0.5, "rank 6, the last three dims."),
+        pad("no_op_i64", 1022, "i64", [2, 3], [0, 0], 9, "zero widths: unchanged."),
+        pad("permuted_f32", 1023, "f32", [2, 3, 4], [1, 1, 0, 1], -1.0, "permute, then pad."),
+        pad("expanded_i32", 1024, "i32", [3, 2], [1, 0, 1, 1], 4, "expand, then pad."),
+        pad("strided_bool", 1025, "bool", [2, 3], [1, 1], True, "a stepped slice, then pad."),
+    ]
+    return cases
+
+
+def indexing_cases() -> list[Case]:
+    cases = []
+
+    def gather(name: str, seed: int, dtype: str, idx_dtype: str, shape: list[int], index_shape: list[int], dim: int,
+               description: str) -> Case:
+        layout = layout_of(name)
+        size = shape[dim]
+
+        def inputs(rng: Any) -> list[tuple[str, Any]]:
+            x = layout_input(rng, shape, dtype, layout)
+            return [("x", x), ("index", integers(rng, index_shape, idx_dtype, 0, size))]
+
+        return exact_case("core.gather", name, seed,
+                          f"x {dtype} {shape}, index {idx_dtype} {index_shape}, dim {dim}: {description}",
+                          inputs, lambda xs: torch.gather(xs[0], dim, xs[1]), "torch.gather(x, dim, index)", {"dim": dim})
+
+    cases += [
+        gather("axis0_f32_i64", 1101, "f32", "i64", [3, 4], [5, 4], 0, "dim 0, repeated indices."),
+        gather("axis1_f32_i32", 1102, "f32", "i32", [3, 4], [3, 6], 1, "dim 1, i32 indices."),
+        gather("rank3_axis0_f16_i64", 1103, "f16", "i64", [3, 2, 4], [2, 2, 4], 0, "rank 3, dim 0."),
+        gather("rank3_axis1_bf16_i32", 1104, "bf16", "i32", [3, 2, 4], [3, 5, 4], 1, "rank 3, dim 1."),
+        gather("rank3_axis2_i64_i64", 1105, "i64", "i64", [3, 2, 4], [3, 2, 3], 2, "rank 3, dim 2."),
+        gather("negative_dim_i32_i32", 1106, "i32", "i32", [2, 5], [2, 3], -1, "dim -1."),
+        gather("smaller_index_f32_i64", 1107, "f32", "i64", [4, 5, 3], [2, 6, 2], 1,
+               "index smaller than x outside dim (PyTorch reads the leading part)."),
+        gather("bool_i64", 1108, "bool", "i64", [3, 4], [3, 4], 1, "bool x."),
+        gather("bool_i32", 1109, "bool", "i32", [3, 4], [2, 4], 0, "bool x, i32 indices."),
+        gather("rank1_f32_i64", 1110, "f32", "i64", [5], [8], 0, "rank 1, more indices than elements."),
+        gather("rank6_f32_i32", 1111, "f32", "i32", [2, 1, 3, 2, 1, 2], [2, 1, 4, 2, 1, 2], 2, "rank 6, dim 2."),
+        gather("rank6_axis5_i64_i64", 1112, "i64", "i64", [1, 2, 1, 2, 1, 3], [1, 2, 1, 2, 1, 2], 5, "rank 6, dim 5."),
+        gather("permuted_f32_i64", 1113, "f32", "i64", [3, 4, 2], [3, 4, 2], 1, "permute, then gather."),
+        gather("transposed_f16_i32", 1114, "f16", "i32", [4, 3], [2, 3], 0, "transpose, then gather."),
+        gather("expanded_i32_i64", 1115, "i32", "i64", [3, 4], [3, 2], 1, "expand, then gather."),
+        gather("strided_bool_i32", 1116, "bool", "i32", [3, 4], [3, 4], 1, "a stepped slice, then gather."),
+    ]
+
+    def index_select(name: str, seed: int, dtype: str, idx_dtype: str, shape: list[int], n: int, dim: int,
+                     description: str) -> Case:
+        layout = layout_of(name)
+        size = shape[dim]
+
+        def inputs(rng: Any) -> list[tuple[str, Any]]:
+            x = layout_input(rng, shape, dtype, layout)
+            return [("x", x), ("index", integers(rng, [n], idx_dtype, 0, size))]
+
+        return exact_case("core.index_select", name, seed,
+                          f"x {dtype} {shape}, {n} {idx_dtype} indices, dim {dim}: {description}",
+                          inputs, lambda xs: torch.index_select(xs[0], dim, xs[1]), "torch.index_select(x, dim, index)",
+                          {"dim": dim})
+
+    cases += [
+        index_select("axis0_f32_i64", 1121, "f32", "i64", [4, 3], 6, 0, "dim 0, repeated indices."),
+        index_select("axis1_f16_i32", 1122, "f16", "i32", [3, 5], 2, 1, "dim 1, i32 indices."),
+        index_select("negative_dim_bf16_i64", 1123, "bf16", "i64", [2, 4], 4, -1, "dim -1."),
+        index_select("rank3_axis0_i64_i32", 1124, "i64", "i32", [3, 2, 4], 1, 0, "rank 3, dim 0, one index."),
+        index_select("rank3_axis1_i32_i64", 1125, "i32", "i64", [3, 2, 4], 3, 1, "rank 3, dim 1."),
+        index_select("rank3_axis2_bool_i32", 1126, "bool", "i32", [3, 2, 4], 5, 2, "rank 3, dim 2."),
+        index_select("rank1_f32_i64", 1127, "f32", "i64", [5], 7, 0, "rank 1."),
+        index_select("rank6_f32_i32", 1128, "f32", "i32", [1, 2, 1, 2, 1, 3], 4, 5, "rank 6, dim 5."),
+        index_select("bool_i64", 1129, "bool", "i64", [4, 2], 3, 0, "bool x."),
+        index_select("transposed_f32_i32", 1130, "f32", "i32", [3, 4], 3, 1, "transpose, then index_select."),
+        index_select("expanded_i64_i64", 1131, "i64", "i64", [3, 4], 2, 0, "expand, then index_select."),
+        index_select("permuted_bf16_i64", 1132, "bf16", "i64", [2, 3, 4], 3, 2, "permute, then index_select."),
+    ]
+    return cases
+
+
+def attr_float(v: Any) -> Any:
+    """A `scalar` attribute value as PyTorch takes it (§3.1.7 strings for NaN and infinities)."""
+    return {"nan": NAN, "inf": INF, "-inf": -INF}.get(v, v) if isinstance(v, str) else v
+
+
+F16_DOUBLE_ROUNDING = 1.0 + 2.0**-11 + 2.0**-40  # rounds to 1.0 through f32 (PyTorch), up from f64 directly
+BF16_DOUBLE_ROUNDING = 1.0 + 2.0**-8 + 2.0**-40
+ROUNDING_NOTES = (
+    "Float values are rounded from f64 to f32 and then to f16/bf16, as PyTorch does: "
+    f"{F16_DOUBLE_ROUNDING!r} gives 1.0 in f16 (one rounding from f64 would give 1.0009765625)."
+)
+
+
+def creation_cases() -> list[Case]:
+    cases = []
+
+    def constant(name: str, seed: int, dtype: str, shape: list[int], values: list[Any], description: str,
+                 notes: str = "") -> Case:
+        def fn(xs: list[Any]) -> Any:
+            return torch.tensor([attr_float(v) for v in values], dtype=torch_dtype(dtype)).reshape(shape)
+
+        return exact_case("core.constant", name, seed, f"{dtype} {shape}: {description}", lambda rng: [], fn,
+                          "torch.tensor(values, dtype=dtype).reshape(shape)",
+                          {"dtype": dtype, "shape": shape, "values": values}, notes)
+
+    cases += [
+        constant("f32", 1201, "f32", [2, 4], [0.1, -2.5, 3, 1e30, "inf", "-inf", "nan", -0.0],
+                 "rounding, an integer value, overflow-free large values, ±inf, NaN, -0.0."),
+        constant("f16", 1202, "f16", [2, 3], [0.1, 65504.0, 1e5, F16_DOUBLE_ROUNDING, -7, F16_MIN_NORMAL],
+                 "rounding, the largest f16, overflow to inf, double rounding, the smallest normal f16.",
+                 ROUNDING_NOTES + " A finite value beyond the dtype's range rounds to inf (IEEE 754), as in torch.tensor; "
+                 "torch.full and F.pad raise for it instead, so only this op has a fixture for it."),
+        constant("bf16", 1203, "bf16", [3], [0.1, BF16_DOUBLE_ROUNDING, 3e38], "rounding, double rounding, large values.",
+                 ROUNDING_NOTES),
+        constant("i64", 1204, "i64", [4], [I64_MIN, I64_MAX, 0, -(2**53) - 1], "the i64 limits, beyond 2^53."),
+        constant("i32", 1205, "i32", [2, 2], [I32_MIN, I32_MAX, -1, 7], "the i32 limits."),
+        constant("bool", 1206, "bool", [3], [True, False, True], "true and false."),
+        constant("scalar_f32", 1207, "f32", [1], [2.5], "a scalar."),
+        constant("rank6_i32", 1208, "i32", [1, 2, 1, 2, 1, 2], list(range(-4, 4)), "rank 6."),
+    ]
+
+    def arange(name: str, seed: int, start: int | None, end: int, step: int | None, dtype: str | None,
+               description: str) -> Case:
+        attrs = {k: v for k, v in (("start", start), ("end", end), ("step", step), ("dtype", dtype)) if v is not None}
+        s, st, dt = start or 0, step or 1, dtype or "i64"
+        return exact_case("core.arange", name, seed, f"{dt}: {description}", lambda rng: [],
+                          lambda xs: torch.arange(s, end, st, dtype=torch_dtype(dt)),
+                          "torch.arange(start, end, step, dtype=dtype)", attrs)
+
+    cases += [
+        arange("default_i64", 1211, None, 5, None, None, "defaults: 0..5 in i64."),
+        arange("start_step_i64", 1212, 2, 11, 3, "i64", "start 2, end 11, step 3."),
+        arange("step2_i32", 1213, 1, 8, 2, "i32", "start 1, end 8, step 2."),
+        arange("f32", 1214, 0, 7, None, "f32", "0..7."),
+        arange("large_f32", 1215, 16777200, 16777216, 4, "f32", "below 2^24: still exact."),
+        arange("f16", 1216, 0, 2048, 128, "f16", "up to 2^11 in steps of 128."),
+        arange("bf16", 1217, 0, 256, 16, "bf16", "up to 2^8 in steps of 16."),
+        arange("single_element_i64", 1218, 3, 4, None, "i64", "one element."),
+        arange("step_beyond_end_i32", 1219, 5, 7, 10, "i32", "a step past the end: one element."),
+        arange("uneven_f32", 1220, 0, 10, 4, "f32", "0, 4, 8."),
+    ]
+
+    def fill(op: str, name: str, seed: int, shape: list[int], dtype: str | None, value: Any, description: str,
+             notes: str = "") -> Case:
+        attrs: dict[str, Any] = {"shape": shape}
+        if value is not None:
+            attrs["value"] = value
+        if dtype is not None:
+            attrs["dtype"] = dtype
+        dt = torch_dtype(dtype or "f32")
+        call = {
+            "core.zeros": (lambda xs: torch.zeros(shape, dtype=dt), "torch.zeros(shape, dtype=dtype)"),
+            "core.ones": (lambda xs: torch.ones(shape, dtype=dt), "torch.ones(shape, dtype=dtype)"),
+            "core.full": (lambda xs: torch.full(shape, attr_float(value), dtype=dt), "torch.full(shape, value, dtype=dtype)"),
+        }[op]
+        return exact_case(op, name, seed, f"{dtype or 'f32'} {shape}: {description}", lambda rng: [], call[0], call[1],
+                          attrs, notes)
+
+    for op, base in (("core.zeros", 1230), ("core.ones", 1240)):
+        cases += [
+            fill(op, "default_f32", base + 1, [3], None, None, "default dtype f32, rank 1."),
+            fill(op, "f16", base + 2, [2, 1, 3], "f16", None, "rank 3."),
+            fill(op, "rank6_bf16", base + 3, [1, 2, 1, 2, 1, 2], "bf16", None, "rank 6."),
+            fill(op, "i64", base + 4, [2, 3], "i64", None, "i64."),
+            fill(op, "i32", base + 5, [4], "i32", None, "i32."),
+            fill(op, "bool", base + 6, [2, 2], "bool", None, "bool: false for zeros, true for ones."),
+        ]
+    cases += [
+        fill("core.full", "default_f32", 1251, [2, 3], None, 0.1, "value 0.1, default dtype f32."),
+        fill("core.full", "nan_f32", 1252, [3], "f32", "nan", "value NaN."),
+        fill("core.full", "neg_inf_f32", 1253, [2, 2], "f32", "-inf", "value -inf."),
+        fill("core.full", "int_value_f32", 1254, [2], "f32", 7, "an integer value for a float dtype."),
+        fill("core.full", "double_rounding_f16", 1255, [2, 2], "f16", F16_DOUBLE_ROUNDING, "a value that rounds differently through f32.",
+             ROUNDING_NOTES),
+        fill("core.full", "rank6_bf16", 1257, [1, 2, 1, 1, 2, 1], "bf16", 0.1, "rank 6, value 0.1."),
+        fill("core.full", "max_i64", 1258, [2], "i64", I64_MAX, "the largest i64."),
+        fill("core.full", "min_i64", 1259, [2, 1], "i64", I64_MIN, "the smallest i64."),
+        fill("core.full", "min_i32", 1260, [3], "i32", I32_MIN, "the smallest i32."),
+        fill("core.full", "true_bool", 1261, [2, 3], "bool", True, "true."),
+        fill("core.full", "false_bool", 1262, [4], "bool", False, "false."),
+    ]
+
+    def full_like(name: str, seed: int, dtype: str, shape: list[int], value: Any, target: str | None,
+                  description: str, notes: str = "") -> Case:
+        layout = layout_of(name)
+        attrs: dict[str, Any] = {"value": value}
+        if target is not None:
+            attrs["dtype"] = target
+        kw = {} if target is None else {"dtype": torch_dtype(target)}
+        return exact_case("core.full_like", name, seed, f"x {dtype} {shape}: {description}",
+                          lambda rng: [("x", layout_input(rng, shape, dtype, layout))],
+                          lambda xs: torch.full_like(xs[0], attr_float(value), **kw),
+                          "torch.full_like(x, value, dtype=dtype)", attrs, notes)
+
+    cases += [
+        full_like("same_f32", 1271, "f32", [2, 3], 2.5, None, "value 2.5, x's dtype."),
+        full_like("f16", 1272, "f16", [3], 0.1, None, "value 0.1 in f16."),
+        full_like("bf16_to_f16", 1273, "bf16", [2, 2], F16_DOUBLE_ROUNDING, "f16", "bf16 x, f16 result, double rounding.",
+                  ROUNDING_NOTES),
+        full_like("f32_to_i64", 1274, "f32", [2, 1, 2], 3, "i64", "f32 x, i64 result."),
+        full_like("i32", 1275, "i32", [4], -7, None, "i32."),
+        full_like("i64_to_bool", 1276, "i64", [2, 2], True, "bool", "i64 x, bool result."),
+        full_like("bool_to_bf16", 1277, "bool", [3], "inf", "bf16", "bool x, bf16 result, value inf."),
+        full_like("rank6_bool", 1278, "bool", [1, 2, 1, 2, 1, 2], False, None, "rank 6, false."),
+        full_like("permuted_f32", 1279, "f32", [2, 3, 4], "nan", None, "a permuted x, value NaN."),
+        full_like("expanded_i64", 1280, "i64", [3, 2], I64_MAX, None, "an expanded x, the largest i64."),
+    ]
+    return cases
 
 
 # ---------------------------------------------------------------------------------------------
@@ -720,12 +1219,8 @@ def build_cases() -> list[Case]:
         matmul_case("batched_3d_f16", 206, "f16", [2, 3, 5], [2, 5, 4], "[2, 3, 5] @ [2, 5, 4] in f16."),
         matmul_case("2d_bf16", 207, "bf16", [3, 5], [5, 4], "[3, 5] @ [5, 4] in bf16."),
         matmul_case("broadcast_batch_4d_bf16", 208, "bf16", [2, 1, 3, 5], [1, 3, 5, 4], "[2, 1, 3, 5] @ [1, 3, 5, 4] in bf16."),
-        reshape_case("3d_to_2d_f32", 301, "f32", [2, 3, 4], [4, 6]),
-        reshape_case("1d_to_6d_f32", 302, "f32", [24], [2, 1, 3, 1, 2, 2]),
-        reshape_case("2d_to_3d_bf16", 303, "bf16", [4, 6], [2, 2, 6]),
-        reshape_case("1d_to_2d_i64", 304, "i64", [12], [3, 4]),
-        reshape_case("2d_to_3d_bool", 305, "bool", [2, 6], [3, 2, 2]),
     ]
+    cases += shape_cases() + indexing_cases() + creation_cases()
     seed = 400
     for src in DTYPE_NAMES:
         for dst in DTYPE_NAMES:
