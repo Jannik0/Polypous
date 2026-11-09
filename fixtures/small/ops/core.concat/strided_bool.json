@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "strided_bool",
+  "description": "bool [[2, 3], [2, 2]] along dim 1: a stepped slice, then concat.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "bool",
+      "shape": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "bool",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "x is fed as a stepped slice view (every second row along dim 0, from row 1).",
+  "seed": 971,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "op": "core.split",
+  "case": "rank1_i32",
+  "description": "i32 [5]: rank 1.",
+  "attributes": {
+    "dim": 0,
+    "sizes": [
+      1,
+      1,
+      3
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out0",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "out1",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "out2",
+      "dtype": "i32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.split(x, sizes, dim)",
+  "notes": "",
+  "seed": 985,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

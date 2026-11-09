@@ -6,7 +6,6 @@ use std::fmt;
 
 use burn::tensor::{Bool, BoolStore, DType as BurnDType, Device, Float, Int, Tensor};
 
-use super::data::num_elements;
 use super::{DType, Kind, Result, TensorData, TensorError};
 use crate::device::{DeviceId, device_id_of, resolve_device};
 
@@ -46,6 +45,7 @@ macro_rules! with_rank {
         }
     };
 }
+pub(crate) use with_rank;
 
 /// Like [`with_rank!`], but `$body` returns a `Ranked` of the same rank, which is wrapped back
 /// into an `Inner`.
@@ -132,6 +132,7 @@ macro_rules! dispatch_rank {
         }
     };
 }
+pub(crate) use dispatch_rank;
 
 /// A tensor with runtime rank (1–6) and runtime dtype, on any device of any compiled-in backend.
 ///
@@ -289,30 +290,6 @@ impl DynTensor {
         (self.inner, self.dtype, self.device)
     }
 
-    /// Returns a tensor with the same elements in row-major order and a new shape (rank 1–6).
-    ///
-    /// Fails if the element counts differ. Dimensions are given explicitly; there is no `-1`
-    /// wildcard.
-    pub fn reshape(self, shape: &[usize]) -> Result<Self> {
-        let current = self.shape();
-        if num_elements(shape) != num_elements(&current) {
-            return Err(TensorError::ShapeMismatch {
-                op: "reshape",
-                lhs: current,
-                rhs: shape.to_vec(),
-            });
-        }
-        let dtype = self.dtype;
-        let inner = with_rank!(self.inner, t => {
-            dispatch_rank!(shape.len(), N => t.reshape::<N>(shape)?)
-        });
-        Ok(DynTensor {
-            inner,
-            dtype,
-            device: self.device,
-        })
-    }
-
     /// Matrix product over the last two dimensions; leading dimensions are batch dimensions and
     /// broadcast like in [`DynTensor::add`].
     ///
@@ -448,18 +425,6 @@ impl<const D: usize> Ranked<D> {
         })
     }
 
-    /// The caller checked that the element counts match.
-    pub(crate) fn reshape<const N: usize>(self, shape: &[usize]) -> Result<Ranked<N>> {
-        let dims: [usize; N] = shape
-            .try_into()
-            .map_err(|_| TensorError::UnsupportedRank { rank: shape.len() })?;
-        Ok(match self {
-            Ranked::Float(t) => Ranked::Float(t.reshape(dims)),
-            Ranked::Int(t) => Ranked::Int(t.reshape(dims)),
-            Ranked::Bool(t) => Ranked::Bool(t.reshape(dims)),
-        })
-    }
-
     /// The caller checked dtypes, shapes and devices.
     fn matmul(self, other: Self) -> Result<Self> {
         match (self, other) {
@@ -490,7 +455,7 @@ impl<const D: usize> Ranked<D> {
 
 /// The Burn device for a public [`DeviceId`], or `DeviceUnavailable`. See `device/resolve.rs` for
 /// why unknown ids never reach Burn.
-fn resolve(id: DeviceId) -> Result<Device> {
+pub(crate) fn resolve(id: DeviceId) -> Result<Device> {
     resolve_device(id).map_err(|reason| TensorError::DeviceUnavailable { device: id, reason })
 }
 

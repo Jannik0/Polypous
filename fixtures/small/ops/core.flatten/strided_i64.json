@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.flatten",
+  "case": "strided_i64",
+  "description": "i64 [3, 2, 2]: a stepped slice, then flatten dims 1..2.",
+  "attributes": {
+    "start_dim": 1,
+    "end_dim": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        3,
+        2,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.flatten(x, start_dim, end_dim)",
+  "notes": "x is fed as a stepped slice view (every second row along dim 0, from row 1).",
+  "seed": 909,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

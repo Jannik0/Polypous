@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.slice",
+  "case": "transposed_f32",
+  "description": "f32 [4, 6]: transpose, then slice with step 2.",
+  "attributes": {
+    "dim": 1,
+    "start": 1,
+    "end": 5,
+    "step": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x[(slice(None),) * dim + (slice(start, end, step),)]",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back.",
+  "seed": 1002,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

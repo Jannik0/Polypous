@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "op": "core.full_like",
+  "case": "bool_to_bf16",
+  "description": "x bool [3]: bool x, bf16 result, value inf.",
+  "attributes": {
+    "value": "inf",
+    "dtype": "bf16"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bool",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.full_like(x, value, dtype=dtype)",
+  "notes": "",
+  "seed": 1277,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

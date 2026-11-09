@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.full_like",
+  "case": "i64_to_bool",
+  "description": "x i64 [2, 2]: i64 x, bool result.",
+  "attributes": {
+    "value": true,
+    "dtype": "bool"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bool",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.full_like(x, value, dtype=dtype)",
+  "notes": "",
+  "seed": 1276,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

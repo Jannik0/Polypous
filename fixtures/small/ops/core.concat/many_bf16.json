@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "many_bf16",
+  "description": "bf16 [[1, 3], [2, 3], [1, 3], [3, 3], [1, 3]] along dim 0: five inputs.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "bf16",
+      "shape": [
+        1,
+        3
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "xs2",
+      "dtype": "bf16",
+      "shape": [
+        1,
+        3
+      ]
+    },
+    {
+      "name": "xs3",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        3
+      ]
+    },
+    {
+      "name": "xs4",
+      "dtype": "bf16",
+      "shape": [
+        1,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        8,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "",
+  "seed": 963,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

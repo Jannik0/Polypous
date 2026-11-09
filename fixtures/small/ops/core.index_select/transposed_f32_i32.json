@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "op": "core.index_select",
+  "case": "transposed_f32_i32",
+  "description": "x f32 [3, 4], 3 i32 indices, dim 1: transpose, then index_select.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.index_select(x, dim, index)",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back.",
+  "seed": 1130,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

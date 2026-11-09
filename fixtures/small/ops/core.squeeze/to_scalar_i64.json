@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.squeeze",
+  "case": "to_scalar_i64",
+  "description": "i64 [1, 1, 1]: every dim removed: the result is [1].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.squeeze(x, dim)",
+  "notes": "PyTorch's 0-dim result is shape [1] here (graph-ir.md \u00a73.1.5).",
+  "seed": 934,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

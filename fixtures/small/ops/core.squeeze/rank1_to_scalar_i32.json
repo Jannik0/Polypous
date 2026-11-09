@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.squeeze",
+  "case": "rank1_to_scalar_i32",
+  "description": "i32 [1]: squeeze [1] at dim 0: stays [1].",
+  "attributes": {
+    "dim": [
+      0
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.squeeze(x, dim)",
+  "notes": "PyTorch's 0-dim result is shape [1] here (graph-ir.md \u00a73.1.5).",
+  "seed": 935,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

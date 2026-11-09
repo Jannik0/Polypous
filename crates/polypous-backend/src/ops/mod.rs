@@ -17,10 +17,13 @@
 //! | `elementwise.rs` | `core.add sub mul div pow maximum minimum neg abs exp log sqrt rsqrt sin cos tanh clamp where` |
 //! | `compare.rs` | `core.eq ne lt le gt ge`, and the logic ops `core.and or not` |
 //! | `cast.rs` | `core.cast` |
+//! | `shape.rs` | `core.reshape flatten permute transpose squeeze unsqueeze expand concat split slice pad` |
+//! | `indexing.rs` | `core.gather index_select` |
+//! | `creation.rs` | `core.constant arange zeros ones full full_like`, and the fill values of `pad` |
 //!
-//! Planned: shape, indexing and creation ops (#41), reductions, `matmul` and softmax (#42) and
-//! the `nn` opset (#43) each add their own file here and register it below. `matmul` and
-//! `reshape` still live in `tensor/dyn_tensor.rs` until #41/#42 move them.
+//! Planned: reductions, `matmul` and softmax (#42) and the `nn` opset (#43) each add their own
+//! file here and register it below. `matmul` still lives in `tensor/dyn_tensor.rs` until #42
+//! moves it.
 //!
 //! Reference tests live in `tests/reference_*.rs`, one test binary per op family, and share the
 //! fixture harness in `tests/reference/common.rs` (testing-strategy.md §6). A new family adds
@@ -37,7 +40,43 @@
 //! | `core.eq`, `ne`, `lt`, `le`, `gt`, `ge` | [`equal`](DynTensor::equal), [`not_equal`](DynTensor::not_equal), [`less`](DynTensor::less), [`less_equal`](DynTensor::less_equal), [`greater`](DynTensor::greater), [`greater_equal`](DynTensor::greater_equal) (not `eq`/`ne`, which read like `PartialEq`) |
 //! | `core.and`, `or`, `not` | [`logical_and`](DynTensor::logical_and), [`logical_or`](DynTensor::logical_or), [`logical_not`](DynTensor::logical_not) (PyTorch's names) |
 //! | `core.cast` | [`DynTensor::cast`] |
+//! | `core.reshape`, `flatten`, `permute`, `transpose`, `squeeze`, `unsqueeze`, `expand`, `split`, `slice`, `pad` | The same names: [`reshape`](DynTensor::reshape), [`flatten`](DynTensor::flatten), [`permute`](DynTensor::permute), [`transpose`](DynTensor::transpose), [`squeeze`](DynTensor::squeeze), [`unsqueeze`](DynTensor::unsqueeze), [`expand`](DynTensor::expand), [`split`](DynTensor::split), [`slice`](DynTensor::slice), [`pad`](DynTensor::pad) |
+//! | `core.concat` | [`DynTensor::concat`] (an associated function over a list) |
+//! | `core.gather`, `index_select` | [`gather`](DynTensor::gather), [`index_select`](DynTensor::index_select) |
+//! | `core.constant`, `arange`, `zeros`, `ones`, `full` | Associated functions with a [`DeviceId`] argument: [`constant`](DynTensor::constant), [`arange`](DynTensor::arange), [`zeros`](DynTensor::zeros), [`ones`](DynTensor::ones), [`full`](DynTensor::full) |
+//! | `core.full_like` | [`DynTensor::full_like`] |
 //!
+//! # Arguments of the shape, indexing and creation ops
+//!
+//! The runtime calls these after `polypous_ir::Analysis` has bound the graph, so every argument
+//! arrives **concrete and normalized**: axes are `0…r-1` (`unsqueeze`: `0…r`), `-1` in `reshape`
+//! and `expand` is replaced by the size it stands for, `squeeze`'s axes are filled in, `slice`
+//! bounds are resolved and clamped (`0 ≤ start < end ≤ n`), and defaults are filled in. The
+//! functions still check every argument and return a [`TensorError`] instead of panicking:
+//! wrong rank, axes out of range or repeated, element counts or shapes that don't fit, ranks
+//! above 6 ([`TensorError::UnsupportedRank`]), zero-size results (graph-ir.md §2.3: not in M1),
+//! lists over the limits of graph-ir.md §4.3, and fill values that don't fit the dtype.
+//!
+//! - **Views.** `reshape`, `permute`, `transpose`, `expand`, `slice` and `split` return Burn views
+//!   where Burn makes them (strided, or stride 0 for `expand`); no op here assumes a contiguous
+//!   input. The reference tests feed permuted, transposed, expanded and stepped-slice views to
+//!   every shape and indexing op and to `full_like` (`tests/reference/common.rs`, `feed_layout`).
+//! - **Bool `gather`/`index_select`** run on an `i32` copy and convert back: Burn 0.22.1's `flex`
+//!   returns them in `u8` storage, which isn't a bool dtype. Done on every backend.
+//! - **Out-of-range indices** (§3.1.8): `gather` and `index_select` read the minimum and maximum of
+//!   the index tensor back to the host before the op runs (one reduction and **one device sync**
+//!   per call; on the CPU a pass over the indices) and return
+//!   [`TensorError::IndexOutOfRange`]. Burn 0.22.1 does not check: `flex` panics, and the CubeCL
+//!   backends read whatever memory the index points at (0, a neighbouring element, or garbage on
+//!   lavapipe; `index_select` with index `-1` crashed the lavapipe process with SIGSEGV).
+//! - **`pad`** is built from `full` blocks and `concat`, for every dtype (Burn's `pad` exists only
+//!   for numeric tensors).
+//! - **Fill values** (`full`, `full_like`, `constant`, `pad`; §3.1.7): `bool` takes
+//!   [`Scalar::Bool`]; `i32`/`i64` take an in-range [`Scalar::Int`]; float dtypes take
+//!   [`Scalar::Float`] or [`Scalar::Int`] (as `f64`), rounded on the host from `f64` to `f32` and
+//!   then to `f16`/`bf16`. That is how PyTorch (`torch.full`, `torch.tensor`) rounds Python floats,
+//!   so the two agree where a single rounding from `f64` would differ. NaN and infinities are
+//!   allowed for float dtypes.
 //! # Semantics (graph-ir.md §3.1)
 //!
 //! - **Strict dtypes** (§3.1.2): operands that must agree have the same dtype, or the op fails
@@ -71,12 +110,53 @@
 
 mod cast;
 mod compare;
+mod creation;
 mod elementwise;
+mod indexing;
+mod shape;
 
 use crate::device::DeviceId;
 use burn::tensor::Shape;
 
-use crate::tensor::{DType, DynTensor, Ranked, Result, TensorError, map_rank};
+use crate::tensor::{DType, DynTensor, Ranked, Result, TensorError, map_rank, num_elements};
+
+/// Most inputs of `core.concat` and outputs of `core.split` (graph-ir.md §4.3).
+pub(crate) const MAX_CONCAT_SPLIT: usize = 1024;
+
+/// `UnsupportedRank` unless `shape` has 1–6 dims; `InvalidArgument` for a zero-size dim
+/// (graph-ir.md §2.3: not in M1) or a shape whose byte size overflows. Every op checks its output
+/// shape with this before it allocates anything.
+pub(crate) fn check_shape(op: &'static str, shape: &[usize], dtype: DType) -> Result<()> {
+    if !(1..=DynTensor::MAX_RANK).contains(&shape.len()) {
+        return Err(TensorError::UnsupportedRank { rank: shape.len() });
+    }
+    if shape.contains(&0) {
+        return Err(TensorError::InvalidArgument {
+            op,
+            reason: format!("shape {shape:?} has a zero-size dim (not supported in M1)"),
+        });
+    }
+    let bytes = num_elements(shape).and_then(|n| n.checked_mul(dtype.size_bytes()));
+    if bytes.is_none_or(|b| isize::try_from(b).is_err()) {
+        return Err(TensorError::InvalidArgument {
+            op,
+            reason: format!("shape {shape:?} is too large"),
+        });
+    }
+    Ok(())
+}
+
+/// `InvalidArgument` unless `axis < rank`. `name` is the argument's name in the IR (`dim`, …).
+pub(crate) fn check_axis(op: &'static str, name: &str, axis: usize, rank: usize) -> Result<()> {
+    if axis < rank {
+        Ok(())
+    } else {
+        Err(TensorError::InvalidArgument {
+            op,
+            reason: format!("`{name}` {axis} is out of range for rank {rank}"),
+        })
+    }
+}
 
 /// A scalar argument of an op, for example a `clamp` bound (graph-ir.md §3.1.7, type `scalar`).
 ///
@@ -103,6 +183,8 @@ pub(crate) enum DTypeClass {
     Float,
     /// `B`: `bool`.
     Bool,
+    /// `I`: `i64`, `i32` (index inputs, §3.1.2).
+    Index,
     /// `A`: any dtype.
     Any,
 }
@@ -113,6 +195,7 @@ impl DTypeClass {
             DTypeClass::Numeric => dtype.is_float() || dtype.is_int(),
             DTypeClass::Float => dtype.is_float(),
             DTypeClass::Bool => dtype == DType::Bool,
+            DTypeClass::Index => dtype.is_int(),
             DTypeClass::Any => true,
         }
     }

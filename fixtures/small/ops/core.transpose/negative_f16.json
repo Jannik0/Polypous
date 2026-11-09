@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.transpose",
+  "case": "negative_f16",
+  "description": "f16 [2, 3, 4]: dims -1 and 0.",
+  "attributes": {
+    "dim0": -1,
+    "dim1": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        4,
+        3,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.transpose(x, dim0, dim1)",
+  "notes": "",
+  "seed": 922,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

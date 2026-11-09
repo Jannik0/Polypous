@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.constant",
+  "case": "f16",
+  "description": "f16 [2, 3]: rounding, the largest f16, overflow to inf, double rounding, the smallest normal f16.",
+  "attributes": {
+    "dtype": "f16",
+    "shape": [
+      2,
+      3
+    ],
+    "values": [
+      0.1,
+      65504.0,
+      100000.0,
+      1.0004882812509095,
+      -7,
+      6.103515625e-05
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.tensor(values, dtype=dtype).reshape(shape)",
+  "notes": "Float values are rounded from f64 to f32 and then to f16/bf16, as PyTorch does: 1.0004882812509095 gives 1.0 in f16 (one rounding from f64 would give 1.0009765625). A finite value beyond the dtype's range rounds to inf (IEEE 754), as in torch.tensor; torch.full and F.pad raise for it instead, so only this op has a fixture for it.",
+  "seed": 1202,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

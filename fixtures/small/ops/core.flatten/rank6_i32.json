@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "op": "core.flatten",
+  "case": "rank6_i32",
+  "description": "i32 [2, 1, 2, 1, 2, 2]: rank 6, dims 2..-1.",
+  "attributes": {
+    "start_dim": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        2,
+        1,
+        2,
+        1,
+        2,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        2,
+        1,
+        8
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.flatten(x, start_dim, end_dim)",
+  "notes": "",
+  "seed": 905,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

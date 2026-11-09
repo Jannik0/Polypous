@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "op": "core.expand",
+  "case": "rank6_i64",
+  "description": "i64 [1, 2, 1]: -> rank 6.",
+  "attributes": {
+    "shape": [
+      2,
+      2,
+      2,
+      3,
+      2,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        1,
+        2,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        2,
+        2,
+        2,
+        3,
+        2,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "x.expand(shape)",
+  "notes": "",
+  "seed": 954,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

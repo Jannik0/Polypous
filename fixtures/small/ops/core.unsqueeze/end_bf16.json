@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.unsqueeze",
+  "case": "end_bf16",
+  "description": "bf16 [3, 4]: dim 2 (= rank): a trailing 1.",
+  "attributes": {
+    "dim": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        4,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.unsqueeze(x, dim)",
+  "notes": "",
+  "seed": 943,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

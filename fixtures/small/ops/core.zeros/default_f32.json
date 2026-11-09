@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "op": "core.zeros",
+  "case": "default_f32",
+  "description": "f32 [3]: default dtype f32, rank 1.",
+  "attributes": {
+    "shape": [
+      3
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.zeros(shape, dtype=dtype)",
+  "notes": "",
+  "seed": 1231,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

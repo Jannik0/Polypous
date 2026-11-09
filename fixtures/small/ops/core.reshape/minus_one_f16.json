@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.reshape",
+  "case": "minus_one_f16",
+  "description": "f16 [3, 4]: -> [2, -1]: -1 stands for 6.",
+  "attributes": {
+    "shape": [
+      2,
+      -1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.reshape(x, shape)",
+  "notes": "",
+  "seed": 306,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

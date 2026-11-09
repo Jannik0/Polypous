@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "op": "core.zeros",
+  "case": "i32",
+  "description": "i32 [4]: i32.",
+  "attributes": {
+    "shape": [
+      4
+    ],
+    "dtype": "i32"
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.zeros(shape, dtype=dtype)",
+  "notes": "",
+  "seed": 1235,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.transpose",
+  "case": "last_two_f32",
+  "description": "f32 [2, 3, 4]: dims 1 and 2.",
+  "attributes": {
+    "dim0": 1,
+    "dim1": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.transpose(x, dim0, dim1)",
+  "notes": "",
+  "seed": 921,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

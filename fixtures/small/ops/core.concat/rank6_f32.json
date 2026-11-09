@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "op": "core.concat",
+  "case": "rank6_f32",
+  "description": "f32 [[1, 2, 1, 2, 1, 2], [1, 2, 1, 1, 1, 2]] along dim 3: rank 6.",
+  "attributes": {
+    "dim": 3
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        1,
+        1,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        3,
+        1,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cat(xs, dim)",
+  "notes": "",
+  "seed": 967,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

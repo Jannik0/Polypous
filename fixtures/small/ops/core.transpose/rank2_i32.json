@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.transpose",
+  "case": "rank2_i32",
+  "description": "i32 [4, 3]: rank 2.",
+  "attributes": {
+    "dim0": 0,
+    "dim1": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.transpose(x, dim0, dim1)",
+  "notes": "",
+  "seed": 925,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

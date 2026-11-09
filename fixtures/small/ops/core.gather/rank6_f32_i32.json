@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "op": "core.gather",
+  "case": "rank6_f32_i32",
+  "description": "x f32 [2, 1, 3, 2, 1, 2], index i32 [2, 1, 4, 2, 1, 2], dim 2: rank 6, dim 2.",
+  "attributes": {
+    "dim": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        1,
+        3,
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i32",
+      "shape": [
+        2,
+        1,
+        4,
+        2,
+        1,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        1,
+        4,
+        2,
+        1,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.gather(x, dim, index)",
+  "notes": "",
+  "seed": 1111,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

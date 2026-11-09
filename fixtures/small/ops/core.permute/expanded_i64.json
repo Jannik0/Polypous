@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.permute",
+  "case": "expanded_i64",
+  "description": "i64 [3, 2, 4]: expand, then permute [1, 2, 0].",
+  "attributes": {
+    "dims": [
+      1,
+      2,
+      0
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        3,
+        2,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        2,
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.permute(x, dims)",
+  "notes": "x is fed as an expanded view (stride 0 along dim 0): its rows along dim 0 are equal.",
+  "seed": 919,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
