@@ -2,31 +2,32 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-08, M1 in progress (#35–#37 done).
+2026-11-09, M1 in progress (#35–#40 done).
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops). Next: #41–#43 (remaining op families, one at a time), then #44 (interpreter) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
 ## 2. What exists after M0
 
 | Crate | State |
 |---|---|
-| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`) |
+| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40), with a fixture-based reference harness that runs every case on every device and dtype |
 | `polypous` (facade) | Real code. `Engine`, `EngineConfig`, facade device types (`DeviceInfo` with `physical_gpu` and `primary`), probe API (`polypous::probe`), `Error`/`ErrorKind`, panics caught at the boundary |
 | `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json` |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
-| `polypous-ir`, `-runtime`, `-polyp`, `-quant`, `-train`, `-pipelines` | Skeletons (a doc comment each). M1 fills `-ir` and `-runtime` |
+| `polypous-ir` | Real code (M1, #38, #39). Graph document model, loading under the limits of graph-ir.md §4.3, canonical JSON, structural validation with collected errors, dim expressions, the catalog of the 78 M1 ops, dtype and symbolic shape inference, and the runtime API (`Graph::analyze`, `Analysis::bind`) |
+| `polypous-runtime`, `-polyp`, `-quant`, `-train`, `-pipelines` | Skeletons (a doc comment each). M1 fills `-runtime` (#44) |
 | `tools/reference/`, `fixtures/` | PyTorch fixture generator with `--check`, first op fixtures, `fetch_fixtures.py` and the fixture checks in CI (M1, #36) |
 
 Specs that describe implemented behavior: [placement.md §1](specs/placement.md#1-device-discovery)
 (discovery, probing, cache, fingerprints, enumeration rules), [public-api.md §1.1, §1.2, §2](specs/public-api.md)
 and [formats.md §1](specs/formats.md) (safetensors). [graph-ir.md](specs/graph-ir.md) is binding for M1 as its
-status line says, but not implemented yet. All other specs are drafts until their milestone starts.
+status line says: validation and inference are implemented (#38, #39), the backend ops in part (#40), the interpreter not yet. All other specs are drafts until their milestone starts.
 
 CI (`.github/workflows/`): seven checks. Six are required by the `main` ruleset:
 - Lint & test (Linux)
@@ -73,6 +74,8 @@ Nothing here blocks M1. Fix an item when its area is touched, or file an issue f
   - CubeCL's SPIR-V lowering maps float `!=` to `OpFOrdNotEqual`: `ne` with NaN and float → `bool` casts of NaN gave `false` on Vulkan. The LLVM path (CUDA) uses the unordered form. Explicit masks.
   - CubeCL's `powf` polyfill falls back to the native pow (`GLSL.std.450 Pow` on SPIR-V, undefined for some inputs), which is wrong for `1^NaN`, `NaN^0`, `0^0` and `0^-1` on lavapipe. Explicit C99 special cases.
   - CubeCL's f16 `tanh` missed `rtol 1e-2` near zero on lavapipe. f16/bf16 transcendentals and `pow` compute in f32 on every backend.
+  - On the reference machine (Windows, NVIDIA 621.14, Intel 32.0.101.7092): Intel's Vulkan driver returns `pow(|a|, b)` for a negative base with a non-integer exponent (GLSL `pow` is undefined there). `pow` sets NaN explicitly for it. Both Vulkan drivers flush f32 subnormals to zero in comparisons. Subnormals are backend-defined (graph-ir.md §3.1.8, owner decision), and fixtures contain none.
+  - The owner follows these up in Burn and CubeCL upstream, outside this repository.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work.
