@@ -20,10 +20,12 @@
 //! | `shape.rs` | `core.reshape flatten permute transpose squeeze unsqueeze expand concat split slice pad` |
 //! | `indexing.rs` | `core.gather index_select` |
 //! | `creation.rs` | `core.constant arange zeros ones full full_like`, and the fill values of `pad` |
+//! | `reduce.rs` | `core.sum mean max min argmax argmin cumsum` |
+//! | `linalg.rs` | `core.matmul` |
+//! | `softmax.rs` | `core.softmax log_softmax` |
+//! | `topk.rs` | `core.top_k` |
 //!
-//! Planned: reductions, `matmul` and softmax (#42) and the `nn` opset (#43) each add their own
-//! file here and register it below. `matmul` still lives in `tensor/dyn_tensor.rs` until #42
-//! moves it.
+//! Planned: the `nn` opset (#43) adds its own file here and registers it below.
 //!
 //! Reference tests live in `tests/reference_*.rs`, one test binary per op family, and share the
 //! fixture harness in `tests/reference/common.rs` (testing-strategy.md §6). A new family adds
@@ -45,6 +47,11 @@
 //! | `core.gather`, `index_select` | [`gather`](DynTensor::gather), [`index_select`](DynTensor::index_select) |
 //! | `core.constant`, `arange`, `zeros`, `ones`, `full` | Associated functions with a [`DeviceId`] argument: [`constant`](DynTensor::constant), [`arange`](DynTensor::arange), [`zeros`](DynTensor::zeros), [`ones`](DynTensor::ones), [`full`](DynTensor::full) |
 //! | `core.full_like` | [`DynTensor::full_like`] |
+//! | `core.sum`, `mean`, `max`, `min` | The same names: [`sum`](DynTensor::sum), [`mean`](DynTensor::mean), [`max`](DynTensor::max), [`min`](DynTensor::min) (`dims: None` reduces every dim) |
+//! | `core.argmax`, `argmin`, `cumsum` | [`argmax`](DynTensor::argmax), [`argmin`](DynTensor::argmin), [`cumsum`](DynTensor::cumsum) |
+//! | `core.matmul` | [`DynTensor::matmul`] |
+//! | `core.softmax`, `log_softmax` | [`softmax`](DynTensor::softmax), [`log_softmax`](DynTensor::log_softmax) |
+//! | `core.top_k` | [`DynTensor::top_k`], returning `(values, indices)` |
 //!
 //! # Arguments of the shape, indexing and creation ops
 //!
@@ -77,6 +84,40 @@
 //!   then to `f16`/`bf16`. That is how PyTorch (`torch.full`, `torch.tensor`) rounds Python floats,
 //!   so the two agree where a single rounding from `f64` would differ. NaN and infinities are
 //!   allowed for float dtypes.
+//!
+//! # Reductions, matmul, softmax and top_k
+//!
+//! Arguments arrive normalized as above: reduction axes are `0…r-1` (`dims: None` when the
+//! graph leaves `dim` out, meaning every dim), `top_k`'s `k` is a concrete size, and the
+//! defaults (`keepdim: false`, `dtype: i64`, `top_k` `dim: -1` → `r-1`, `largest: true`) are
+//! filled in. Empty, repeated or out-of-range axes, `k` outside `1…d(dim)`, a non-integer index
+//! dtype, an `i32` index dtype for a dim above `i32::MAX`, and matmul operands whose `k` or batch
+//! dims don't fit are [`TensorError::InvalidArgument`] or [`TensorError::ShapeMismatch`]; an index
+//! dtype the device lacks is [`TensorError::UnsupportedDType`].
+//!
+//! - **Explicit NaN and tie rules** (§3.1.8), so results don't depend on a backend's reduction
+//!   order: `max`/`min` replace NaN by `∓inf` and set NaN where a reduced slice held one;
+//!   `argmax`/`argmin` take the smallest index among the positions equal to the extremum (the
+//!   NaN positions, in a slice with a NaN), with an integer `min`. Burn's own `argmax` got NaN and
+//!   ties right on `flex` and lavapipe in our probes, but nothing in Burn promises it.
+//! - **Integer `sum` and `cumsum` wrap** (§3.1.8). `flex` sums `i64` with plain `+`, and computes
+//!   `cumsum` of `i32` and `i64` with plain `+`; all three panic on overflow in debug builds
+//!   (`attempt to add with overflow`). On the CPU they run on the host with `wrapping_add`
+//!   (`i32` `sum` widens to `i64` in `flex` and wraps already). GPU integer arithmetic wraps
+//!   (lavapipe: `i64::MAX + 1` and `i32::MAX + 1` wrap in `sum` and `cumsum`).
+//! - **Half-precision accumulation:** `sum`, `mean`, `cumsum`, `softmax` and `log_softmax` of
+//!   `f16`/`bf16` compute in `f32` and round once to the dtype, on every backend (§3.1.8). On
+//!   lavapipe, CubeCL's `f16` `cumsum` accumulates in `f16`: the cumulative sum of 4096 ones
+//!   stops at 2048. `matmul` keeps the backend's kernel; with `k = 256` it meets `rtol 1e-2` in
+//!   `f16` and `bf16` on `flex` and in `f16` on lavapipe (which has no `bf16`).
+//! - **`softmax`/`log_softmax`** subtract the NaN-propagating row maximum first, so large inputs
+//!   don't overflow; rows with NaN or `+inf`, and rows of only `-inf`, are NaN, as in PyTorch.
+//! - **`top_k` runs on the host** on every backend, with one device sync per call: Burn 0.22.1
+//!   has no GPU sort (its CubeCL sort reads back to the host too), its sorts are unstable, and
+//!   CubeCL's `topk_with_indices` returned garbage after a NaN on lavapipe. See `topk.rs`.
+//! - **`matmul`** broadcasts the batch dims explicitly (different ranks allowed) before Burn's
+//!   `matmul` sees them.
+//!
 //! # Semantics (graph-ir.md §3.1)
 //!
 //! - **Strict dtypes** (§3.1.2): operands that must agree have the same dtype, or the op fails
@@ -113,7 +154,11 @@ mod compare;
 mod creation;
 mod elementwise;
 mod indexing;
+mod linalg;
+mod reduce;
 mod shape;
+mod softmax;
+mod topk;
 
 use crate::device::DeviceId;
 use burn::tensor::Shape;

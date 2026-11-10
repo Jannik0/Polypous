@@ -290,38 +290,6 @@ impl DynTensor {
         (self.inner, self.dtype, self.device)
     }
 
-    /// Matrix product over the last two dimensions; leading dimensions are batch dimensions and
-    /// broadcast like in [`DynTensor::add`].
-    ///
-    /// Both tensors need the same float dtype, the same rank (at least 2) and the same device, and
-    /// `self`'s last dimension must equal `other`'s second-to-last. `[.., m, k] @ [.., k, n]` gives
-    /// `[.., m, n]`.
-    pub fn matmul(self, other: Self) -> Result<Self> {
-        const OP: &str = "matmul";
-        self.check_binary(OP, &other)?;
-        if !self.dtype.is_float() {
-            return Err(TensorError::UnsupportedOperation {
-                op: OP,
-                dtype: self.dtype,
-            });
-        }
-        let (lhs, rhs) = (self.shape(), other.shape());
-        let rank = lhs.len();
-        let compatible = rank >= 2
-            && lhs[rank - 1] == rhs[rank - 2]
-            && broadcast(&lhs[..rank - 2], &rhs[..rank - 2]).is_some();
-        if !compatible {
-            return Err(TensorError::ShapeMismatch { op: OP, lhs, rhs });
-        }
-        let (dtype, device) = (self.dtype, self.device);
-        let inner = zip_rank!(OP, self.inner, other.inner, a, b => a.matmul(b)?);
-        Ok(DynTensor {
-            inner,
-            dtype,
-            device,
-        })
-    }
-
     /// Returns a copy of the tensor on `device`. Copies between backends go through host memory.
     ///
     /// Fails if the device is not available (see [`DynTensor::from_data`]) or its backend doesn't
@@ -346,33 +314,6 @@ impl DynTensor {
             dtype,
             device: id,
         })
-    }
-
-    /// Checks dtype, rank and device of a binary operation's operands.
-    pub(crate) fn check_binary(&self, op: &'static str, other: &Self) -> Result<()> {
-        if self.dtype != other.dtype {
-            return Err(TensorError::DTypeMismatch {
-                op,
-                lhs: self.dtype,
-                rhs: other.dtype,
-            });
-        }
-        if self.rank() != other.rank() {
-            return Err(TensorError::ShapeMismatch {
-                op,
-                lhs: self.shape(),
-                rhs: other.shape(),
-            });
-        }
-        let (lhs, rhs) = (self.device, other.device);
-        if lhs != rhs {
-            return Err(TensorError::DeviceMismatch {
-                op,
-                lhs: lhs.to_string(),
-                rhs: rhs.to_string(),
-            });
-        }
-        Ok(())
     }
 }
 
@@ -423,14 +364,6 @@ impl<const D: usize> Ranked<D> {
         data.map_err(|err| TensorError::Backend {
             message: format!("{err:?}"),
         })
-    }
-
-    /// The caller checked dtypes, shapes and devices.
-    fn matmul(self, other: Self) -> Result<Self> {
-        match (self, other) {
-            (Ranked::Float(a), Ranked::Float(b)) => Ok(Ranked::Float(a.matmul(b))),
-            (a, _) => Err(a.kind_error("matmul")),
-        }
     }
 
     /// Burn tensors share their buffer, so the clones are cheap.
@@ -494,22 +427,6 @@ fn encode_bool(bytes: &[u8], store: BoolStore) -> Vec<u8> {
             .flat_map(|&b| u32::from(b).to_ne_bytes())
             .collect(),
     }
-}
-
-/// Broadcast shape of two shapes of equal rank (dimensions equal, or one of them `1`), or `None`.
-fn broadcast(lhs: &[usize], rhs: &[usize]) -> Option<Vec<usize>> {
-    if lhs.len() != rhs.len() {
-        return None;
-    }
-    lhs.iter()
-        .zip(rhs)
-        .map(|(&l, &r)| match (l, r) {
-            _ if l == r => Some(l),
-            (1, r) => Some(r),
-            (l, 1) => Some(l),
-            _ => None,
-        })
-        .collect()
 }
 
 /// Converts little-endian elements of `width` bytes to the host's byte order, in place.

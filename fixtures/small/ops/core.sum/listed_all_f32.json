@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "listed_all_f32",
+  "description": "f32 [3, 2]: every dim listed (dim [-1, 0]): [1].",
+  "attributes": {
+    "dim": [
+      -1,
+      0
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.sum(x, dim, keepdim) in f64, rounded once to f32",
+  "notes": "out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md \u00a73.1.8).",
+  "seed": 1305,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

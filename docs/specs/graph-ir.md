@@ -525,6 +525,8 @@ A wrong JSON type, a value outside the listed range, an unknown enum value or a 
 - **Half-precision transcendentals:** for `f16` and `bf16`, the transcendental ops (`exp`, `log`,
   `sqrt`, `rsqrt`, `sin`, `cos`, `tanh`) and `pow` compute in `f32` and round once to the dtype,
   so results don't depend on a backend's half-precision kernels. The output dtype is unchanged.
+- **Half-precision accumulation:** for `f16` and `bf16`, `sum`, `mean`, `cumsum`, `softmax` and
+  `log_softmax` compute in `f32` and round once to the dtype. The output dtype is unchanged.
 
 #### 3.1.9 The PyTorch column
 
@@ -705,7 +707,8 @@ These ops have no tensor inputs (except `full_like`) and are not differentiable.
 - `cast`: any dtype to any dtype. Casting to the same dtype is a no-op. To `bool`: non-zero is
   `true`. From `bool`: `true` is `1`. Float to integer: §3.1.8.
 - `top_k`: floats only in M1 (sampling works on logits). Output is always sorted; ties and NaN:
-  §3.1.8.
+  §3.1.8. `torch.topk` leaves the order of equal values open, so fixtures use the stable sort it
+  otherwise equals, `torch.sort(x, dim, descending=largest, stable=True)` cut to the first `k`.
 
 ### 3.3 `nn` (v1, M1)
 

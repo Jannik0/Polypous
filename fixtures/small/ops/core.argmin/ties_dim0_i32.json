@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "op": "core.argmin",
+  "case": "ties_dim0_i32",
+  "description": "i32 [8, 6]: Small integers along dim 0: many ties.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        8,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.argmin(x, dim, keepdim)",
+  "notes": "Ties give the lowest index; NaN counts as larger (argmax) and smaller (argmin) than every number, so the first NaN wins.",
+  "seed": 1513,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

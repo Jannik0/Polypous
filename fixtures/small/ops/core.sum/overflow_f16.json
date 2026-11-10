@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "overflow_f16",
+  "description": "f16 [2, 1024]: f16 values near 1000: the sums (~1e6) overflow to inf.",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        1024
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.sum(x, dim, keepdim) in f64, rounded once to f16",
+  "notes": "Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf. out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md \u00a73.1.8).",
+  "seed": 1325,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

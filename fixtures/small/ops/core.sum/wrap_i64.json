@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "wrap_i64",
+  "description": "i64 [3, 3]: Overflow at the i64 limits wraps around.",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.sum(x, dim, keepdim)",
+  "notes": "Integer overflow wraps (two's complement), as in PyTorch (graph-ir.md \u00a73.1.8).",
+  "seed": 1323,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.mean",
+  "case": "long_row_f16",
+  "description": "f16 [2, 4096]: f16 rows of 4096 values in [0.5, 1): the sums (~3070) pass 2^11, where an f16 accumulator stops growing (the spacing is 2 there).",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        4096
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.mean(x, dim, keepdim) in f64, rounded once to f16",
+  "notes": "out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md \u00a73.1.8).",
+  "seed": 1351,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

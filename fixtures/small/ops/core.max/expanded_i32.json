@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.max",
+  "case": "expanded_i32",
+  "description": "i32 [3, 4]: expand, then reduce every dim.",
+  "attributes": {
+    "dim": [
+      0,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.amax(x, dim, keepdim)",
+  "notes": "x is fed as an expanded view (stride 0 along dim 0): its rows along dim 0 are equal.",
+  "seed": 1393,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

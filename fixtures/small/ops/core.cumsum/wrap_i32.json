@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.cumsum",
+  "case": "wrap_i32",
+  "description": "i32 [4, 2]: Overflow at the i32 limits wraps around, along dim 0.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        4,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        4,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cumsum(x, dim).to(torch.int32)",
+  "notes": "Integer overflow wraps (two's complement), as in PyTorch (graph-ir.md \u00a73.1.8).",
+  "seed": 1554,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

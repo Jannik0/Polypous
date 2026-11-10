@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.mean",
+  "case": "nan_f32",
+  "description": "f32 [4, 4]: NaN and \u00b1inf: NaN propagates, inf + -inf is NaN.",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.mean(x, dim, keepdim) in f64, rounded once to f32",
+  "notes": "Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf. out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md \u00a73.1.8).",
+  "seed": 1356,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

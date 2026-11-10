@@ -159,6 +159,12 @@ MATMUL_NOTES = (
 )
 
 
+def matmul_lhs(rng: Any, name: str, shape: list[int], dtype: str) -> Any:
+    """`a` of a matmul case: uniform in [-2, 2), as the view the name asks for (see LAYOUTS)."""
+    layout = layout_of(name)
+    return uniform(rng, shape, dtype) if layout is None else layout_input(rng, shape, dtype, layout)
+
+
 def matmul_case(name: str, seed: int, dtype: str, lhs: list[int], rhs: list[int], description: str) -> Case:
     return Case(
         op="core.matmul",
@@ -166,11 +172,11 @@ def matmul_case(name: str, seed: int, dtype: str, lhs: list[int], rhs: list[int]
         description=description,
         seed=seed,
         attributes={},
-        inputs=lambda rng: [("a", uniform(rng, lhs, dtype)), ("b", uniform(rng, rhs, dtype))],
+        inputs=lambda rng: [("a", matmul_lhs(rng, name, lhs, dtype)), ("b", uniform(rng, rhs, dtype))],
         reference=ref_matmul,
         reference_text="torch.matmul(a.double(), b.double()).to(a.dtype)",
         tolerance=matmul_tol(dtype),
-        notes=MATMUL_NOTES,
+        notes=(LAYOUT_NOTES[layout_of(name)].replace("x is", "a is") + " " + MATMUL_NOTES) if layout_of(name) else MATMUL_NOTES,
         native=lambda xs: torch.matmul(xs[0], xs[1]),
     )
 
@@ -1209,8 +1215,416 @@ def elementwise_cases() -> list[Case]:
     return cases
 
 
-def build_cases() -> list[Case]:
-    cases = elementwise_cases() + [
+# ---------------------------------------------------------------------------------------------
+# Reductions, matmul, softmax, cumsum and top_k (docs/specs/graph-ir.md §3.2 "Reduction", "Linear
+# algebra", "Other"). Sums, means, cumulative sums and softmax are computed in f64 and rounded once
+# to the dtype under test (like matmul); PyTorch's own result in the dtype is checked against the
+# tolerance. max/min, argmax/argmin and top_k select values, so they are exact. Integer sums wrap,
+# and `i32` sums and cumulative sums stay `i32` (graph-ir.md §3.1.2: PyTorch's i64 result is cast).
+# Attributes are written as a graph would write them (negative axes, defaults left out); the Rust
+# tests normalize them like the IR analysis does. Half-precision sums use positive inputs, so a
+# cancellation near zero doesn't turn the f32 accumulation error into a large relative error.
+
+F32_REDUCTION = F32_MATMUL  # testing-strategy.md §2: reductions and matmul, rtol 1e-3
+
+
+def reduction_tol(dtype: str) -> dict[str, Any]:
+    if dtype in INTS:
+        return EXACT
+    return F32_REDUCTION if dtype == "f32" else LOW_PRECISION
+
+
+ACCUMULATION_NOTES = (
+    "out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype "
+    "itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md §3.1.8)."
+)
+ARG_NOTES = "Ties give the lowest index; NaN counts as larger (argmax) and smaller (argmin) than every number, so the first NaN wins."
+TOPK_NOTES = (
+    "torch.topk does not fix the order of equal values, so the reference is the stable sort it equals "
+    "otherwise (values checked against torch.topk by the generator): sorted, equal values in index order, "
+    "NaN larger than every number (graph-ir.md §3.1.8)."
+)
+SOFTMAX_SPECIAL_NOTES = (
+    "As in PyTorch: a row with NaN or +inf is NaN everywhere, a row of only -inf is NaN everywhere, and -inf "
+    "next to finite values gives 0 (log_softmax: -inf)."
+)
+
+
+def case_input(rng: Any, name: str, shape: list[int] | None, dtype: str, values: list[Any] | None,
+               make: Callable[[Any, list[int], str], Any] | None) -> Any:
+    """The `x` of a case: explicit values, `make`, or random data as the view the name asks for."""
+    if values is not None:
+        return from_list(values, dtype, shape)
+    if make is not None:
+        return make(rng, shape, dtype)
+    return layout_input(rng, shape, dtype, layout_of(name))
+
+
+def positive(rng: Any, shape: list[int], dtype: str) -> Any:
+    return uniform(rng, shape, dtype, 0.1, 2.0)
+
+
+def below_one(rng: Any, shape: list[int], dtype: str) -> Any:
+    return uniform(rng, shape, dtype, 0.5, 1.0)
+
+
+def with_layout_notes(name: str, notes: str) -> str:
+    layout = layout_of(name)
+    return (LAYOUT_NOTES[layout] + " " + notes).strip() if layout else notes
+
+
+REDUCE_FNS = {
+    "core.sum": "torch.sum",
+    "core.mean": "torch.mean",
+    "core.max": "torch.amax",
+    "core.min": "torch.amin",
+}
+
+
+def reduce_case(op: str, name: str, seed: int, dtype: str, shape: list[int] | None, dims: list[int] | None,
+                keepdim: bool | None, description: str, values: list[Any] | None = None,
+                make: Callable[[Any, list[int], str], Any] | None = None, notes: str = "") -> Case:
+    attrs: dict[str, Any] = {}
+    if dims is not None:
+        attrs["dim"] = dims
+    if keepdim is not None:
+        attrs["keepdim"] = keepdim
+    fn = {"core.sum": torch.sum, "core.mean": torch.mean, "core.max": torch.amax, "core.min": torch.amin}[op]
+
+    def call(x: Any) -> Any:
+        axes = tuple(range(x.dim())) if dims is None else tuple(dims)
+        return as_rank1(fn(x, dim=axes, keepdim=bool(keepdim)))
+
+    accumulates = op in ("core.sum", "core.mean") and dtype in FLOATS
+
+    def reference(xs: list[Any]) -> list[tuple[str, Any]]:
+        x = xs[0]
+        if accumulates:
+            return [("out", call(x.double()).to(x.dtype))]
+        # i32 sums: PyTorch returns i64; the IR keeps i32 (wrapping), §3.1.2.
+        return [("out", call(x).to(x.dtype))]
+
+    text = f"{REDUCE_FNS[op]}(x, dim, keepdim)"
+    all_notes = " ".join(n for n in (notes, ACCUMULATION_NOTES if accumulates else "",
+                                       "Without dim every dim is reduced; a result PyTorch returns as 0-dim is [1] here (graph-ir.md §3.1.5)." if dims is None and not keepdim else "") if n)
+    if op == "core.sum" and dtype == "i32":
+        text += ".to(torch.int32)"
+    return Case(
+        op=op, name=name, description=f"{dtype} {shape if shape else len(values or [])}: {description}", seed=seed,
+        attributes=attrs, inputs=lambda rng: [("x", case_input(rng, name, shape, dtype, values, make))],
+        reference=reference, reference_text=f"{text} in f64, rounded once to {dtype}" if accumulates else text,
+        tolerance=EXACT if op in ("core.max", "core.min") else reduction_tol(dtype),
+        notes=with_layout_notes(name, all_notes),
+        native=(lambda xs: call(xs[0])) if accumulates else None,
+    )
+
+
+def first_extremum(x: Any, dim: int, largest: bool) -> Any:
+    """argmax/argmin computed independently of torch (NumPy: first occurrence, NaN first), as i64."""
+    a = x.double().numpy()
+    return torch.from_numpy(np.asarray((np.argmax if largest else np.argmin)(a, axis=dim), dtype=np.int64))
+
+
+def arg_case(op: str, name: str, seed: int, dtype: str, shape: list[int] | None, dim: int, description: str,
+             keepdim: bool | None = None, index_dtype: str | None = None, values: list[Any] | None = None,
+             make: Callable[[Any, list[int], str], Any] | None = None, notes: str = "") -> Case:
+    attrs: dict[str, Any] = {"dim": dim}
+    if keepdim is not None:
+        attrs["keepdim"] = keepdim
+    if index_dtype is not None:
+        attrs["dtype"] = index_dtype
+    largest = op == "core.argmax"
+    fn = torch.argmax if largest else torch.argmin
+    out_dtype = torch_dtype(index_dtype or "i64")
+
+    def reference(xs: list[Any]) -> list[tuple[str, Any]]:
+        x = xs[0]
+        out = fn(x, dim, keepdim=bool(keepdim))
+        expected = first_extremum(x, dim, largest)
+        if not torch.equal(out.reshape(expected.shape), expected):
+            raise SystemExit(f"{op}/{name}: torch.{fn.__name__} does not return the first index")
+        return [("out", as_rank1(out).to(out_dtype))]
+
+    text = f"torch.{fn.__name__}(x, dim, keepdim)" + (".to(torch.int32)" if index_dtype == "i32" else "")
+    return Case(
+        op=op, name=name, description=f"{dtype} {shape if shape else len(values or [])}: {description}", seed=seed,
+        attributes=attrs, inputs=lambda rng: [("x", case_input(rng, name, shape, dtype, values, make))],
+        reference=reference, reference_text=text, tolerance=EXACT,
+        notes=with_layout_notes(name, " ".join(n for n in (ARG_NOTES, notes) if n)),
+    )
+
+
+def cumsum_case(name: str, seed: int, dtype: str, shape: list[int] | None, dim: int, description: str,
+                values: list[Any] | None = None, make: Callable[[Any, list[int], str], Any] | None = None,
+                notes: str = "") -> Case:
+    floats = dtype in FLOATS
+
+    def reference(xs: list[Any]) -> list[tuple[str, Any]]:
+        x = xs[0]
+        if floats:
+            return [("out", torch.cumsum(x.double(), dim).to(x.dtype))]
+        return [("out", torch.cumsum(x, dim).to(x.dtype))]
+
+    text = "torch.cumsum(x, dim)" + (".to(torch.int32)" if dtype == "i32" else "")
+    return Case(
+        op="core.cumsum", name=name, description=f"{dtype} {shape if shape else len(values or [])}: {description}",
+        seed=seed, attributes={"dim": dim},
+        inputs=lambda rng: [("x", case_input(rng, name, shape, dtype, values, make))],
+        reference=reference, reference_text=f"{text} in f64, rounded once to {dtype}" if floats else text,
+        tolerance=reduction_tol(dtype),
+        notes=with_layout_notes(name, " ".join(n for n in (notes, ACCUMULATION_NOTES if floats else "") if n)),
+        native=(lambda xs: torch.cumsum(xs[0], dim)) if floats else None,
+    )
+
+
+def softmax_case(op: str, name: str, seed: int, dtype: str, shape: list[int] | None, dim: int, description: str,
+                 values: list[Any] | None = None, make: Callable[[Any, list[int], str], Any] | None = None,
+                 notes: str = "") -> Case:
+    fn = torch.softmax if op == "core.softmax" else torch.log_softmax
+    text = f"torch.{fn.__name__}(x, dim)"
+    return Case(
+        op=op, name=name, description=f"{dtype} {shape if shape else len(values or [])}: {description}", seed=seed,
+        attributes={"dim": dim}, inputs=lambda rng: [("x", case_input(rng, name, shape, dtype, values, make))],
+        reference=lambda xs: [("out", fn(xs[0].double(), dim).to(xs[0].dtype))],
+        reference_text=f"{text} in f64, rounded once to {dtype}", tolerance=reduction_tol(dtype),
+        notes=with_layout_notes(name, " ".join(n for n in (notes, F64_NOTES) if n)),
+        native=lambda xs: fn(xs[0], dim),
+    )
+
+
+def topk_case(name: str, seed: int, dtype: str, shape: list[int] | None, k: int, description: str,
+              dim: int | None = None, largest: bool | None = None, index_dtype: str | None = None,
+              values: list[Any] | None = None, make: Callable[[Any, list[int], str], Any] | None = None,
+              notes: str = "") -> Case:
+    attrs: dict[str, Any] = {"k": k}
+    for key, v in (("dim", dim), ("largest", largest), ("dtype", index_dtype)):
+        if v is not None:
+            attrs[key] = v
+    d = -1 if dim is None else dim
+    lg = True if largest is None else largest
+
+    def reference(xs: list[Any]) -> list[tuple[str, Any]]:
+        x = xs[0]
+        v, i = torch.sort(x, dim=d, descending=lg, stable=True)
+        v, i = v.narrow(d, 0, k), i.narrow(d, 0, k)
+        tv, _ = torch.topk(x, k, d, lg, sorted=True)
+        if not torch.equal(v.nan_to_num(7.0), tv.nan_to_num(7.0)) or not torch.equal(v.isnan(), tv.isnan()):
+            raise SystemExit(f"core.top_k/{name}: the stable sort's values differ from torch.topk")
+        if not torch.equal(torch.gather(x, d, i).isnan(), v.isnan()):
+            raise SystemExit(f"core.top_k/{name}: indices don't point at the values")
+        return [("values", v), ("indices", i.to(torch_dtype(index_dtype or "i64")))]
+
+    return Case(
+        op="core.top_k", name=name, description=f"{dtype} {shape if shape else len(values or [])}: {description}",
+        seed=seed, attributes=attrs, inputs=lambda rng: [("x", case_input(rng, name, shape, dtype, values, make))],
+        reference=reference,
+        reference_text="torch.sort(x, dim, descending=largest, stable=True), first k along dim (= torch.topk(x, k, dim, largest, sorted=True) with ties in index order)",
+        tolerance=EXACT, notes=with_layout_notes(name, " ".join(n for n in (TOPK_NOTES, notes) if n)),
+    )
+
+
+def ties(rng: Any, shape: list[int], dtype: str) -> Any:
+    """Small integers (as `dtype`): many equal values."""
+    return integers(rng, shape, "i64", -2, 3).to(torch_dtype(dtype))
+
+
+def sparse_ties(n: int, first: int, step: int, value: float, rows: int = 1) -> list[float]:
+    """`rows` rows of `n` zeros with `value` at every `step`-th position from `first`: the maximum is
+    tied many times, far into the row, to catch parallel reductions that don't keep the first index."""
+    row = [value if i >= first and (i - first) % step == 0 else 0.0 for i in range(n)]
+    return row * rows
+
+
+def reduction_cases() -> list[Case]:
+    cases: list[Case] = []
+    nan_rows = [1.0, NAN, 3.0, -INF, 2.0, 5.0, INF, -1.0, NAN, NAN, 0.5, 4.0, -INF, -INF, -INF, -INF]
+    for op, base in (("core.sum", 1300), ("core.mean", 1340)):
+        def r(name: str, seed: int, dtype: str, shape: list[int] | None, dims: list[int] | None,
+              keepdim: bool | None, description: str, **kw: Any) -> Case:
+            return reduce_case(op, name, seed, dtype, shape, dims, keepdim, description, **kw)
+
+        cases += [
+            r("dim_f32", base + 1, "f32", [3, 4], [1], None, "dim [1]."),
+            r("dims_keepdim_f32", base + 2, "f32", [2, 3, 4], [0, 2], True, "dims [0, 2], keepdim."),
+            r("all_f32", base + 3, "f32", [2, 3, 4], None, None, "no dim: a full reduction to [1]."),
+            r("all_keepdim_f32", base + 4, "f32", [2, 3, 4], None, True, "no dim, keepdim: [1, 1, 1]."),
+            r("listed_all_f32", base + 5, "f32", [3, 2], [-1, 0], None, "every dim listed (dim [-1, 0]): [1]."),
+            r("negative_dim_f32", base + 6, "f32", [2, 3, 4], [-2], False, "dim [-2], keepdim false given."),
+            r("rank6_f32", base + 7, "f32", [2, 1, 3, 1, 2, 2], [1, 2, 5], None, "rank 6, dims [1, 2, 5]."),
+            r("long_row_f32", base + 8, "f32", [4, 1024], [1], None, "rows of 1024: a long accumulation."),
+            r("dim_f16", base + 9, "f16", [3, 16], [1], None, "f16, dim [1], positive values.", make=positive),
+            r("dims_bf16", base + 10, "bf16", [2, 3, 8], [0, 2], True, "bf16, dims [0, 2], keepdim, positive values.",
+              make=positive),
+            r("long_row_f16", base + 11, "f16", [2, 4096], [1], None,
+              "f16 rows of 4096 values in [0.5, 1): the sums (~3070) pass 2^11, where an f16 accumulator stops "
+              "growing (the spacing is 2 there).", make=below_one),
+            r("large_f16", base + 12, "f16", [4, 512], [-1], None,
+              "f16 values near 100, rows of 512: sums near 5.1e4, just inside the f16 range.",
+              make=lambda rng, s, d: uniform(rng, s, d, 95.0, 105.0)),
+            r("permuted_f32", base + 13, "f32", [2, 3, 4], [0, 1], None, "permute, then reduce dims [0, 1]."),
+            r("transposed_f32", base + 14, "f32", [3, 5], [1], True, "transpose, then reduce dim [1], keepdim."),
+            r("strided_f32", base + 15, "f32", [3, 4], None, None, "a stepped slice, then a full reduction."),
+            r("nan_f32", base + 16, "f32", [4, 4], [1], None, "NaN and ±inf: NaN propagates, inf + -inf is NaN.",
+              values=nan_rows, notes=NAN_NOTES),
+        ]
+    cases += [
+        reduce_case("core.sum", "dim_i64", 1321, "i64", [3, 4], [0], None, "i64, dim [0]."),
+        reduce_case("core.sum", "all_i32", 1322, "i32", [2, 3, 4], None, None, "i32, a full reduction: the result stays i32."),
+        reduce_case("core.sum", "wrap_i64", 1323, "i64", [3, 3], [1], None, "Overflow at the i64 limits wraps around.",
+                    values=[I64_MAX, 1, 0, I64_MIN, -1, 0, I64_MAX, I64_MAX, 2], notes=WRAP_NOTES),
+        reduce_case("core.sum", "wrap_i32", 1324, "i32", [3, 3], [-1], None, "Overflow at the i32 limits wraps around.",
+                    values=[I32_MAX, 1, 0, I32_MIN, -1, 0, I32_MAX, I32_MAX, 2], notes=WRAP_NOTES),
+        reduce_case("core.sum", "overflow_f16", 1325, "f16", [2, 1024], [1], None,
+                    "f16 values near 1000: the sums (~1e6) overflow to inf.",
+                    make=lambda rng, s, d: uniform(rng, s, d, 900.0, 1100.0), notes=NAN_NOTES),
+        reduce_case("core.sum", "permuted_i64", 1326, "i64", [2, 3, 2], [2], True, "permute, then reduce dim [2], keepdim."),
+        reduce_case("core.mean", "overflowing_sum_f16", 1361, "f16", [2, 4096], [1], None,
+                    "f16 values near 1000, rows of 4096: the intermediate sum (~4e6) is beyond the f16 range, the mean isn't.",
+                    make=lambda rng, s, d: uniform(rng, s, d, 900.0, 1100.0)),
+    ]
+    for op, base in (("core.max", 1380), ("core.min", 1420)):
+        def m(name: str, seed: int, dtype: str, shape: list[int] | None, dims: list[int] | None,
+              keepdim: bool | None, description: str, **kw: Any) -> Case:
+            return reduce_case(op, name, seed, dtype, shape, dims, keepdim, description, **kw)
+
+        cases += [
+            m("dim_f32", base + 1, "f32", [3, 4], [1], None, "dim [1]."),
+            m("dims_keepdim_f32", base + 2, "f32", [2, 3, 4], [0, 2], True, "dims [0, 2], keepdim."),
+            m("all_f32", base + 3, "f32", [2, 3, 4], None, None, "no dim: a full reduction to [1]."),
+            m("all_keepdim_f16", base + 4, "f16", [2, 3, 4], None, True, "f16, no dim, keepdim."),
+            m("negative_dim_bf16", base + 5, "bf16", [2, 3, 4], [-1], None, "bf16, dim [-1]."),
+            m("dim_i64", base + 6, "i64", [3, 4], [0], None, "i64, dim [0]."),
+            m("dims_i32", base + 7, "i32", [2, 3, 4], [1, 2], None, "i32, dims [1, 2]."),
+            m("limits_i64", base + 8, "i64", [2, 3], [1], None, "The i64 limits.",
+              values=[I64_MIN, I64_MAX, 0, I64_MIN, I64_MIN + 1, -1]),
+            m("ties_f32", base + 9, "f32", [4, 6], [1], None, "Small integers: many equal values.", make=ties),
+            m("rank6_f32", base + 10, "f32", [2, 1, 3, 1, 2, 2], [0, 3, 4], None, "rank 6, dims [0, 3, 4]."),
+            m("permuted_f32", base + 11, "f32", [2, 3, 4], [1], None, "permute, then reduce dim [1]."),
+            m("transposed_f16", base + 12, "f16", [3, 5], [0], True, "transpose, then reduce dim [0], keepdim."),
+            m("expanded_i32", base + 13, "i32", [3, 4], [0, 1], None, "expand, then reduce every dim."),
+            m("nan_f32", base + 14, "f32", [4, 4], [1], None, "NaN propagates; ±inf; a row of -inf.", values=nan_rows,
+              notes=NAN_NOTES),
+            m("nan_dim0_f32", base + 15, "f32", [4, 4], [0], None, "NaN along dim 0.", values=nan_rows, notes=NAN_NOTES),
+            m("long_nan_f32", base + 16, "f32", [2, 1024], [1], None, "A NaN far into a row of 1024; the other row has none.",
+              values=[NAN if i == 777 else float(i % 13) for i in range(1024)] + [float(i % 17) - 8.0 for i in range(1024)],
+              notes=NAN_NOTES),
+        ]
+    for op, base in (("core.argmax", 1460), ("core.argmin", 1500)):
+        def a(name: str, seed: int, dtype: str, shape: list[int] | None, dim: int, description: str, **kw: Any) -> Case:
+            return arg_case(op, name, seed, dtype, shape, dim, description, **kw)
+
+        sign = 1.0 if op == "core.argmax" else -1.0
+        cases += [
+            a("dim1_f32", base + 1, "f32", [3, 5], 1, "dim 1."),
+            a("dim0_keepdim_f32", base + 2, "f32", [4, 3], 0, "dim 0, keepdim.", keepdim=True),
+            a("negative_dim_f32", base + 3, "f32", [2, 3, 4], -2, "dim -2."),
+            a("rank1_f32", base + 4, "f32", [7], 0, "rank 1: the result is [1]."),
+            a("rank6_f32", base + 5, "f32", [2, 1, 3, 1, 4, 2], 4, "rank 6, dim 4."),
+            a("dim_f16", base + 6, "f16", [3, 6], 1, "f16."),
+            a("dim_bf16", base + 7, "bf16", [3, 6], 1, "bf16."),
+            a("dim_i64", base + 8, "i64", [3, 6], 1, "i64 input."),
+            a("dim_i32", base + 9, "i32", [6, 3], 0, "i32 input, dim 0."),
+            a("i32_index_f32", base + 10, "f32", [3, 5], 1, "dtype i32: i32 indices.", index_dtype="i32"),
+            a("i32_index_keepdim_i64", base + 11, "i64", [2, 3, 4], 2, "i64 input, dtype i32, keepdim.",
+              index_dtype="i32", keepdim=True),
+            a("ties_f32", base + 12, "f32", [6, 8], 1, "Small integers: many ties.", make=ties),
+            a("ties_dim0_i32", base + 13, "i32", [8, 6], 0, "Small integers along dim 0: many ties.", make=ties),
+            a("long_ties_f32", base + 14, "f32", [2, 1024], 1,
+              "The extremum is tied 10 times per row, from index 100 (row 0) and 333 (row 1).",
+              values=sparse_ties(1024, 100, 97, 5.0 * sign)[:1024] + sparse_ties(1024, 333, 61, 5.0 * sign)[:1024]),
+            a("nan_f32", base + 15, "f32", [4, 4], 1, "NaN, ±inf and a row of -inf.", values=nan_rows),
+            a("long_nan_f32", base + 16, "f32", [2, 1024], 1, "Two NaN far into a row of 1024; the other row has none.",
+              values=[NAN if i in (600, 901) else float(i % 13) for i in range(1024)]
+              + [float(i % 17) - 8.0 for i in range(1024)]),
+            a("all_neg_inf_f32", base + 17, "f32", [2, 3], 1, "Rows of only -inf and of only +inf: index 0.",
+              values=[-INF, -INF, -INF, INF, INF, INF]),
+            a("permuted_f32", base + 18, "f32", [3, 4, 2], 1, "permute, then dim 1."),
+            a("transposed_i64", base + 19, "i64", [4, 5], 0, "transpose, then dim 0."),
+        ]
+    for i, d in enumerate((0, 1, 2)):
+        cases.append(cumsum_case(f"dim{d}_f32", 1541 + i, "f32", [3, 4, 5], d, f"dim {d}."))
+    cases += [
+        cumsum_case("negative_dim_f32", 1544, "f32", [2, 3, 4], -1, "dim -1."),
+        cumsum_case("rank1_f32", 1545, "f32", [9], 0, "rank 1."),
+        cumsum_case("rank6_f32", 1546, "f32", [2, 1, 3, 1, 2, 3], 2, "rank 6, dim 2."),
+        cumsum_case("long_row_f32", 1547, "f32", [2, 1024], 1, "rows of 1024."),
+        cumsum_case("dim_f16", 1548, "f16", [3, 16], 1, "f16, positive values.", make=positive),
+        cumsum_case("dim0_bf16", 1549, "bf16", [8, 3], 0, "bf16 along dim 0, positive values.", make=positive),
+        cumsum_case("long_row_f16", 1550, "f16", [2, 4096], 1,
+                    "f16 rows of 4096 values in [0.5, 1): an f16 accumulator stops growing at 2048 (the spacing is 2 "
+                    "there), about 1300 elements before the end.", make=below_one),
+        cumsum_case("dim0_i64", 1551, "i64", [4, 3], 0, "i64 along dim 0."),
+        cumsum_case("dim1_i32", 1552, "i32", [3, 5], 1, "i32: the result stays i32."),
+        cumsum_case("wrap_i64", 1553, "i64", [2, 4], 1, "Overflow at the i64 limits wraps around.",
+                    values=[I64_MAX, 1, 1, I64_MIN, I64_MIN, -1, I64_MAX, 5], notes=WRAP_NOTES),
+        cumsum_case("wrap_i32", 1554, "i32", [4, 2], 0, "Overflow at the i32 limits wraps around, along dim 0.",
+                    values=[I32_MAX, I32_MIN, 1, -1, 1, I32_MAX, I32_MIN, 3], notes=WRAP_NOTES),
+        cumsum_case("permuted_f32", 1555, "f32", [2, 3, 4], 1, "permute, then dim 1."),
+        cumsum_case("transposed_i32", 1556, "i32", [3, 4], 0, "transpose, then dim 0."),
+        cumsum_case("nan_f32", 1557, "f32", [2, 6], 1, "NaN and ±inf propagate along the row.",
+                    values=[1.0, NAN, 2.0, 3.0, -1.0, 0.5, 1.0, INF, 2.0, -INF, 3.0, 4.0], notes=NAN_NOTES),
+    ]
+    special = [1000.0, 1001.0, 999.0, 990.0,  # large: no overflow
+               -INF, 0.5, -INF, 1.5,  # masked entries
+               -INF, -INF, -INF, -INF,  # all masked: NaN
+               NAN, 1.0, 2.0, 3.0,  # NaN: the row is NaN
+               INF, 1.0, 2.0, 3.0,  # +inf: the row is NaN
+               -1000.0, -1001.0, -999.0, -1000.5]  # large negative
+    for op, base in (("core.softmax", 1600), ("core.log_softmax", 1640)):
+        def s(name: str, seed: int, dtype: str, shape: list[int] | None, dim: int, description: str, **kw: Any) -> Case:
+            return softmax_case(op, name, seed, dtype, shape, dim, description, **kw)
+
+        cases += [
+            s("last_dim_f32", base + 1, "f32", [3, 8], -1, "dim -1."),
+            s("dim0_f32", base + 2, "f32", [5, 3], 0, "dim 0."),
+            s("rank4_f32", base + 3, "f32", [2, 3, 2, 4], 2, "rank 4, dim 2."),
+            s("rank1_f32", base + 4, "f32", [6], 0, "rank 1."),
+            s("last_dim_f16", base + 5, "f16", [3, 8], 1, "f16."),
+            s("last_dim_bf16", base + 6, "bf16", [3, 8], 1, "bf16."),
+            s("long_row_f32", base + 7, "f32", [2, 1000], 1, "rows of 1000 (a vocabulary-like length)."),
+            s("long_row_f16", base + 8, "f16", [2, 256], 1, "f16 rows of 256."),
+            s("special_f32", base + 9, "f32", [6, 4], 1,
+              "Large values (1000, 1001), -inf entries, a row of -inf, NaN, +inf, large negative values.",
+              values=special, notes=SOFTMAX_SPECIAL_NOTES + " " + NAN_NOTES),
+            s("large_f16", base + 10, "f16", [2, 4], 1, "f16 values near 1000 and -1000: no overflow.",
+              values=[1000.0, 1001.0, 998.0, 996.0, -1000.0, -1001.0, -999.0, -997.0]),
+            s("permuted_f32", base + 11, "f32", [2, 3, 4], 0, "permute, then dim 0."),
+            s("transposed_f32", base + 12, "f32", [4, 5], 1, "transpose, then dim 1."),
+            s("strided_f16", base + 13, "f16", [3, 4], 1, "a stepped slice, then dim 1."),
+        ]
+    cases += [
+        topk_case("largest_f32", 1701, "f32", [3, 8], 3, "k 3 along the last dim (defaults)."),
+        topk_case("smallest_f32", 1702, "f32", [3, 8], 3, "k 3, largest false.", largest=False),
+        topk_case("k1_f32", 1703, "f32", [4, 6], 1, "k 1.", dim=1),
+        topk_case("k_full_f32", 1704, "f32", [2, 7], 7, "k = the dim size: a full sort.", dim=-1, largest=True),
+        topk_case("k_full_smallest_f32", 1705, "f32", [2, 7], 7, "k = the dim size, smallest first.", largest=False),
+        topk_case("dim0_f32", 1706, "f32", [6, 3], 2, "k 2 along dim 0.", dim=0),
+        topk_case("negative_dim_f32", 1707, "f32", [2, 5, 3], 4, "k 4 along dim -2.", dim=-2),
+        topk_case("rank6_f32", 1708, "f32", [2, 1, 2, 1, 5, 2], 3, "rank 6, k 3 along dim 4.", dim=4),
+        topk_case("f16", 1709, "f16", [3, 8], 4, "f16, k 4."),
+        topk_case("bf16", 1710, "bf16", [3, 8], 4, "bf16, k 4, smallest first.", largest=False),
+        topk_case("i32_index_f32", 1711, "f32", [3, 8], 5, "dtype i32: i32 indices.", index_dtype="i32"),
+        topk_case("ties_f32", 1712, "f32", [4, 10], 10, "Small integers: every value is tied; k = 10.", make=ties),
+        topk_case("ties_smallest_f32", 1713, "f32", [4, 10], 6, "Small integers, smallest first, k 6.", make=ties,
+                  largest=False),
+        topk_case("ties_dim0_f16", 1714, "f16", [10, 3], 7, "f16 ties along dim 0, k 7.", make=ties, dim=0),
+        topk_case("long_ties_f32", 1715, "f32", [2, 1024], 12,
+                  "The maximum is tied 10 times per row, far into rows of 1024; k 12.",
+                  values=sparse_ties(1024, 100, 97, 5.0) + sparse_ties(1024, 333, 61, 5.0)),
+        topk_case("nan_f32", 1716, "f32", [2, 8], 8, "NaN, ±inf: NaN first, in index order.",
+                  values=[1.0, NAN, INF, 3.0, NAN, -INF, 2.0, 3.0, NAN, NAN, NAN, 0.5, -INF, INF, 0.5, NAN]),
+        topk_case("nan_smallest_f32", 1717, "f32", [2, 8], 8, "NaN, ±inf, smallest first: NaN last.", largest=False,
+                  values=[1.0, NAN, INF, 3.0, NAN, -INF, 2.0, 3.0, NAN, NAN, NAN, 0.5, -INF, INF, 0.5, NAN]),
+        topk_case("nan_k2_i32_index_f32", 1718, "f32", [2, 8], 2, "NaN with k 2 and i32 indices.", index_dtype="i32",
+                  values=[1.0, 7.0, INF, 3.0, NAN, -INF, 2.0, 3.0, 4.0, 4.0, 1.0, 0.5, -INF, 9.0, 0.5, 9.0]),
+        topk_case("permuted_f32", 1719, "f32", [3, 4, 5], 2, "permute, then k 2 along dim 1.", dim=1),
+        topk_case("transposed_f32", 1720, "f32", [5, 4], 3, "transpose, then k 3 along dim -1."),
+    ]
+    return cases
+
+
+def matmul_cases() -> list[Case]:
+    return [
         matmul_case("2d_f32", 201, "f32", [3, 5], [5, 4], "[3, 5] @ [5, 4]."),
         matmul_case("2d_k64_f32", 202, "f32", [8, 64], [64, 16], "[8, 64] @ [64, 16]: a longer reduction."),
         matmul_case("batched_3d_f32", 203, "f32", [2, 3, 5], [2, 5, 4], "[2, 3, 5] @ [2, 5, 4]."),
@@ -1219,8 +1633,24 @@ def build_cases() -> list[Case]:
         matmul_case("batched_3d_f16", 206, "f16", [2, 3, 5], [2, 5, 4], "[2, 3, 5] @ [2, 5, 4] in f16."),
         matmul_case("2d_bf16", 207, "bf16", [3, 5], [5, 4], "[3, 5] @ [5, 4] in bf16."),
         matmul_case("broadcast_batch_4d_bf16", 208, "bf16", [2, 1, 3, 5], [1, 3, 5, 4], "[2, 1, 3, 5] @ [1, 3, 5, 4] in bf16."),
+        matmul_case("rank3_rank2_f32", 209, "f32", [2, 3, 4], [4, 5], "[2, 3, 4] @ [4, 5]: a rank-2 b against a batch."),
+        matmul_case("rank2_rank4_f32", 210, "f32", [3, 4], [2, 2, 4, 5], "[3, 4] @ [2, 2, 4, 5]: a rank-2 a against two batch dims."),
+        matmul_case("broadcast_ranks_f16", 211, "f16", [2, 1, 3, 4], [3, 4, 2], "[2, 1, 3, 4] @ [3, 4, 2] -> [2, 3, 3, 2] in f16: different batch ranks, both broadcast."),
+        matmul_case("k1_f32", 212, "f32", [3, 1], [1, 4], "[3, 1] @ [1, 4]: k = 1, an outer product."),
+        matmul_case("k1_batched_bf16", 213, "bf16", [2, 3, 1], [2, 1, 2], "[2, 3, 1] @ [2, 1, 2] in bf16: k = 1."),
+        matmul_case("k256_f32", 214, "f32", [4, 256], [256, 3], "[4, 256] @ [256, 3]: k = 256."),
+        matmul_case("k256_f16", 215, "f16", [2, 4, 256], [256, 3], "[2, 4, 256] @ [256, 3] in f16: k = 256."),
+        matmul_case("k256_bf16", 216, "bf16", [4, 256], [256, 3], "[4, 256] @ [256, 3] in bf16: k = 256."),
+        matmul_case("rank6_f32", 217, "f32", [2, 1, 2, 1, 2, 3], [1, 2, 1, 2, 3, 2], "rank 6 on both sides, broadcast batch dims."),
+        matmul_case("vector_rows_f32", 218, "f32", [2, 1, 1, 4], [1, 3, 4, 2], "[2, 1, 1, 4] @ [1, 3, 4, 2]: one-row a, broadcast batches."),
+        matmul_case("transposed_f32", 219, "f32", [2, 3, 4], [4, 2], "a is a transposed view: [2, 3, 4] @ [4, 2]."),
+        matmul_case("permuted_f16", 220, "f16", [3, 2, 4], [4, 3], "a is a permuted view in f16: [3, 2, 4] @ [4, 3]."),
     ]
-    cases += shape_cases() + indexing_cases() + creation_cases()
+
+
+def build_cases() -> list[Case]:
+    cases = elementwise_cases() + matmul_cases()
+    cases += shape_cases() + indexing_cases() + creation_cases() + reduction_cases()
     seed = 400
     for src in DTYPE_NAMES:
         for dst in DTYPE_NAMES:

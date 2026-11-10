@@ -53,6 +53,24 @@ All notable changes to Polypous are documented here. The format follows
   `reference_indexing.rs` (with out-of-range checks on every device) and `reference_creation.rs`.
   The harness gains integer and list attribute getters, a runner that passes the device to
   creation ops, and `feed_layout` for non-contiguous inputs; existing tests are unchanged.
+- `polypous-backend`: reductions, `matmul`, softmax, `cumsum` and `top_k` on `DynTensor`
+  (graph-ir.md §3.2, #42): `sum mean max min` over any set of dims (`None`: all, `[1]` for a full
+  reduction), `argmax argmin` with an `i64` or `i32` result, `cumsum`, `softmax log_softmax`,
+  `top_k` (returns `(values, indices)`) and `matmul` (moved into `ops`; batch dims now broadcast
+  across different ranks). NaN and ties follow §3.1.8 on every backend (explicit masks; `top_k`
+  sorts stably on the host, one device sync per call), integer `sum`/`cumsum` wrap instead of
+  panicking on the CPU, softmax subtracts the row maximum, and f16/bf16 `sum mean cumsum softmax
+  log_softmax` accumulate in f32.
+  Known limitation: f32 `matmul` on CUDA GPUs with TF32 (Ampere or newer) misses the spec's
+  f32 accuracy, because Burn 0.22.1 uses TF32 tensor cores; it waits for an upstream fix
+  (docs/status.md §4).
+- Reference fixtures for these ops (184 new cases, 192 with the 8 earlier `matmul` cases): every
+  op × every allowed dtype, one/several/all dims with and without `keepdim`, `matmul` from 2-D to
+  rank 6 with broadcast batch dims of different ranks, `k = 1` and `k = 256`, ties and NaN for
+  `argmax`/`argmin`/`top_k`, wrap-around for `sum`/`cumsum`, large values for softmax and f16 sums,
+  and non-contiguous inputs; `tests/reference_reduce.rs`.
+- graph-ir.md §3.1.8: f16/bf16 `sum`, `mean`, `cumsum`, `softmax` and `log_softmax` compute in f32;
+  §3.2 `top_k` note: fixtures use a stable sort, since `torch.topk` leaves the order of ties open.
 - graph-ir.md §3.1.8: subnormal float values are backend-defined (a device may flush them to
   zero). Fixtures contain none; `tools/ci/check_fixtures.py` rejects them.
 - `polypous-ir`: graph document model, canonical JSON and structural validation

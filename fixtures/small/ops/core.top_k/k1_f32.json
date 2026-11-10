@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "op": "core.top_k",
+  "case": "k1_f32",
+  "description": "f32 [4, 6]: k 1.",
+  "attributes": {
+    "k": 1,
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        4,
+        1
+      ]
+    },
+    {
+      "name": "indices",
+      "dtype": "i64",
+      "shape": [
+        4,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.sort(x, dim, descending=largest, stable=True), first k along dim (= torch.topk(x, k, dim, largest, sorted=True) with ties in index order)",
+  "notes": "torch.topk does not fix the order of equal values, so the reference is the stable sort it equals otherwise (values checked against torch.topk by the generator): sorted, equal values in index order, NaN larger than every number (graph-ir.md \u00a73.1.8).",
+  "seed": 1703,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
