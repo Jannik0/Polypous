@@ -20,6 +20,10 @@ impl DynTensor {
     ///
     /// Accumulation is the backend kernel's; the reference tests check `f16`/`bf16` against
     /// testing-strategy.md §2 with `k` up to 256.
+    ///
+    /// **Known limitation:** on CUDA GPUs with TF32 support (Ampere or newer), Burn 0.22.1 runs
+    /// `f32` matmul on TF32 tensor cores, which misses the spec's f32 accuracy. There is no
+    /// workaround here by design; it waits for an upstream precision flag (docs/status.md §4).
     pub fn matmul(self, other: Self) -> Result<Self> {
         const OP: &str = "matmul";
         if self.dtype() != other.dtype() {

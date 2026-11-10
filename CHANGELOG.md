@@ -61,6 +61,9 @@ All notable changes to Polypous are documented here. The format follows
   sorts stably on the host, one device sync per call), integer `sum`/`cumsum` wrap instead of
   panicking on the CPU, softmax subtracts the row maximum, and f16/bf16 `sum mean cumsum softmax
   log_softmax` accumulate in f32.
+  Known limitation: f32 `matmul` on CUDA GPUs with TF32 (Ampere or newer) misses the spec's
+  f32 accuracy, because Burn 0.22.1 uses TF32 tensor cores; it waits for an upstream fix
+  (docs/status.md §4).
 - Reference fixtures for these ops (184 new cases, 192 with the 8 earlier `matmul` cases): every
   op × every allowed dtype, one/several/all dims with and without `keepdim`, `matmul` from 2-D to
   rank 6 with broadcast batch dims of different ranks, `k = 1` and `k = 256`, ties and NaN for

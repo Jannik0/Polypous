@@ -2,21 +2,21 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-09, M1 in progress (#35–#41 done).
+2026-11-10, M1 in progress (#35–#42 done).
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops). Next: #42 and #43 (remaining op families, one at a time), then #44 (interpreter) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops), #42 (reductions, `matmul`, softmax, `cumsum`, `top_k`; f32 `matmul` on CUDA misses the spec, see §4). Next: #43 (nn ops), then #44 (interpreter). M1 can't close before the Burn TF32 fix (§4) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
 ## 2. What exists after M0
 
 | Crate | State |
 |---|---|
-| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40); shape, indexing (out-of-range indices checked before the op runs) and creation ops (#41), with a fixture-based reference harness that runs every case on every device and dtype |
+| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40); shape, indexing (out-of-range indices checked before the op runs) and creation ops (#41); reductions, `matmul`, softmax, `cumsum` and `top_k` (#42), with a fixture-based reference harness that runs every case on every device and dtype |
 | `polypous` (facade) | Real code. `Engine`, `EngineConfig`, facade device types (`DeviceInfo` with `physical_gpu` and `primary`), probe API (`polypous::probe`), `Error`/`ErrorKind`, panics caught at the boundary |
 | `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json` |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
@@ -62,7 +62,13 @@ Driver versions at the M0 exit check:
 
 ## 4. Known limitations and open items
 
-Nothing here blocks M1. Fix an item when its area is touched, or file an issue first.
+Fix an item when its area is touched, or file an issue first. Only the first item blocks M1.
+
+- **f32 `matmul` on CUDA is not f32-accurate (blocks the M1 exit check, #47).**
+  - Burn 0.22.1 / cubek-matmul 0.3.1 run f32 `matmul` on TF32 tensor cores when the GPU supports TF32 (Ampere or newer): `adjust_dtypes` in cubek-matmul's `multi_level/definition/blueprint.rs`, mirrored in burn-cubecl's `kernel/matmul/tune/base.rs`. TF32 rounds the inputs to a 10-bit mantissa. There is no setting to turn it off.
+  - On the RTX 3060 (Windows, NVIDIA 621.14), 9 of 11 `core.matmul` f32 cases fail on `cuda:0`: relative errors of 6e-4 to 6.5e-2 against `rtol 1e-3`. The output equals an f32 matmul with TF32-rounded inputs (max rel difference 6.7e-6). Vulkan on the same GPU, the Iris Xe, the CPU and lavapipe pass; f16/bf16 pass on CUDA.
+  - **No workaround in Polypous (owner decision):** the spec (graph-ir.md §3.2, testing-strategy.md §2) stays as it is, and the tests keep failing on `cuda:0`. A trial computing in f64 on CUDA was exact but 61× slower than TF32 at 2048³, and was discarded.
+  - Upstream: a precision flag like PyTorch's `set_float32_matmul_precision`, default unchanged, so Polypous can select full f32 (upstream issue: link follows). Fix when Burn is updated (ADR-0007): set the flag, then the CUDA tests must pass. `nn` ops built on `matmul` or convolution (#43) may show the same failure on CUDA.
 
 - **Burn 0.22.1 bool bug** in `bool_to_device` across Dispatch backends:
   - Burn hands native bool storage to CubeCL, which panics on storage that isn't its own.
@@ -76,6 +82,7 @@ Nothing here blocks M1. Fix an item when its area is touched, or file an issue f
   - CubeCL's f16 `tanh` missed `rtol 1e-2` near zero on lavapipe. f16/bf16 transcendentals and `pow` compute in f32 on every backend.
   - On the reference machine (Windows, NVIDIA 621.14, Intel 32.0.101.7092): Intel's Vulkan driver returns `pow(|a|, b)` for a negative base with a non-integer exponent (GLSL `pow` is undefined there). `pow` sets NaN explicitly for it. Both Vulkan drivers flush f32 subnormals to zero in comparisons. Subnormals are backend-defined (graph-ir.md §3.1.8, owner decision), and fixtures contain none.
   - Found with #41 (PR 57): out-of-range indices in `gather`/`select` make `flex` panic, and on lavapipe they read out of bounds (wrong values; `select` with `-1` crashed the process with SIGSEGV). Polypous checks indices before every indexing op (one min/max read-back, one device sync on GPUs). `flex` also returns `gather`/`select` of a bool tensor in `u8` storage, which can't be read back as bool; bool indexing runs as `i32` on every backend.
+  - Found with #42 (PR 59): `flex` panics on overflow in `i64` `sum_dim` and in `i32`/`i64` `cumsum` (integer `sum`/`cumsum` wrap on the host on the CPU). CubeCL's `f16` `cumsum` accumulates in `f16` on lavapipe (the cumulative sum of 4096 ones gives 2048); f16/bf16 `sum`, `mean`, `cumsum`, `softmax` and `log_softmax` compute in f32 on every backend (graph-ir.md §3.1.8). Burn's sorts are unstable and its CubeCL `sort`/`topk` read back to the host anyway; CubeCL's `topk_with_indices` returned garbage after a NaN on lavapipe. `top_k` sorts stably on the host, one device sync per call.
   - The owner follows these up in Burn and CubeCL upstream, outside this repository.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
