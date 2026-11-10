@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.max",
+  "case": "permuted_f32",
+  "description": "f32 [2, 3, 4]: permute, then reduce dim [1].",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.amax(x, dim, keepdim)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+  "seed": 1391,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

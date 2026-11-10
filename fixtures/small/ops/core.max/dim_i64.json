@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.max",
+  "case": "dim_i64",
+  "description": "i64 [3, 4]: i64, dim [0].",
+  "attributes": {
+    "dim": [
+      0
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.amax(x, dim, keepdim)",
+  "notes": "",
+  "seed": 1386,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

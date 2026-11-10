@@ -38,6 +38,10 @@ Commit the regenerated files together with the generator change. Never edit a fi
      (`binary_arith_cases`, `unary_float_cases`, `minmax_cases`, `compare_cases`, …) build the
      standard case lists.
    - `matmul_case`, `reshape_case`, `cast_case` for those ops, or a new helper for a new op.
+   - Reductions, `cumsum`, softmax and `top_k`: `reduce_case`, `arg_case`, `cumsum_case`,
+     `softmax_case`, `topk_case` (`reduction_cases()`). They take `values=` or `make=` (`ties`,
+     `positive`, `below_one`) and honor the layout prefixes below. A `matmul_case` name with a
+     layout prefix feeds `a` as that view.
    - Shape, indexing and creation ops: `exact_case`, or `x_case` for one input `x`. A case name
      starting with `permuted_`, `transposed_`, `expanded_` or `strided_` builds its first input as
      that PyTorch view (`layout_input`), and the Rust harness feeds the same kind of view on the
@@ -46,7 +50,7 @@ Commit the regenerated files together with the generator change. Never edit a fi
    - `seed`: a new fixed number, not shared with another case.
    - `inputs`: builds the inputs in the op's input order, **named like the op's inputs** in
      graph-ir.md §3 (`a`, `b`, `x`, `cond`, `index`, `xs0`… for `concat`; the output is `out`,
-     `out0`… for `split`), from the seeded NumPy generator
+     `out0`… for `split`, `values` and `indices` for `top_k`), from the seeded NumPy generator
      (`uniform`, `integers`, `from_list`). Pick values the reference defines: no NaN or
      out-of-range values where PyTorch's result is undefined, and say so in `notes`.
    - `reference`: the PyTorch computation, in the dtype under test. If its bytes depend on the CPU
@@ -55,7 +59,8 @@ Commit the regenerated files together with the generator change. Never edit a fi
      dtype against the tolerance.
    - `attributes`: the op's attributes, named as in the op catalog and written as a graph writes
      them (negative axes, `-1`, `"nan"`/`"inf"` strings; defaults may be left out).
-   - `tolerance`: the defaults from testing-strategy.md §2 (`elementwise_tol`, `matmul_tol`, `EXACT`).
+   - `tolerance`: the defaults from testing-strategy.md §2 (`elementwise_tol`, `matmul_tol`,
+     `reduction_tol`, `EXACT`).
      A looser tolerance needs a comment here and an explanation in the PR.
 2. Run the generator, then `--check` twice, the unit tests and `tools/ci/check_fixtures.py`.
 3. Add the op to a Rust reference test (`crates/polypous-backend/tests/reference_*.rs`), which

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "op": "core.top_k",
+  "case": "permuted_f32",
+  "description": "f32 [3, 4, 5]: permute, then k 2 along dim 1.",
+  "attributes": {
+    "k": 2,
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        3,
+        2,
+        5
+      ]
+    },
+    {
+      "name": "indices",
+      "dtype": "i64",
+      "shape": [
+        3,
+        2,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.sort(x, dim, descending=largest, stable=True), first k along dim (= torch.topk(x, k, dim, largest, sorted=True) with ties in index order)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back. torch.topk does not fix the order of equal values, so the reference is the stable sort it equals otherwise (values checked against torch.topk by the generator): sorted, equal values in index order, NaN larger than every number (graph-ir.md \u00a73.1.8).",
+  "seed": 1719,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "all_i32",
+  "description": "i32 [2, 3, 4]: i32, a full reduction: the result stays i32.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.sum(x, dim, keepdim).to(torch.int32)",
+  "notes": "Without dim every dim is reduced; a result PyTorch returns as 0-dim is [1] here (graph-ir.md \u00a73.1.5).",
+  "seed": 1322,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

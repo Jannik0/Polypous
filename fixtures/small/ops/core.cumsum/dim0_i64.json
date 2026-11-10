@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.cumsum",
+  "case": "dim0_i64",
+  "description": "i64 [4, 3]: i64 along dim 0.",
+  "attributes": {
+    "dim": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.cumsum(x, dim)",
+  "notes": "",
+  "seed": 1551,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

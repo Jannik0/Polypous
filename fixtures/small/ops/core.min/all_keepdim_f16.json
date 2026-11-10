@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "core.min",
+  "case": "all_keepdim_f16",
+  "description": "f16 [2, 3, 4]: f16, no dim, keepdim.",
+  "attributes": {
+    "keepdim": true
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.amin(x, dim, keepdim)",
+  "notes": "",
+  "seed": 1424,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

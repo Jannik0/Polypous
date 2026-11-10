@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.argmin",
+  "case": "negative_dim_f32",
+  "description": "f32 [2, 3, 4]: dim -2.",
+  "attributes": {
+    "dim": -2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.argmin(x, dim, keepdim)",
+  "notes": "Ties give the lowest index; NaN counts as larger (argmax) and smaller (argmin) than every number, so the first NaN wins.",
+  "seed": 1503,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

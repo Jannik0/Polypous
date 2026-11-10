@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.log_softmax",
+  "case": "transposed_f32",
+  "description": "f32 [4, 5]: transpose, then dim 1.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.log_softmax(x, dim) in f64, rounded once to f32",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. out is computed in f64 from the inputs and rounded once to the dtype under test, so the bytes don't depend on the CPU's vectorized kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 1652,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "core.max",
+  "case": "all_f32",
+  "description": "f32 [2, 3, 4]: no dim: a full reduction to [1].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.amax(x, dim, keepdim)",
+  "notes": "Without dim every dim is reduced; a result PyTorch returns as 0-dim is [1] here (graph-ir.md \u00a73.1.5).",
+  "seed": 1383,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

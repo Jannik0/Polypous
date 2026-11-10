@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "op": "core.argmax",
+  "case": "dim_f16",
+  "description": "f16 [3, 6]: f16.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        3,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.argmax(x, dim, keepdim)",
+  "notes": "Ties give the lowest index; NaN counts as larger (argmax) and smaller (argmin) than every number, so the first NaN wins.",
+  "seed": 1466,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "permuted_i64",
+  "description": "i64 [2, 3, 2]: permute, then reduce dim [2], keepdim.",
+  "attributes": {
+    "dim": [
+      2
+    ],
+    "keepdim": true
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "i64",
+      "shape": [
+        2,
+        3,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "i64",
+      "shape": [
+        2,
+        3,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.sum(x, dim, keepdim)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back.",
+  "seed": 1326,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

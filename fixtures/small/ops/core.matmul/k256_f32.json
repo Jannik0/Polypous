@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "op": "core.matmul",
+  "case": "k256_f32",
+  "description": "[4, 256] @ [256, 3]: k = 256.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f32",
+      "shape": [
+        4,
+        256
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f32",
+      "shape": [
+        256,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.matmul(a.double(), b.double()).to(a.dtype)",
+  "notes": "out is torch.matmul in f64, rounded once to the dtype under test, so the bytes don't depend on the CPU's BLAS kernel; torch.matmul in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 214,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

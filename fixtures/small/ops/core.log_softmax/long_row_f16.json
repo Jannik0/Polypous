@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "core.log_softmax",
+  "case": "long_row_f16",
+  "description": "f16 [2, 256]: f16 rows of 256.",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        256
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        256
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.log_softmax(x, dim) in f64, rounded once to f16",
+  "notes": "out is computed in f64 from the inputs and rounded once to the dtype under test, so the bytes don't depend on the CPU's vectorized kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 1648,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.max",
+  "case": "long_nan_f32",
+  "description": "f32 [2, 1024]: A NaN far into a row of 1024; the other row has none.",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        1024
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "torch.amax(x, dim, keepdim)",
+  "notes": "Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf.",
+  "seed": 1396,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

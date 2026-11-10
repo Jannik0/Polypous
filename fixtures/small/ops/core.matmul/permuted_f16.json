@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "op": "core.matmul",
+  "case": "permuted_f16",
+  "description": "a is a permuted view in f16: [3, 2, 4] @ [4, 3].",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f16",
+      "shape": [
+        3,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f16",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        3,
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.matmul(a.double(), b.double()).to(a.dtype)",
+  "notes": "a is fed as a permuted view: uploaded with its dims reversed, then permuted back. out is torch.matmul in f64, rounded once to the dtype under test, so the bytes don't depend on the CPU's BLAS kernel; torch.matmul in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 220,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

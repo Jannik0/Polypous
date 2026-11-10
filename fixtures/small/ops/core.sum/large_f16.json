@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "large_f16",
+  "description": "f16 [4, 512]: f16 values near 100, rows of 512: sums near 5.1e4, just inside the f16 range.",
+  "attributes": {
+    "dim": [
+      -1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        4,
+        512
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "torch.sum(x, dim, keepdim) in f64, rounded once to f16",
+  "notes": "out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md \u00a73.1.8).",
+  "seed": 1312,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

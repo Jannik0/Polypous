@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "op": "core.sum",
+  "case": "transposed_f32",
+  "description": "f32 [3, 5]: transpose, then reduce dim [1], keepdim.",
+  "attributes": {
+    "dim": [
+      1
+    ],
+    "keepdim": true
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        1
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.sum(x, dim, keepdim) in f64, rounded once to f32",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. out is computed in f64 from the inputs and rounded once to the dtype under test; torch in the dtype itself meets the tolerance (checked by the generator). f16/bf16 accumulate in f32 (graph-ir.md \u00a73.1.8).",
+  "seed": 1314,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
