@@ -17,6 +17,12 @@
 //! - compares each output with the sidecar tolerance exactly as testing-strategy.md §3.2 defines
 //!   it, and on failure prints the max abs/rel error and the worst element's index.
 //!
+//! **Params** (graph-ir.md §2.4): a sidecar of an op with params has a `params` list after
+//! `inputs` (testing-strategy.md §3.2): the params that are present, in catalog order. The harness
+//! uploads them like the inputs and passes them to the run function **after the inputs**, in that
+//! order; [`Case::params`] has their names, so a run function can tell which optional ones are
+//! there. Sidecars without `params` work as before.
+//!
 //! A run function may call [`feed_layout`] to get the first input of a case as a non-contiguous
 //! view (permuted, transposed, expanded or a stepped slice) when the case name asks for one
 //! ([`Layout`]); the sidecar and fixture stay plain.
@@ -51,6 +57,9 @@ pub struct Case {
     pub attributes: Map<String, Value>,
     /// Inputs in the op's order.
     pub inputs: Vec<TensorData>,
+    /// Params that are present, in catalog order, with their names (empty for ops without
+    /// params). The run function gets them after the inputs.
+    pub params: Vec<(String, TensorData)>,
     /// Expected outputs in order, with their names.
     pub outputs: Vec<(String, TensorData)>,
     pub tolerance: Tolerance,
@@ -58,13 +67,19 @@ pub struct Case {
 
 impl Case {
     /// The dtype under test, for the summary: the last input's dtype (for `where`, the dtype of
-    /// `a`/`b`, not of `cond`), with the target for ops with a `dtype` attribute (`f32->i64`).
+    /// `a`/`b`, not of `cond`), with the target for ops with a `dtype` attribute (`f32->i64`),
+    /// and the params' dtype where it differs from the input's (`nn.embedding`: `i64+f16`).
     pub fn label(&self) -> String {
-        let input = self
+        let mut input = self
             .inputs
             .last()
             .map_or("none", |data| data.dtype.name())
             .to_string();
+        if let Some((_, param)) = self.params.first()
+            && param.dtype.name() != input
+        {
+            input = format!("{input}+{}", param.dtype.name());
+        }
         match self.attributes.get("dtype").and_then(Value::as_str) {
             Some(target) => format!("{input}->{target}"),
             None => input,
@@ -226,6 +241,12 @@ fn load_case(op: &str, sidecar: &Path) -> Case {
             .map(load)
             .collect()
     };
+    // Only ops with params have the key (testing-strategy.md §3.2).
+    let params = if json.get("params").is_some() {
+        list("params")
+    } else {
+        Vec::new()
+    };
     let tolerance = field("tolerance");
     let number = |key: &str| tolerance[key].as_f64().expect("tolerance number");
     Case {
@@ -236,6 +257,7 @@ fn load_case(op: &str, sidecar: &Path) -> Case {
             .expect("attributes object")
             .clone(),
         inputs: list("inputs").into_iter().map(|(_, data)| data).collect(),
+        params,
         outputs: list("outputs"),
         tolerance: Tolerance {
             exact: tolerance["exact"].as_bool().expect("tolerance.exact"),
@@ -245,7 +267,8 @@ fn load_case(op: &str, sidecar: &Path) -> Case {
     }
 }
 
-/// Runs one case: inputs (on the device under test) in, outputs out.
+/// Runs one case: inputs, then the params ([`Case::params`]), on the device under test in;
+/// outputs out.
 pub type RunCase = fn(&Case, Vec<DynTensor>) -> Result<Vec<DynTensor>, TensorError>;
 
 /// Like [`RunCase`], with the device under test, for ops that create tensors (`core.zeros`, …).
@@ -365,6 +388,7 @@ enum Outcome {
 
 fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
     let mut dtypes: Vec<DType> = case.inputs.iter().map(|d| d.dtype).collect();
+    dtypes.extend(case.params.iter().map(|(_, d)| d.dtype));
     dtypes.extend(case.outputs.iter().map(|(_, d)| d.dtype));
     for dtype in dtypes {
         match DynTensor::device_supports(device, dtype) {
@@ -373,8 +397,9 @@ fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
             Err(err) => return Outcome::Failed(format!("device_supports: {err}")),
         }
     }
-    let mut inputs = Vec::with_capacity(case.inputs.len());
-    for data in &case.inputs {
+    let mut inputs = Vec::with_capacity(case.inputs.len() + case.params.len());
+    let params = case.params.iter().map(|(_, data)| data);
+    for data in case.inputs.iter().chain(params) {
         match DynTensor::from_data(data, device) {
             Ok(t) => inputs.push(t),
             Err(err) => return Outcome::Failed(format!("upload: {err}")),

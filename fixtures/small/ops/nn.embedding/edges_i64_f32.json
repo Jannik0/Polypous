@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "op": "nn.embedding",
+  "case": "edges_i64_f32",
+  "description": "i64 ids [2, 4], f32 weight [9, 3]: ids 0 and num - 1, repeated.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "ids",
+      "dtype": "i64",
+      "shape": [
+        2,
+        4
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        9,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.embedding(ids, weight)",
+  "notes": "A lookup: exact. Out-of-range ids are tested in Rust (tests/reference_nn.rs), since torch raises for them.",
+  "seed": 2505,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

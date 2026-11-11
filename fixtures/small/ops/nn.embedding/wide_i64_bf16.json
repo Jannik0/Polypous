@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "op": "nn.embedding",
+  "case": "wide_i64_bf16",
+  "description": "i64 ids [4], bf16 weight [50, 64]: num 50, dim 64.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "ids",
+      "dtype": "i64",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "bf16",
+      "shape": [
+        50,
+        64
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        4,
+        64
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.embedding(ids, weight)",
+  "notes": "A lookup: exact. Out-of-range ids are tested in Rust (tests/reference_nn.rs), since torch raises for them.",
+  "seed": 2508,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

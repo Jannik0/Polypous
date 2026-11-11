@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "op": "nn.conv1d",
+  "case": "transposed_f16",
+  "description": "f16 x [2, 4, 7], weight [2, 4, 2], defaults: x is a transposed view.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        4,
+        7
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f16",
+      "shape": [
+        2,
+        4,
+        2
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f16",
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2,
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.conv1d(x, weight, bias, stride, padding, dilation, groups) in f64, rounded once to the dtype",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2615,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

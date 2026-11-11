@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "op": "nn.conv2d",
+  "case": "depthwise_f32",
+  "description": "f32 x [2, 3, 6, 6], weight [3, 1, 3, 3], groups 3, padding [1, 1]: depthwise (groups = C_in = C_out).",
+  "attributes": {
+    "groups": 3,
+    "padding": [
+      1,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        6,
+        6
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        3,
+        1,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        6,
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "F.conv2d(x, weight, bias, stride, padding, dilation, groups) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2706,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -245,8 +245,9 @@ fn dtype_of(s: &str) -> Dtype {
     Dtype::parse(s).unwrap_or_else(|| panic!("unknown dtype {s}"))
 }
 
-/// A one-node graph from a sidecar: graph inputs named like the op inputs (params, if the op has
-/// them, become graph params), the sidecar's attributes, one graph output per op output.
+/// A one-node graph from a sidecar: graph inputs named like the op inputs, graph params from the
+/// sidecar's `params` (testing-strategy.md §3.2), the sidecar's attributes, one graph output per
+/// op output.
 fn graph_for(sidecar: &Value) -> (Value, ValidateOptions) {
     let op_name = sidecar["op"].as_str().unwrap();
     let op = catalog::lookup(op_name).unwrap_or_else(|| panic!("{op_name} is not in the catalog"));
@@ -281,6 +282,22 @@ fn graph_for(sidecar: &Value) -> (Value, ValidateOptions) {
             ),
         }
     }
+    for t in sidecar
+        .get("params")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let name = t["name"].as_str().unwrap();
+        assert!(
+            op.param(name).is_some(),
+            "{op_name}/{}: sidecar param `{name}` is not a param of the catalog entry",
+            sidecar["case"]
+        );
+        params.push(json!({ "name": name, "dtype": "float", "shape": t["shape"] }));
+        node_params.insert(name.into(), json!(name));
+        compute.get_or_insert(dtype_of(t["dtype"].as_str().unwrap()));
+    }
     if let Some(v) = op.inputs.iter().find(|i| i.variadic) {
         node_inputs.insert(v.name.into(), json!(variadic));
     }
@@ -312,6 +329,50 @@ fn graph_for(sidecar: &Value) -> (Value, ValidateOptions) {
     (graph, ValidateOptions { compute_dtype })
 }
 
+/// The `params` key of a sidecar (testing-strategy.md §3.2): present exactly for ops with params,
+/// listing the params that are present in catalog order, every required one included, each in the
+/// dtype of the case's float input (the compute dtype).
+fn check_params_key(case: &str, sidecar: &Value) {
+    let op = catalog::lookup(sidecar["op"].as_str().unwrap()).unwrap();
+    let Some(listed) = sidecar.get("params") else {
+        assert!(
+            op.params.is_empty(),
+            "{case}: no `params` key, but the op has params"
+        );
+        return;
+    };
+    assert!(
+        !op.params.is_empty(),
+        "{case}: a `params` key, but the op has none"
+    );
+    let names: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    let expected: Vec<&str> = op
+        .params
+        .iter()
+        .map(|p| p.name)
+        .filter(|name| names.contains(name))
+        .collect();
+    assert_eq!(names, expected, "{case}: params not in catalog order");
+    for p in op.params.iter().filter(|p| !p.optional) {
+        assert!(
+            names.contains(&p.name),
+            "{case}: required param `{}` missing",
+            p.name
+        );
+    }
+    for p in listed.as_array().unwrap() {
+        assert!(
+            matches!(p["dtype"].as_str(), Some("f32" | "f16" | "bf16")),
+            "{case}: param {p} is not a float tensor"
+        );
+    }
+}
+
 #[test]
 fn catalog_matches_fixtures() {
     let dir = repo_root().join("fixtures/small/ops");
@@ -331,6 +392,7 @@ fn catalog_matches_fixtures() {
     for path in &sidecars {
         let sidecar: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let case = format!("{}", path.display());
+        check_params_key(&case, &sidecar);
         let (doc, options) = graph_for(&sidecar);
         let bytes = serde_json::to_vec(&doc).unwrap();
         let outcome = polypous_ir::load(&bytes, &options);

@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "op": "nn.max_pool2d",
+  "case": "f16",
+  "description": "f16 [2, 2, 5, 5], kernel_size [3, 3], stride [2, 2], padding [1, 1]: f16.",
+  "attributes": {
+    "kernel_size": [
+      3,
+      3
+    ],
+    "stride": [
+      2,
+      2
+    ],
+    "padding": [
+      1,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2,
+        5,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.max_pool2d(x, kernel_size, stride, padding, dilation)",
+  "notes": "Selects values: exact.",
+  "seed": 2809,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "op": "nn.avg_pool2d",
+  "case": "f16",
+  "description": "f16 [2, 2, 5, 5], kernel_size [3, 3], stride [2, 2], padding [1, 1]: f16, count_include_pad true.",
+  "attributes": {
+    "kernel_size": [
+      3,
+      3
+    ],
+    "stride": [
+      2,
+      2
+    ],
+    "padding": [
+      1,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2,
+        5,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.avg_pool2d(x, kernel_size, stride, padding, count_include_pad=count_include_pad) in f64, rounded once to the dtype",
+  "notes": "f16/bf16 compute in f32 (graph-ir.md \u00a73.1.8). out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2857,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

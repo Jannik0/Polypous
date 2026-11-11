@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "op": "nn.group_norm",
+  "case": "large_mean_f32",
+  "description": "f32 [2, 4, 16], weight, bias: x near 100, spread \u00b11.",
+  "attributes": {
+    "num_groups": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        16
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        16
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "F.group_norm(x, num_groups, weight, bias, eps) in f64, rounded once to the dtype",
+  "notes": "x has a large mean and a small spread: a one-pass variance E[x\u00b2] - E[x]\u00b2 in f32 misses the tolerance here (about 2.5 times the allowed error at mean 100 \u00b1 1), the two-pass form meets it. At mean 1e4 \u00b1 1 even torch's own f32 kernel misses it (the f32 mean is off by an ulp of 1e4), so the f32 case stays at 100. out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 3211,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "nn.relu",
+  "case": "permuted_f32",
+  "description": "f32 [2, 3, 4]: a permuted view.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "F.relu(x) in f64, rounded once to the dtype",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back. out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2010,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -2,21 +2,21 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-10, M1 in progress (#35–#42 done).
+2026-11-11, M1 in progress (#35–#43 done).
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops), #42 (reductions, `matmul`, softmax, `cumsum`, `top_k`; f32 `matmul` on CUDA misses the spec, see §4). Next: #43 (nn ops), then #44 (interpreter). M1 can't close before the Burn TF32 fix (§4) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops), #42 (reductions, `matmul`, softmax, `cumsum`, `top_k`), #43 (`nn` ops); f32 `matmul` and `nn.linear` on CUDA miss the spec, see §4. Next: #44 (interpreter). M1 can't close before the Burn TF32 fix (§4) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
 ## 2. What exists after M0
 
 | Crate | State |
 |---|---|
-| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40); shape, indexing (out-of-range indices checked before the op runs) and creation ops (#41); reductions, `matmul`, softmax, `cumsum` and `top_k` (#42), with a fixture-based reference harness that runs every case on every device and dtype |
+| `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40); shape, indexing (out-of-range indices checked before the op runs) and creation ops (#41); reductions, `matmul`, softmax, `cumsum` and `top_k` (#42); the `nn` ops: layers, convolution, pools, norms and activations (#43), with a fixture-based reference harness that runs every case on every device and dtype |
 | `polypous` (facade) | Real code. `Engine`, `EngineConfig`, facade device types (`DeviceInfo` with `physical_gpu` and `primary`), probe API (`polypous::probe`), `Error`/`ErrorKind`, panics caught at the boundary |
 | `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json` |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
@@ -64,11 +64,12 @@ Driver versions at the M0 exit check:
 
 Fix an item when its area is touched, or file an issue first. Only the first item blocks M1.
 
-- **f32 `matmul` on CUDA is not f32-accurate (blocks the M1 exit check, #47).**
+- **f32 `matmul` and `nn.linear` on CUDA are not f32-accurate (blocks the M1 exit check, #47).**
   - Burn 0.22.1 / cubek-matmul 0.3.1 run f32 `matmul` on TF32 tensor cores when the GPU supports TF32 (Ampere or newer): `adjust_dtypes` in cubek-matmul's `multi_level/definition/blueprint.rs`, mirrored in burn-cubecl's `kernel/matmul/tune/base.rs`. TF32 rounds the inputs to a 10-bit mantissa. There is no setting to turn it off.
   - On the RTX 3060 (Windows, NVIDIA 621.14), 9 of 11 `core.matmul` f32 cases fail on `cuda:0`: relative errors of 6e-4 to 6.5e-2 against `rtol 1e-3`. The output equals an f32 matmul with TF32-rounded inputs (max rel difference 6.7e-6). Vulkan on the same GPU, the Iris Xe, the CPU and lavapipe pass; f16/bf16 pass on CUDA.
   - **No workaround in Polypous (owner decision):** the spec (graph-ir.md §3.2, testing-strategy.md §2) stays as it is, and the tests keep failing on `cuda:0`. A trial computing in f64 on CUDA was exact but 61× slower than TF32 at 2048³, and was discarded.
-  - Upstream: [tracel-ai/burn#6140](https://github.com/tracel-ai/burn/issues/6140) asked for control over TF32 in f32 matmul; the PRs answering it are merged into Burn's `main` (not in a release yet). They don't add a Rust-level API to switch it off easily, which [tracel-ai/burn#6480](https://github.com/tracel-ai/burn/issues/6480) asks for. Fix when Burn is updated (ADR-0007): select full f32 precision, then the CUDA tests must pass. `nn` ops built on `matmul` or convolution (#43) may show the same failure on CUDA.
+  - Upstream: [tracel-ai/burn#6140](https://github.com/tracel-ai/burn/issues/6140) asked for control over TF32 in f32 matmul; the PRs answering it are merged into Burn's `main` (not in a release yet). They don't add a Rust-level API to switch it off easily, which [tracel-ai/burn#6480](https://github.com/tracel-ai/burn/issues/6480) asks for. Fix when Burn is updated (ADR-0007): select full f32 precision, then the CUDA tests must pass.
+  - `nn.linear` runs on `matmul` and fails the same way: 7 of 8 f32 cases on `cuda:0` (#43, PR 60). `nn.conv1d`/`conv2d` pass on CUDA in every dtype, f32 included.
 
 - **Burn 0.22.1 bool bug** in `bool_to_device` across Dispatch backends:
   - Burn hands native bool storage to CubeCL, which panics on storage that isn't its own.
@@ -83,6 +84,7 @@ Fix an item when its area is touched, or file an issue first. Only the first ite
   - On the reference machine (Windows, NVIDIA 621.14, Intel 32.0.101.7092): Intel's Vulkan driver returns `pow(|a|, b)` for a negative base with a non-integer exponent (GLSL `pow` is undefined there). `pow` sets NaN explicitly for it. Both Vulkan drivers flush f32 subnormals to zero in comparisons. Subnormals are backend-defined (graph-ir.md §3.1.8, owner decision), and fixtures contain none.
   - Found with #41 (PR 57): out-of-range indices in `gather`/`select` make `flex` panic, and on lavapipe they read out of bounds (wrong values; `select` with `-1` crashed the process with SIGSEGV). Polypous checks indices before every indexing op (one min/max read-back, one device sync on GPUs). `flex` also returns `gather`/`select` of a bool tensor in `u8` storage, which can't be read back as bool; bool indexing runs as `i32` on every backend.
   - Found with #42 (PR 59): `flex` panics on overflow in `i64` `sum_dim` and in `i32`/`i64` `cumsum` (integer `sum`/`cumsum` wrap on the host on the CPU). CubeCL's `f16` `cumsum` accumulates in `f16` on lavapipe (the cumulative sum of 4096 ones gives 2048); f16/bf16 `sum`, `mean`, `cumsum`, `softmax` and `log_softmax` compute in f32 on every backend (graph-ir.md §3.1.8). Burn's sorts are unstable and its CubeCL `sort`/`topk` read back to the host anyway; CubeCL's `topk_with_indices` returned garbage after a NaN on lavapipe. `top_k` sorts stably on the host, one device sync per call.
+  - Found with #43 (PR 60): CubeCL's `max_pool2d` pads with `-f32::MAX` instead of `-inf` (an all-padding window, or a padded window of only `-inf` inputs, gives `-3.4028235e38`) and dropped NaN on lavapipe (the window `1, NaN, 5, 6` gave 6); `max_pool2d` sets both explicitly with one extra pool of a code tensor. CubeCL's `erf` is the Abramowitz–Stegun 7.1.26 polynomial (absolute error 1.5e-7, inside the `gelu` tolerances), and its `log1p` is `ln(1 + x)`, which is 0 in f32 below `x ≈ 6e-8`: `softplus(x)` gave 0 below `x ≈ -16.6` on every CubeCL device (CUDA and Vulkan; `softplus(-17)`: 0 instead of 4.14e-8), and so did `mish`. Mesa's Vulkan `tanh` (lavapipe) returns noise of about 3e-8 for tiny arguments. `softplus` uses its own `log1p` and `mish` its own `tanh` for non-negative arguments, with series for small arguments. In f16, Burn's `matmul` and conv (`flex` and lavapipe) miss `rtol 1e-2` on outputs that cancel to near zero, and f16 norms and activations fail without f32 compute; f16/bf16 `nn.linear`, conv, average pools, norms and activations compute in f32 (graph-ir.md §3.1.8).
   - The owner follows these up in Burn and CubeCL upstream, outside this repository.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.

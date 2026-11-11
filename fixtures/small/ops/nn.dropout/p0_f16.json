@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "op": "nn.dropout",
+  "case": "p0_f16",
+  "description": "f16 [2, 5]: p 0.",
+  "attributes": {
+    "p": 0.0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.dropout(x, p, training=False)",
+  "notes": "Inference mode: the identity (graph-ir.md \u00a73.3), exact.",
+  "seed": 2902,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

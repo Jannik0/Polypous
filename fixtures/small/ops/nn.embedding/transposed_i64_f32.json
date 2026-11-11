@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "op": "nn.embedding",
+  "case": "transposed_i64_f32",
+  "description": "i64 ids [3, 4], f32 weight [11, 2]: ids are a transposed view.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "ids",
+      "dtype": "i64",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        11,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.embedding(ids, weight)",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. A lookup: exact. Out-of-range ids are tested in Rust (tests/reference_nn.rs), since torch raises for them.",
+  "seed": 2507,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "op": "nn.adaptive_avg_pool2d",
+  "case": "same_size_f32",
+  "description": "f32 [1, 2, 3, 4], output_size [3, 4]: the identity.",
+  "attributes": {
+    "output_size": [
+      3,
+      4
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "F.adaptive_avg_pool2d(x, output_size) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2956,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

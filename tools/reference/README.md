@@ -46,6 +46,12 @@ Commit the regenerated files together with the generator change. Never edit a fi
      starting with `permuted_`, `transposed_`, `expanded_` or `strided_` builds its first input as
      that PyTorch view (`layout_input`), and the Rust harness feeds the same kind of view on the
      device (`feed_layout` in `crates/polypous-backend/tests/reference/common.rs`).
+   - `nn` ops: `act_case`, `linear_case`, `embedding_case`, `conv_case`, `pool_case`, `norm_case`
+     (`nn_cases()`), all built on `nn_case`. **Params** (graph-ir.md §2.4) are built after the
+     inputs and listed in `Case.params` (the present ones, in catalog order; `()` if an op's
+     optional params are all left out, `None` for ops without params). `write_case` puts them in
+     the sidecar's `params` key (testing-strategy.md §3.2). Name a case without an optional param
+     after it (`no_bias_f32`).
    - `op`: the IR op name (`core.add`), `name`: unique per op, ending in the dtype (`broadcast_row_f32`).
    - `seed`: a new fixed number, not shared with another case.
    - `inputs`: builds the inputs in the op's input order, **named like the op's inputs** in

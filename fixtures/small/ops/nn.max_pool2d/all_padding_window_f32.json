@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "op": "nn.max_pool2d",
+  "case": "all_padding_window_f32",
+  "description": "f32 [1, 2, 2, 4], kernel_size [2, 2], stride [1, 1], padding [1, 1], dilation [3, 1]: H 2, k 2, p 1, dilation 3: the only row of windows reads rows -1 and 2, both padding, so every result is -inf.",
+  "attributes": {
+    "kernel_size": [
+      2,
+      2
+    ],
+    "stride": [
+      1,
+      1
+    ],
+    "padding": [
+      1,
+      1
+    ],
+    "dilation": [
+      3,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        2,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.max_pool2d(x, kernel_size, stride, padding, dilation)",
+  "notes": "Selects values: exact. padding \u2264 kernel_size / 2 does not rule out all-padding windows once dilation > 1; torch gives -inf.",
+  "seed": 2806,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

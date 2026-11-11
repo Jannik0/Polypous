@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "op": "nn.max_pool2d",
+  "case": "nan_f32",
+  "description": "f32 [1, 1, 4, 6], kernel_size [2, 2]: a NaN in a window gives NaN; \u00b1inf.",
+  "attributes": {
+    "kernel_size": [
+      2,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        1,
+        4,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.max_pool2d(x, kernel_size, stride, padding, dilation)",
+  "notes": "Selects values: exact. NaN propagates. Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf.",
+  "seed": 2807,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

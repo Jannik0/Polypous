@@ -11,7 +11,7 @@
 //! One file per op family, each with its own `impl DynTensor` block, so that op families can be
 //! added in parallel without touching each other's files:
 //!
-//! | File | Ops (graph-ir.md §3.2) |
+//! | File | Ops (graph-ir.md §3.2, §3.3) |
 //! |---|---|
 //! | `mod.rs` | Shared pieces: [`Scalar`], dtype classes, broadcasting, operand checks |
 //! | `elementwise.rs` | `core.add sub mul div pow maximum minimum neg abs exp log sqrt rsqrt sin cos tanh clamp where` |
@@ -24,8 +24,11 @@
 //! | `linalg.rs` | `core.matmul` |
 //! | `softmax.rs` | `core.softmax log_softmax` |
 //! | `topk.rs` | `core.top_k` |
-//!
-//! Planned: the `nn` opset (#43) adds its own file here and registers it below.
+//! | `nn_layers.rs` | `nn.linear embedding dropout`, and the param checks shared by the `nn` ops |
+//! | `conv.rs` | `nn.conv1d conv2d`, and the window output size shared with the pools |
+//! | `pool.rs` | `nn.max_pool2d avg_pool2d adaptive_avg_pool2d` |
+//! | `norm.rs` | `nn.batch_norm layer_norm group_norm rms_norm` |
+//! | `activation.rs` | `nn.relu leaky_relu gelu gelu_tanh silu sigmoid softplus mish` |
 //!
 //! Reference tests live in `tests/reference_*.rs`, one test binary per op family, and share the
 //! fixture harness in `tests/reference/common.rs` (testing-strategy.md §6). A new family adds
@@ -52,6 +55,10 @@
 //! | `core.matmul` | [`DynTensor::matmul`] |
 //! | `core.softmax`, `log_softmax` | [`softmax`](DynTensor::softmax), [`log_softmax`](DynTensor::log_softmax) |
 //! | `core.top_k` | [`DynTensor::top_k`], returning `(values, indices)` |
+//! | `nn.linear`, `conv1d`, `conv2d`, `max_pool2d`, `avg_pool2d`, `adaptive_avg_pool2d`, `dropout` | The same names: [`linear`](DynTensor::linear), [`conv1d`](DynTensor::conv1d), [`conv2d`](DynTensor::conv2d), [`max_pool2d`](DynTensor::max_pool2d), [`avg_pool2d`](DynTensor::avg_pool2d), [`adaptive_avg_pool2d`](DynTensor::adaptive_avg_pool2d), [`dropout`](DynTensor::dropout) |
+//! | `nn.embedding` | [`DynTensor::embedding`], called on `ids` with the `weight` param |
+//! | `nn.batch_norm`, `layer_norm`, `group_norm`, `rms_norm` | The same names: [`batch_norm`](DynTensor::batch_norm), [`layer_norm`](DynTensor::layer_norm), [`group_norm`](DynTensor::group_norm), [`rms_norm`](DynTensor::rms_norm) |
+//! | `nn.relu`, `leaky_relu`, `gelu`, `gelu_tanh`, `silu`, `sigmoid`, `softplus`, `mish` | The same names |
 //!
 //! # Arguments of the shape, indexing and creation ops
 //!
@@ -118,6 +125,57 @@
 //! - **`matmul`** broadcasts the batch dims explicitly (different ranks allowed) before Burn's
 //!   `matmul` sees them.
 //!
+//! # The `nn` ops (graph-ir.md §3.3)
+//!
+//! Called on `x` (`embedding`: on `ids`). **Params are plain [`DynTensor`] arguments** after it, in
+//! catalog order (graph-ir.md §2.4), already in the compute dtype and in PyTorch's layouts
+//! (`weight` `[out, in]`, `[C_out, C_in/groups, k…]`), so PyTorch weights load unchanged; optional
+//! params are `Option<DynTensor>`. Attributes arrive with defaults filled in (`stride` of the
+//! pools = `kernel_size`; `layer_norm`/`rms_norm` get `normalized_shape` even where the graph took
+//! it from `weight`). Every argument is still checked: dtype class, rank, the param dtypes
+//! ([`TensorError::DTypeMismatch`]), devices and shapes, `stride`/`dilation`/`groups`/`kernel_size`
+//! ≥ 1, `groups` dividing `C_in` and `C_out`, pool `padding` ≤ `kernel_size / 2`, output sizes ≥ 1
+//! with checked arithmetic, `0 ≤ p < 1`, finite `eps`/`beta`/`threshold` > 0, `num_groups` dividing
+//! `C`, `normalized_shape` equal to the trailing dims; otherwise [`TensorError::InvalidArgument`],
+//! before anything is allocated.
+//!
+//! Burn 0.22.1 findings (CPU `flex` and lavapipe), and what is done about them:
+//!
+//! - **f16/bf16 compute in `f32`** for `linear`, conv, the average pools, the norms and every
+//!   activation except `relu` (graph-ir.md §3.1.8), on every backend. Without it, in f16:
+//!   `nn.linear/transposed_f16` missed `rtol 1e-2` on both devices (expected `9.928e-4`, got
+//!   `9.766e-4`), conv2d f16 reached a relative error of `1.07e-1` on `flex` and
+//!   `4.39` on lavapipe (outputs that cancel to near zero), `layer_norm/large_mean_f16` failed on 114
+//!   of 128 elements and `rms_norm/large_f16` on all (`mean(x²)` overflows f16), `gelu` f16 tails
+//!   came out `-0`, and `adaptive_avg_pool2d/long_f16` missed by `1.2e-2` on `flex`.
+//! - **`max_pool2d`** pads with `-inf` and propagates NaN explicitly (one extra max-pool of a code
+//!   tensor, see `pool.rs`). On lavapipe, CubeCL pads with `-f32::MAX` (an all-padding window, or
+//!   a padded window of only `-inf` inputs, gave `-3.4028235e38`) and dropped NaN (the window
+//!   `1, NaN, 5, 6` gave 6). `flex` got both right.
+//! - **`embedding`** checks its ids before the lookup like `index_select` (one reduction and one
+//!   device sync per call; [`TensorError::IndexOutOfRange`]).
+//! - **Activations** are written out from elementary ops rather than taken from
+//!   `burn::tensor::activation`, so NaN, infinities and large inputs don't depend on a backend
+//!   (`relu` is a selection, not `max(x, 0)`, whose NaN behavior GPU drivers leave open; `softplus`
+//!   doesn't overflow; `gelu_tanh` is `x · sigmoid(2u)`). Burn's own functions passed every `f32`
+//!   case on `flex` and lavapipe; in f16 its `gelu_approximate` overflowed (`x³` for `x = 6e4`).
+//! - **Norms** use a two-pass variance (a one-pass `E[x²] - E[x]²` misses the f32 tolerance at mean
+//!   100 ± 1).
+//! - Conv with groups and dilation, `avg_pool2d` with and without `count_include_pad`,
+//!   `adaptive_avg_pool2d` with overlapping cells and `erf` in `f32` (incl. `|x|` up to 10) matched
+//!   PyTorch with Burn's kernels as they are, on both devices. CubeCL's `erf` is the
+//!   Abramowitz–Stegun 7.1.26 approximation (absolute error 1.5e-7), inside the `gelu`
+//!   tolerances.
+//! - **`softplus` and `mish` far below zero:** CubeCL's `log1p` is `ln(1 + x)`, so `softplus(x)`
+//!   was 0 below `x ≈ -16.6` on every CubeCL device (CUDA and Vulkan; `softplus(-17)` should be
+//!   `4.14e-8`), and with it `mish`; Mesa's Vulkan `tanh` returns noise near `3e-8` for tiny
+//!   arguments. `softplus` has its own `log1p` and `mish` its own `tanh` for `s ≥ 0`, each with a
+//!   series for small arguments (`activation.rs`). The f32 `tail_f32` fixtures (atol 0) fail on
+//!   lavapipe without them.
+//! - **CUDA:** `linear` uses [`DynTensor::matmul`], so f32 `linear` shares matmul's TF32
+//!   limitation on CUDA (7 of 8 f32 cases fail on the RTX 3060; docs/status.md §4). Conv passes
+//!   on CUDA in every dtype. No workaround, by design.
+//!
 //! # Semantics (graph-ir.md §3.1)
 //!
 //! - **Strict dtypes** (§3.1.2): operands that must agree have the same dtype, or the op fails
@@ -149,12 +207,17 @@
 //!   the target dtype, so no op here can reach a device with an unsupported dtype.
 //!   [`DynTensor::device_supports`] answers the question up front.
 
+mod activation;
 mod cast;
 mod compare;
+mod conv;
 mod creation;
 mod elementwise;
 mod indexing;
 mod linalg;
+mod nn_layers;
+mod norm;
+mod pool;
 mod reduce;
 mod shape;
 mod softmax;

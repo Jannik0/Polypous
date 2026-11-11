@@ -10,7 +10,8 @@ with its own fixed seed. Input data comes from NumPy's PCG64 (`Generator.random`
 Outputs are computed with PyTorch on the CPU; matmul, pow and the transcendental ops are computed in
 f64 and rounded once to the dtype under test, so the bytes don't depend on the BLAS or vectorized
 kernel the CPU picks (see `ref_matmul` and `OpSpec.f64`). PyTorch's own result in the dtype under
-test is checked against the tolerance.
+test is checked against the tolerance. Ops with params (the `nn` ops) write them to the sidecar's
+`params` key, after the inputs (`Case.params`, docs/testing-strategy.md §3.2).
 
 Needs the pinned versions from requirements.txt; `--check` refuses to compare otherwise.
 """
@@ -131,6 +132,10 @@ class Case:
     # For references computed in f64 and rounded once: PyTorch's own result in the dtype under
     # test, which must meet the tolerance (checked by the generator, see `check_native`).
     native: Callable[[list[Any]], Any] | None = None
+    # Ops with params (graph-ir.md §2.4): the names among `inputs`' tensors that are params, in
+    # catalog order, written to the sidecar's `params` key (docs/testing-strategy.md §3.2). `None`
+    # for ops without params (no key); `()` for an op with params whose optional ones are all left out.
+    params: tuple[str, ...] | None = None
 
 
 def ref_matmul(xs: list[Any]) -> list[tuple[str, Any]]:
@@ -1648,9 +1653,610 @@ def matmul_cases() -> list[Case]:
     ]
 
 
+# ---------------------------------------------------------------------------------------------
+# nn ops (docs/specs/graph-ir.md §3.3). Params go to the sidecar's `params` key, after the inputs
+# (Case.params, docs/testing-strategy.md §3.2); an absent optional param is left out and the case
+# name says so (`no_bias_…`). Float references are computed in f64 from the inputs and params and
+# rounded once to the dtype under test (like matmul), so the bytes don't depend on the CPU's kernels;
+# PyTorch's own result in the dtype under test is checked against the tolerance. Tolerances:
+# contractions (`linear`, conv) and the norms are reductions (rtol 1e-3 in f32), activations and
+# the average pools elementwise; `embedding`, `dropout` and `max_pool2d` only move values, so they
+# are exact.
+
+NN_F64_NOTES = (
+    "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the "
+    "bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the "
+    "generator)."
+)
+NN_HALF_NOTES = " f16/bf16 compute in f32 (graph-ir.md §3.1.8)."
+
+
+def nn_case(op: str, name: str, seed: int, description: str, attributes: dict[str, Any],
+            tensors: Callable[[Any], list[tuple[str, Any]]], params: tuple[str, ...] | None,
+            fn: Callable[[dict[str, Any]], Any], text: str, tolerance: dict[str, Any], notes: str = "",
+            f64: bool = True, input_name: str = "x") -> Case:
+    """An nn case: `tensors` builds the inputs, then the present params (in catalog order); `fn`
+    computes the output from a dict of them. With `f64`, the reference is `fn` on f64 copies, rounded
+    once to the output dtype, and `fn` on the tensors themselves must meet the tolerance."""
+
+    names = (input_name,) + (params or ())
+
+    def named(xs: list[Any], cast: bool) -> dict[str, Any]:
+        assert len(xs) == len(names), (op, name, len(xs), names)
+        return {n: (t.double() if cast and t.is_floating_point() else t) for n, t in zip(names, xs)}
+
+    def reference(xs: list[Any]) -> list[tuple[str, Any]]:
+        dtype = next(t.dtype for t in xs if t.is_floating_point())
+        out = fn(named(xs, f64))
+        return [("out", out.to(dtype))]
+
+    notes = with_layout_notes(name, " ".join(n for n in (notes, NN_F64_NOTES if f64 else "") if n))
+    return Case(op=op, name=name, description=description, seed=seed, attributes=attributes, inputs=tensors,
+                reference=reference, reference_text=text + (" in f64, rounded once to the dtype" if f64 else ""),
+                tolerance=tolerance, notes=notes, native=(lambda xs: fn(named(xs, False))) if f64 else None,
+                params=params)
+
+
+def x_input(rng: Any, name: str, shape: list[int], dtype: str, low: float = -2.0, high: float = 2.0) -> Any:
+    """`x` of an nn case: uniform in [low, high), as the view the case name asks for (see LAYOUTS)."""
+    layout = layout_of(name)
+    if layout is None:
+        x = uniform(rng, shape, dtype, low, high)
+    else:
+        view = layout_input(rng, shape, dtype, layout)
+        x = view * ((high - low) / 4.0) + (low + high) / 2.0 if (low, high) != (-2.0, 2.0) else view
+    # Values that round to a subnormal of the dtype become 0 (graph-ir.md §3.1.8: fixtures have none).
+    return x.masked_fill((x != 0) & (x.abs() < torch.finfo(x.dtype).tiny), 0.0)
+
+
+# Activations. `values` lists are chosen so that no output is subnormal in the dtype under test
+# (the generator refuses those): large negative inputs stop where the result would leave the normal range.
+ACTIVATIONS: dict[str, tuple[Callable[..., Any], str]] = {
+    "nn.relu": (lambda x: F.relu(x), "F.relu(x)"),
+    "nn.leaky_relu": (lambda x, negative_slope=0.01: F.leaky_relu(x, negative_slope),
+                      "F.leaky_relu(x, negative_slope)"),
+    "nn.gelu": (lambda x: F.gelu(x), "F.gelu(x)"),
+    "nn.gelu_tanh": (lambda x: F.gelu(x, approximate="tanh"), 'F.gelu(x, approximate="tanh")'),
+    "nn.silu": (lambda x: F.silu(x), "F.silu(x)"),
+    "nn.sigmoid": (lambda x: torch.sigmoid(x), "torch.sigmoid(x)"),
+    "nn.softplus": (lambda x, beta=1.0, threshold=20.0: F.softplus(x, beta, threshold), "F.softplus(x, beta, threshold)"),
+    "nn.mish": (lambda x: F.mish(x), "F.mish(x)"),
+}
+ACT_NAN = "NaN propagates. " + NAN_NOTES
+# Far negative inputs of softplus and mish: tiny but normal f32 results. The default f32 atol (1e-5) would
+# accept 0 for all of them, so these cases use atol 0 (rtol unchanged): a stricter tolerance, not a looser one.
+TAIL_VALUES = [-2.2, -2.25, -2.3, -2.99, -3.0, -3.01, -4.0, -10.0, -16.0, -17.0, -20.0, -30.0, -50.0, -80.0, -85.0]
+TAIL_TOL = {"exact": False, "atol": 0.0, "rtol": 1e-4}
+TAIL_NOTES = (
+    "atol 0 (stricter than the f32 default 1e-5, which would accept 0 for every value here): the results are "
+    "tiny but normal, and log(1 + t) with t = exp(x) rounds to 0 in f32 below x = -16.6. Values around -3 (softplus) "
+    "and -2.25 (mish) sit on both sides of where Polypous switches from a series to the plain formula."
+)
+# Tail values left out of the bf16 activation cases (bf16 has f32's exponent range, so tiny results are
+# normal there and rtol 1e-2 applies to them).
+BF16_TAIL_LEFT_OUT = {"nn.gelu": (-6.0, -5.0), "nn.gelu_tanh": (-10.0, -6.0, -5.0)}
+TAIL_BF16_NOTES = {
+    "nn.gelu": "x = -5 and -6 are left out: there torch's own bf16 kernel misses rtol 1e-2 (1 + erf cancels in "
+    "f32), so the case couldn't check it.",
+    "nn.gelu_tanh": "x = -5, -6 and -10 are left out: at -5 and -6 torch's own bf16 kernel misses rtol 1e-2 (1 + tanh "
+    "cancels in f32), and from about -6.2 on even torch's f64 result is 0 (1 + tanh(u) cancels in f64), while "
+    "the true value (about -1.2e-37 at -10, which Polypous's sigmoid form gives) is a normal bf16 number.",
+}
+
+
+def act_case(op: str, name: str, seed: int, dtype: str, description: str, shape: list[int] | None = None,
+             values: list[Any] | None = None, attributes: dict[str, Any] | None = None,
+             low: float = -4.0, high: float = 4.0, notes: str = "",
+             tolerance: dict[str, Any] | None = None) -> Case:
+    fn, text = ACTIVATIONS[op]
+    attrs = attributes or {}
+
+    def tensors(rng: Any) -> list[tuple[str, Any]]:
+        if values is not None:
+            return [("x", from_list(values, dtype, shape))]
+        return [("x", x_input(rng, name, shape or [], dtype, low, high))]
+
+    half = NN_HALF_NOTES if dtype != "f32" and op != "nn.relu" else ""
+    size = shape if shape is not None else [len(values or [])]
+    return nn_case(op, name, seed, f"{dtype} {size}: {description}", attrs, tensors, None,
+                   lambda d: fn(d["x"], **attrs), text, tolerance or elementwise_tol(dtype), (notes + half).strip())
+
+
+def activation_cases() -> list[Case]:
+    cases: list[Case] = []
+    special = [NAN, INF, -INF, -0.0, 0.0, 1.0, -1.0]
+    # Large and tail values per op; f32 and the f16 range.
+    large = {
+        "nn.relu": [-3e38, -1e30, -1e4, -1.5, 1.5, 1e4, 1e30, 3e38],
+        "nn.leaky_relu": [-3e36, -1e30, -1e4, -1.5, 1.5, 1e4, 1e30, 3e38],
+        "nn.gelu": [-1e30, -10.0, -6.0, -5.0, -4.0, -3.5, -3.0, -2.5, 2.5, 3.0, 4.0, 6.0, 10.0, 1e4, 1e30],
+        "nn.gelu_tanh": [-1e30, -10.0, -6.0, -5.0, -4.0, -3.0, 3.0, 4.0, 6.0, 10.0, 1e4, 1e13, 1e30],
+        "nn.silu": [-1e30, -85.0, -80.0, -30.0, -10.0, 10.0, 30.0, 80.0, 100.0, 1e4, 1e30],
+        "nn.sigmoid": [-1e30, -87.0, -80.0, -30.0, -10.0, 10.0, 17.0, 30.0, 80.0, 100.0, 1e30],
+        "nn.softplus": [-85.0, -80.0, -30.0, -17.0, -10.0, 10.0, 15.0, 19.5, 20.5, 30.0, 100.0, 1e4, 1e30],
+        "nn.mish": [-85.0, -80.0, -30.0, -10.0, 10.0, 19.5, 20.5, 30.0, 100.0, 1e4, 1e30],
+    }
+    large_half = {
+        "nn.relu": [-6e4, -1e3, -1.5, 1.5, 1e3, 6e4],
+        "nn.leaky_relu": [-6e4, -1e3, -1.5, 1.5, 1e3, 6e4],
+        "nn.gelu": [-4.0, -3.5, -3.0, -2.5, 2.5, 3.0, 4.0, 6.0, 1e3, 6e4],
+        "nn.gelu_tanh": [-4.0, -3.5, -3.0, -2.5, 2.5, 3.0, 4.0, 6.0, 1e3, 6e4],
+        "nn.silu": [-11.0, -10.0, -8.0, -5.0, 5.0, 8.0, 10.0, 1e3, 6e4],
+        "nn.sigmoid": [-9.0, -8.0, -5.0, 5.0, 8.0, 10.0, 1e3, 6e4],
+        "nn.softplus": [-9.0, -8.0, -5.0, 5.0, 8.0, 15.0, 19.5, 20.5, 1e3, 6e4],
+        "nn.mish": [-11.0, -10.0, -8.0, -5.0, 5.0, 8.0, 19.5, 20.5, 1e3, 6e4],
+    }
+    for k, op in enumerate(ACTIVATIONS):
+        base = 2000 + 40 * k
+        sp = special if op not in ("nn.gelu",) else [v for v in special if v != INF]
+        sp_notes = ACT_NAN
+        if op == "nn.gelu":
+            sp_notes += (" +inf is left out: the formula gives +inf (as torch in f64), torch's f32 CPU kernel "
+                         "gives NaN.")
+        if op in ("nn.gelu", "nn.gelu_tanh", "nn.silu", "nn.mish"):
+            sp_notes += " -inf gives NaN (-inf · 0), as in torch."
+        cases += [
+            act_case(op, "random_f32", base + 1, "f32", "uniform in [-4, 4).", [3, 4, 5]),
+            act_case(op, "random_f16", base + 2, "f16", "uniform in [-4, 4).", [3, 8]),
+            act_case(op, "random_bf16", base + 3, "bf16", "uniform in [-4, 4).", [3, 8]),
+            act_case(op, "special_f32", base + 4, "f32", "NaN, ±inf, ±0.", values=sp, notes=sp_notes),
+            act_case(op, "large_f32", base + 5, "f32", "large magnitudes and tails, without overflow or NaN.",
+                     values=large[op]),
+            act_case(op, "large_f16", base + 6, "f16", "large magnitudes and tails in the f16 range.",
+                     values=large_half[op]),
+            act_case(op, "large_bf16", base + 7, "bf16", "large magnitudes and tails in bf16.",
+                     values=[v for v in large[op] if v not in BF16_TAIL_LEFT_OUT.get(op, ())],
+                     notes=TAIL_BF16_NOTES[op] if op in TAIL_BF16_NOTES else ""),
+            act_case(op, "rank6_f32", base + 8, "f32", "rank 6.", [2, 1, 3, 1, 2, 2]),
+            act_case(op, "rank1_f16", base + 9, "f16", "rank 1.", [7]),
+            act_case(op, "permuted_f32", base + 10, "f32", "a permuted view.", [2, 3, 4]),
+            act_case(op, "transposed_f16", base + 11, "f16", "a transposed view.", [3, 5]),
+            act_case(op, "near_zero_f32", base + 12, "f32", "small inputs in [-1e-3, 1e-3).", [4, 6],
+                     low=-1e-3, high=1e-3),
+        ]
+    cases += [
+        act_case("nn.leaky_relu", "slope_0_2_f32", 2061, "f32", "negative_slope 0.2.", [3, 6],
+                 attributes={"negative_slope": 0.2}),
+        act_case("nn.leaky_relu", "negative_slope_f32", 2062, "f32", "negative_slope -0.5 (allowed, as in torch).",
+                 [3, 6], attributes={"negative_slope": -0.5}),
+        act_case("nn.leaky_relu", "slope_zero_f16", 2063, "f16", "negative_slope 0: relu.", [3, 6],
+                 attributes={"negative_slope": 0.0}),
+        act_case("nn.leaky_relu", "slope_one_bf16", 2064, "bf16", "negative_slope 1: the identity.", [3, 6],
+                 attributes={"negative_slope": 1.0}),
+        act_case("nn.softplus", "beta2_threshold5_f32", 2261, "f32", "beta 2, threshold 5 (linear above x = 2.5).",
+                 values=[-40.0, -5.0, -1.0, 0.0, 1.0, 2.4, 2.6, 3.0, 10.0, NAN],
+                 attributes={"beta": 2.0, "threshold": 5.0}, notes=ACT_NAN),
+        act_case("nn.softplus", "beta_half_f32", 2262, "f32", "beta 0.5, threshold 20 (linear above x = 40).",
+                 values=[-100.0, -10.0, -1.0, 0.0, 1.0, 10.0, 39.0, 41.0, 100.0], attributes={"beta": 0.5}),
+        act_case("nn.softplus", "beta3_f16", 2263, "f16", "beta 3, threshold 4, x in [-2.5, 2.5).", [3, 6],
+                 attributes={"beta": 3.0, "threshold": 4.0}, low=-2.5, high=2.5),
+        act_case("nn.softplus", "threshold_bf16", 2264, "bf16", "threshold 1: linear above x = 1.", [3, 6],
+                 attributes={"threshold": 1.0}),
+        act_case("nn.softplus", "tail_f32", 2265, "f32", "far negative x: softplus(x) = exp(x) to f32 precision.",
+                 values=TAIL_VALUES, tolerance=TAIL_TOL, notes=TAIL_NOTES),
+        act_case("nn.softplus", "tail_beta2_f32", 2266, "f32", "far negative x with beta 2.",
+                 values=[-1.49, -1.5, -1.51, -3.0, -5.0, -8.5, -10.0, -15.0, -25.0, -40.0, -42.0],
+                 attributes={"beta": 2.0}, tolerance=TAIL_TOL, notes=TAIL_NOTES),
+        act_case("nn.mish", "tail_f32", 2267, "f32", "far negative x: mish(x) = x · exp(x) to f32 precision.",
+                 values=TAIL_VALUES, tolerance=TAIL_TOL, notes=TAIL_NOTES),
+    ]
+    return cases
+
+
+def linear_case(name: str, seed: int, dtype: str, x_shape: list[int], out: int, bias: bool, description: str) -> Case:
+    inp = x_shape[-1]
+
+    def tensors(rng: Any) -> list[tuple[str, Any]]:
+        t = [("x", x_input(rng, name, x_shape, dtype)), ("weight", uniform(rng, [out, inp], dtype, -1.0, 1.0))]
+        return t + ([("bias", uniform(rng, [out], dtype, -1.0, 1.0))] if bias else [])
+
+    return nn_case("nn.linear", name, seed, f"{dtype} x {x_shape}, weight [{out}, {inp}]: {description}", {}, tensors,
+                   ("weight", "bias") if bias else ("weight",), lambda d: F.linear(d["x"], d["weight"], d.get("bias")),
+                   "F.linear(x, weight, bias)", matmul_tol(dtype))
+
+
+def embedding_case(name: str, seed: int, ids_dtype: str, dtype: str, ids_shape: list[int], num: int, dim: int,
+                   description: str, ids: list[int] | None = None) -> Case:
+    def tensors(rng: Any) -> list[tuple[str, Any]]:
+        if ids is not None:
+            i = from_list(ids, ids_dtype, ids_shape)
+        elif name.startswith("transposed_"):
+            i = integers(rng, ids_shape[:-2] + [ids_shape[-1], ids_shape[-2]], ids_dtype, 0, num).transpose(-2, -1)
+        else:
+            i = integers(rng, ids_shape, ids_dtype, 0, num)
+        return [("ids", i), ("weight", uniform(rng, [num, dim], dtype))]
+
+    return nn_case("nn.embedding", name, seed, f"{ids_dtype} ids {ids_shape}, {dtype} weight [{num}, {dim}]: "
+                   f"{description}", {}, tensors, ("weight",), lambda d: F.embedding(d["ids"], d["weight"]),
+                   "F.embedding(ids, weight)", EXACT, notes="A lookup: exact. Out-of-range ids are tested in Rust "
+                   "(tests/reference_nn.rs), since torch raises for them.", f64=False, input_name="ids")
+
+
+def conv_case(op: str, name: str, seed: int, dtype: str, x_shape: list[int], c_out: int, kernel: list[int],
+              description: str, bias: bool = True, **attrs: Any) -> Case:
+    groups = attrs.get("groups", 1)
+    w_shape = [c_out, x_shape[1] // groups] + kernel
+    fn = F.conv1d if op == "nn.conv1d" else F.conv2d
+    nd = len(kernel)
+    defaults = {"stride": 1 if nd == 1 else [1, 1], "padding": 0 if nd == 1 else [0, 0],
+                "dilation": 1 if nd == 1 else [1, 1], "groups": 1}
+
+    def tensors(rng: Any) -> list[tuple[str, Any]]:
+        t = [("x", x_input(rng, name, x_shape, dtype)), ("weight", uniform(rng, w_shape, dtype, -1.0, 1.0))]
+        return t + ([("bias", uniform(rng, [c_out], dtype, -1.0, 1.0))] if bias else [])
+
+    def call(d: dict[str, Any]) -> Any:
+        a = defaults | attrs
+        return fn(d["x"], d["weight"], d.get("bias"), a["stride"], a["padding"], a["dilation"], a["groups"])
+
+    attr_text = ", ".join(f"{k} {v}" for k, v in attrs.items()) or "defaults"
+    return nn_case(op, name, seed, f"{dtype} x {x_shape}, weight {w_shape}, {attr_text}: {description}", attrs,
+                   tensors, ("weight", "bias") if bias else ("weight",), call,
+                   f"F.{fn.__name__}(x, weight, bias, stride, padding, dilation, groups)", matmul_tol(dtype))
+
+
+def layer_cases() -> list[Case]:
+    cases = [
+        linear_case("2d_f32", 2401, "f32", [3, 16], 8, True, "a batch of rows."),
+        linear_case("no_bias_f32", 2402, "f32", [3, 16], 8, False, "no bias."),
+        linear_case("rank1_f32", 2403, "f32", [16], 5, True, "rank-1 x: out [5]."),
+        linear_case("rank4_f32", 2404, "f32", [2, 3, 2, 12], 7, True, "leading dims [2, 3, 2]."),
+        linear_case("rank6_f32", 2405, "f32", [2, 1, 2, 1, 2, 8], 4, True, "rank 6."),
+        linear_case("in256_f32", 2406, "f32", [4, 256], 8, True, "in = 256: a longer reduction."),
+        linear_case("f16", 2407, "f16", [2, 3, 64], 16, True, "f16, in = 64."),
+        linear_case("no_bias_f16", 2408, "f16", [4, 64], 8, False, "f16, no bias."),
+        linear_case("bf16", 2409, "bf16", [2, 3, 64], 16, True, "bf16, in = 64."),
+        linear_case("in1_f32", 2410, "f32", [3, 1], 4, True, "in = 1."),
+        linear_case("out1_bf16", 2411, "bf16", [5, 32], 1, True, "out = 1."),
+        linear_case("permuted_f32", 2412, "f32", [2, 3, 16], 6, True, "x is a permuted view."),
+        linear_case("transposed_f16", 2413, "f16", [4, 32], 8, True, "x is a transposed view."),
+    ]
+    cases += [
+        embedding_case("ids_i64_f32", 2501, "i64", "f32", [2, 3], 10, 4, "rank-2 ids."),
+        embedding_case("ids_i32_f32", 2502, "i32", "f32", [2, 3], 10, 4, "i32 ids."),
+        embedding_case("rank1_i64_f16", 2503, "i64", "f16", [7], 5, 6, "rank-1 ids, f16 weight."),
+        embedding_case("rank5_i32_bf16", 2504, "i32", "bf16", [2, 1, 2, 1, 2], 7, 3, "rank-5 ids: rank-6 output."),
+        embedding_case("edges_i64_f32", 2505, "i64", "f32", [2, 4], 9, 3, "ids 0 and num - 1, repeated.",
+                       ids=[0, 8, 8, 0, 3, 0, 8, 3]),
+        embedding_case("one_row_i32_f16", 2506, "i32", "f16", [3], 1, 5, "num = 1: every id is 0.", ids=[0, 0, 0]),
+        embedding_case("transposed_i64_f32", 2507, "i64", "f32", [3, 4], 11, 2, "ids are a transposed view."),
+        embedding_case("wide_i64_bf16", 2508, "i64", "bf16", [4], 50, 64, "num 50, dim 64."),
+    ]
+    c1 = lambda *a, **k: conv_case("nn.conv1d", *a, **k)  # noqa: E731
+    cases += [
+        c1("basic_f32", 2601, "f32", [2, 3, 10], 4, [3], "defaults."),
+        c1("no_bias_f32", 2602, "f32", [2, 3, 10], 4, [3], "no bias.", bias=False),
+        c1("stride2_pad1_f32", 2603, "f32", [2, 3, 11], 4, [3], "stride and padding.", stride=2, padding=1),
+        c1("dilation2_f32", 2604, "f32", [1, 2, 12], 3, [3], "dilation.", dilation=2),
+        c1("groups2_f32", 2605, "f32", [2, 4, 9], 6, [3], "two groups.", groups=2),
+        c1("depthwise_f32", 2606, "f32", [2, 4, 9], 8, [3], "depthwise (groups = C_in), multiplier 2.", groups=4),
+        c1("k1_f32", 2607, "f32", [2, 5, 6], 3, [1], "a 1-wide kernel."),
+        c1("long_k_f32", 2608, "f32", [1, 16, 20], 4, [7], "C_in 16, k 7: 112 products per output.", padding=3),
+        c1("all_attrs_f16", 2609, "f16", [2, 4, 16], 6, [3], "every attribute in f16.", stride=2, padding=2,
+           dilation=2, groups=2),
+        c1("f16", 2610, "f16", [2, 3, 10], 4, [3], "f16."),
+        c1("bf16", 2611, "bf16", [2, 3, 10], 4, [3], "bf16.", padding=1),
+        c1("all_attrs_bf16", 2612, "bf16", [2, 6, 15], 3, [2], "every attribute in bf16.", stride=3, padding=1,
+           dilation=3, groups=3),
+        c1("output1_f32", 2613, "f32", [1, 2, 3], 2, [5], "the window fills the padded input: L_out 1.", padding=1),
+        c1("permuted_f32", 2614, "f32", [2, 3, 8], 4, [3], "x is a permuted view.", padding=1),
+        c1("transposed_f16", 2615, "f16", [2, 4, 7], 2, [2], "x is a transposed view."),
+    ]
+    c2 = lambda *a, **k: conv_case("nn.conv2d", *a, **k)  # noqa: E731
+    cases += [
+        c2("basic_f32", 2701, "f32", [2, 3, 6, 6], 4, [3, 3], "defaults."),
+        c2("no_bias_f32", 2702, "f32", [2, 3, 6, 6], 4, [3, 3], "no bias.", bias=False),
+        c2("stride_padding_f32", 2703, "f32", [1, 3, 7, 6], 4, [3, 3], "stride [2, 1], padding [1, 2].",
+           stride=[2, 1], padding=[1, 2]),
+        c2("dilation_f32", 2704, "f32", [1, 2, 9, 9], 3, [3, 3], "dilation [2, 3].", dilation=[2, 3]),
+        c2("groups2_f32", 2705, "f32", [2, 4, 5, 5], 6, [3, 3], "two groups.", groups=2),
+        c2("depthwise_f32", 2706, "f32", [2, 3, 6, 6], 3, [3, 3], "depthwise (groups = C_in = C_out).", groups=3,
+           padding=[1, 1]),
+        c2("depthwise_mult_f16", 2707, "f16", [1, 4, 6, 5], 8, [3, 3], "depthwise in f16, multiplier 2.", groups=4),
+        c2("k1_f32", 2708, "f32", [2, 5, 4, 4], 3, [1, 1], "a 1x1 kernel."),
+        c2("nonsquare_f32", 2709, "f32", [1, 2, 5, 8], 3, [2, 4], "a [2, 4] kernel, stride [1, 2].", stride=[1, 2]),
+        c2("wide_f32", 2710, "f32", [1, 16, 5, 5], 4, [3, 3], "C_in 16: 144 products per output.", padding=[1, 1]),
+        c2("f16", 2711, "f16", [2, 3, 6, 6], 4, [3, 3], "f16.", padding=[1, 1]),
+        c2("bf16", 2712, "bf16", [2, 3, 6, 6], 4, [3, 3], "bf16.", padding=[1, 1]),
+        c2("all_attrs_f16", 2713, "f16", [1, 4, 9, 8], 6, [3, 2], "every attribute in f16.", stride=[2, 3],
+           padding=[1, 1], dilation=[2, 1], groups=2),
+        c2("all_attrs_bf16", 2714, "bf16", [2, 6, 7, 7], 3, [2, 3], "every attribute in bf16.", stride=[1, 2],
+           padding=[2, 0], dilation=[1, 2], groups=3),
+        c2("output1_f32", 2715, "f32", [1, 2, 3, 2], 2, [3, 4], "the window fills the padded input: 1x1.",
+           padding=[0, 1]),
+        c2("permuted_f32", 2716, "f32", [2, 3, 5, 4], 4, [3, 3], "x is a permuted view.", padding=[1, 1]),
+        c2("transposed_f16", 2717, "f16", [1, 2, 4, 6], 3, [2, 2], "x is a transposed view."),
+    ]
+    cases += pool_cases()
+    cases += [
+        nn_case("nn.dropout", name, seed, f"{dtype} {shape}: {description}", attrs,
+                lambda rng, name=name, shape=shape, dtype=dtype, values=values: [
+                    ("x", from_list(values, dtype, shape) if values else x_input(rng, name, shape, dtype))],
+                None, lambda d: d["x"], "F.dropout(x, p, training=False)", EXACT,
+                "Inference mode: the identity (graph-ir.md §3.3), exact.", f64=False)
+        for name, seed, dtype, shape, attrs, values, description in [
+            ("default_p_f32", 2901, "f32", [3, 4], {}, None, "p 0.5 (default)."),
+            ("p0_f16", 2902, "f16", [2, 5], {"p": 0.0}, None, "p 0."),
+            ("p09_bf16", 2903, "bf16", [2, 5], {"p": 0.9}, None, "p 0.9."),
+            ("special_f32", 2904, "f32", [6], {"p": 0.25}, [NAN, INF, -INF, -0.0, 0.0, 1e30], "NaN, ±inf, ±0 kept."),
+            ("permuted_f32", 2905, "f32", [2, 3, 4], {"p": 0.1}, None, "a permuted view."),
+            ("rank6_f16", 2906, "f16", [1, 2, 1, 2, 1, 3], {}, None, "rank 6."),
+        ]
+    ]
+    return cases
+
+
+def pool_case(op: str, name: str, seed: int, dtype: str, shape: list[int], attrs: dict[str, Any], description: str,
+              values: list[Any] | None = None, notes: str = "") -> Case:
+    a = dict(attrs)
+    if op == "nn.max_pool2d":
+        call = lambda d: F.max_pool2d(d["x"], a["kernel_size"], a.get("stride"), a.get("padding", 0),  # noqa: E731
+                                      a.get("dilation", 1))
+        text, tol, f64 = "F.max_pool2d(x, kernel_size, stride, padding, dilation)", EXACT, False
+        notes = ("Selects values: exact. " + notes).strip()
+    elif op == "nn.avg_pool2d":
+        call = lambda d: F.avg_pool2d(d["x"], a["kernel_size"], a.get("stride"), a.get("padding", 0),  # noqa: E731
+                                      count_include_pad=a.get("count_include_pad", True))
+        text, tol, f64 = ("F.avg_pool2d(x, kernel_size, stride, padding, count_include_pad=count_include_pad)",
+                          elementwise_tol(dtype), True)
+    else:
+        call = lambda d: F.adaptive_avg_pool2d(d["x"], a["output_size"])  # noqa: E731
+        text, tol, f64 = "F.adaptive_avg_pool2d(x, output_size)", elementwise_tol(dtype), True
+    if f64 and dtype != "f32":
+        notes = (notes + NN_HALF_NOTES).strip()
+
+    def tensors(rng: Any) -> list[tuple[str, Any]]:
+        return [("x", from_list(values, dtype, shape) if values is not None else x_input(rng, name, shape, dtype))]
+
+    attr_text = ", ".join(f"{k} {v}" for k, v in attrs.items())
+    return nn_case(op, name, seed, f"{dtype} {shape}, {attr_text}: {description}", attrs, tensors, None, call, text,
+                   tol, notes, f64=f64)
+
+
+def pool_cases() -> list[Case]:
+    mp = lambda *a, **k: pool_case("nn.max_pool2d", *a, **k)  # noqa: E731
+    ap = lambda *a, **k: pool_case("nn.avg_pool2d", *a, **k)  # noqa: E731
+    aap = lambda *a, **k: pool_case("nn.adaptive_avg_pool2d", *a, **k)  # noqa: E731
+    nan_x = [1.0, NAN, 2.0, 3.0, -1.0, 4.0,
+             5.0, 6.0, -INF, 0.5, 2.0, INF,
+             -2.0, -3.0, 7.0, NAN, -1.0, -5.0,
+             1.5, 0.0, 8.0, -0.5, 3.0, 2.5]
+    cases = [
+        mp("k2_f32", 2801, "f32", [2, 3, 6, 6], {"kernel_size": [2, 2]}, "stride defaults to kernel_size."),
+        mp("k3_s1_p1_f32", 2802, "f32", [1, 2, 5, 5], {"kernel_size": [3, 3], "stride": [1, 1], "padding": [1, 1]},
+           "padding 1: edge windows include the -inf padding."),
+        mp("negative_padded_f32", 2803, "f32", [1, 2, 4, 5], {"kernel_size": [3, 3], "stride": [2, 2],
+                                                            "padding": [1, 1]},
+           "all inputs negative: the padding is -inf, not 0.", notes="x is uniform in [-2, -1)."),
+        mp("nonsquare_f32", 2804, "f32", [1, 3, 5, 7], {"kernel_size": [2, 3], "stride": [1, 2], "padding": [1, 1]},
+           "a [2, 3] window."),
+        mp("dilation_f32", 2805, "f32", [1, 2, 7, 7], {"kernel_size": [3, 2], "stride": [2, 1], "dilation": [2, 3]},
+           "dilation [2, 3]."),
+        mp("all_padding_window_f32", 2806, "f32", [1, 2, 2, 4], {"kernel_size": [2, 2], "stride": [1, 1],
+                                                                "padding": [1, 1], "dilation": [3, 1]},
+           "H 2, k 2, p 1, dilation 3: the only row of windows reads rows -1 and 2, both padding, so every result is "
+           "-inf.", notes="padding ≤ kernel_size / 2 does not rule out all-padding windows once dilation > 1; torch "
+           "gives -inf."),
+        mp("nan_f32", 2807, "f32", [1, 1, 4, 6], {"kernel_size": [2, 2]}, "a NaN in a window gives NaN; ±inf.",
+           values=nan_x, notes=ACT_NAN),
+        mp("nan_padded_f32", 2808, "f32", [1, 1, 4, 6], {"kernel_size": [3, 3], "stride": [1, 1], "padding": [1, 1]},
+           "NaN in overlapping, padded windows.", values=nan_x, notes=ACT_NAN),
+        mp("f16", 2809, "f16", [2, 2, 5, 5], {"kernel_size": [3, 3], "stride": [2, 2], "padding": [1, 1]}, "f16."),
+        mp("bf16", 2810, "bf16", [2, 2, 4, 4], {"kernel_size": [2, 2]}, "bf16."),
+        mp("permuted_f32", 2811, "f32", [2, 3, 4, 4], {"kernel_size": [2, 2], "stride": [1, 1]}, "a permuted view."),
+        mp("transposed_f16", 2812, "f16", [1, 2, 4, 6], {"kernel_size": [3, 2], "padding": [1, 1]},
+           "a transposed view."),
+        mp("k1_f32", 2813, "f32", [1, 2, 3, 3], {"kernel_size": [1, 1], "stride": [2, 2]}, "a 1x1 window, stride 2."),
+        mp("neg_inf_padded_f32", 2814, "f32", [1, 1, 3, 4], {"kernel_size": [3, 3], "stride": [1, 1], "padding": [1, 1]},
+           "padded windows whose inputs are all -inf give -inf (not the padding value).",
+           values=[-INF, -INF, 1.0, 2.0, -INF, -INF, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], notes=ACT_NAN),
+    ]
+    neg = cases[2]
+    cases[2] = dataclasses.replace(neg, inputs=lambda rng: [("x", uniform(rng, [1, 2, 4, 5], "f32", -2.0, -1.0))])
+    cases += [
+        ap("k2_f32", 2851, "f32", [2, 3, 6, 6], {"kernel_size": [2, 2]}, "stride defaults to kernel_size."),
+        ap("k3_s1_p1_f32", 2852, "f32", [1, 2, 5, 5], {"kernel_size": [3, 3], "stride": [1, 1], "padding": [1, 1]},
+           "count_include_pad true (default): edge windows divide by 9."),
+        ap("k3_s1_p1_exclude_f32", 2853, "f32", [1, 2, 5, 5],
+           {"kernel_size": [3, 3], "stride": [1, 1], "padding": [1, 1], "count_include_pad": False},
+           "count_include_pad false: edge windows divide by the elements inside x."),
+        ap("nonsquare_exclude_f32", 2854, "f32", [1, 3, 5, 7],
+           {"kernel_size": [2, 3], "stride": [2, 1], "padding": [1, 1], "count_include_pad": False},
+           "a [2, 3] window, count_include_pad false."),
+        ap("nonsquare_include_f32", 2855, "f32", [1, 3, 5, 7],
+           {"kernel_size": [2, 3], "stride": [2, 1], "padding": [1, 1], "count_include_pad": True},
+           "a [2, 3] window, count_include_pad true."),
+        ap("stride_gt_kernel_f32", 2856, "f32", [1, 2, 8, 7], {"kernel_size": [2, 2], "stride": [3, 3]},
+           "stride 3 > kernel 2: windows skip elements."),
+        ap("f16", 2857, "f16", [2, 2, 5, 5], {"kernel_size": [3, 3], "stride": [2, 2], "padding": [1, 1]},
+           "f16, count_include_pad true."),
+        ap("exclude_f16", 2858, "f16", [2, 2, 5, 5],
+           {"kernel_size": [3, 3], "stride": [2, 2], "padding": [1, 1], "count_include_pad": False},
+           "f16, count_include_pad false."),
+        ap("bf16", 2859, "bf16", [2, 2, 4, 6], {"kernel_size": [2, 3], "padding": [1, 1]}, "bf16."),
+        ap("large_window_f32", 2860, "f32", [1, 2, 8, 8], {"kernel_size": [8, 8]}, "one 8x8 window: a global mean."),
+        ap("permuted_f32", 2861, "f32", [2, 3, 4, 4], {"kernel_size": [2, 2], "stride": [1, 1]}, "a permuted view."),
+        ap("transposed_f16", 2862, "f16", [1, 2, 4, 6], {"kernel_size": [3, 2], "padding": [1, 1],
+                                                        "count_include_pad": False}, "a transposed view."),
+    ]
+    cases += [
+        aap("divisible_f32", 2951, "f32", [1, 2, 8, 6], {"output_size": [4, 3]}, "sizes divide: 2x2 cells."),
+        aap("overlapping_f32", 2952, "f32", [2, 3, 7, 5], {"output_size": [3, 2]},
+            "7 -> 3 and 5 -> 2: cells overlap (rows 0-2, 2-4, 4-6; columns 0-2, 2-4)."),
+        aap("primes_f32", 2953, "f32", [1, 2, 11, 13], {"output_size": [4, 5]}, "11 -> 4 and 13 -> 5."),
+        aap("global_f32", 2954, "f32", [2, 3, 5, 4], {"output_size": [1, 1]}, "[1, 1]: a global mean."),
+        aap("upsample_f32", 2955, "f32", [1, 2, 3, 2], {"output_size": [5, 4]},
+            "output larger than the input: cells repeat elements."),
+        aap("same_size_f32", 2956, "f32", [1, 2, 3, 4], {"output_size": [3, 4]}, "the identity."),
+        aap("f16", 2957, "f16", [2, 2, 7, 5], {"output_size": [3, 2]}, "f16, overlapping cells."),
+        aap("bf16", 2958, "bf16", [2, 2, 9, 6], {"output_size": [4, 4]}, "bf16, 9 -> 4, 6 -> 4."),
+        aap("long_f16", 2959, "f16", [1, 2, 64, 64], {"output_size": [1, 2]}, "f16, cells of 64x32 values."),
+        aap("permuted_f32", 2960, "f32", [2, 3, 5, 4], {"output_size": [2, 3]}, "a permuted view."),
+        aap("transposed_f16", 2961, "f16", [1, 2, 6, 5], {"output_size": [4, 3]}, "a transposed view."),
+    ]
+    return cases
+
+
+def norm_case(op: str, name: str, seed: int, dtype: str, shape: list[int], attrs: dict[str, Any],
+              params: tuple[str, ...], description: str, low: float = -2.0, high: float = 2.0,
+              param_shape: list[int] | None = None, notes: str = "") -> Case:
+    """A normalization case. `params` lists the present ones (catalog order); `running_var` is
+    positive, `weight` in [0.5, 1.5), `bias` and `running_mean` around the input's range."""
+    eps = attrs.get("eps", 1e-5)
+    if op in ("nn.batch_norm", "nn.group_norm"):
+        pshape = [shape[1]]
+    else:
+        ns = attrs.get("normalized_shape")
+        pshape = list(ns) if ns is not None else list(param_shape or [])
+    mid = (low + high) / 2.0
+
+    def tensors(rng: Any) -> list[tuple[str, Any]]:
+        t = [("x", x_input(rng, name, shape, dtype, low, high))]
+        for p in params:
+            if p == "running_mean":
+                t.append((p, uniform(rng, pshape, dtype, mid - 0.5, mid + 0.5)))
+            elif p == "running_var":
+                t.append((p, uniform(rng, pshape, dtype, 0.5, 2.0)))
+            elif p == "weight":
+                t.append((p, uniform(rng, pshape, dtype, 0.5, 1.5)))
+            else:
+                t.append((p, uniform(rng, pshape, dtype, -1.0, 1.0)))
+        return t
+
+    def call(d: dict[str, Any]) -> Any:
+        x, w, b = d["x"], d.get("weight"), d.get("bias")
+        if op == "nn.batch_norm":
+            return F.batch_norm(x, d["running_mean"], d["running_var"], w, b, training=False, eps=eps)
+        if op == "nn.layer_norm":
+            return F.layer_norm(x, pshape, w, b, eps)
+        if op == "nn.group_norm":
+            return F.group_norm(x, attrs["num_groups"], w, b, eps)
+        return F.rms_norm(x, pshape, w, eps)
+
+    text = {
+        "nn.batch_norm": "F.batch_norm(x, running_mean, running_var, weight, bias, training=False, eps=eps)",
+        "nn.layer_norm": "F.layer_norm(x, normalized_shape, weight, bias, eps)",
+        "nn.group_norm": "F.group_norm(x, num_groups, weight, bias, eps)",
+        "nn.rms_norm": "F.rms_norm(x, normalized_shape, weight, eps)",
+    }[op]
+    half = NN_HALF_NOTES if dtype != "f32" else ""
+    present = ", ".join(params) if params else "no params"
+    return nn_case(op, name, seed, f"{dtype} {shape}, {present}: {description}", attrs, tensors, params, call, text,
+                   matmul_tol(dtype), (notes + half).strip())
+
+
+LARGE_MEAN_NOTES = (
+    "x has a large mean and a small spread: a one-pass variance E[x²] - E[x]² in f32 misses the tolerance here "
+    "(about 2.5 times the allowed error at mean 100 ± 1), the two-pass form meets it. At mean 1e4 ± 1 even torch's "
+    "own f32 kernel misses it (the f32 mean is off by an ulp of 1e4), so the f32 case stays at 100."
+)
+
+
+def norm_cases() -> list[Case]:
+    bn = lambda *a, **k: norm_case("nn.batch_norm", *a, **k)  # noqa: E731
+    all4 = ("running_mean", "running_var", "weight", "bias")
+    stats = ("running_mean", "running_var")
+    cases = [
+        bn("rank4_f32", 3001, "f32", [2, 3, 4, 4], {}, all4, "every param."),
+        bn("rank2_f32", 3002, "f32", [4, 5], {}, all4, "rank 2: [N, C]."),
+        bn("rank3_f32", 3003, "f32", [2, 3, 6], {}, all4, "rank 3."),
+        bn("rank6_f32", 3004, "f32", [2, 3, 1, 2, 1, 2], {}, all4, "rank 6."),
+        bn("no_weight_no_bias_f32", 3005, "f32", [2, 3, 4], {}, stats, "running statistics only."),
+        bn("no_bias_f32", 3006, "f32", [2, 3, 4], {}, stats + ("weight",), "no bias."),
+        bn("no_weight_f32", 3007, "f32", [2, 3, 4], {}, stats + ("bias",), "no weight."),
+        bn("eps_f32", 3008, "f32", [2, 4, 3], {"eps": 0.1}, all4, "eps 0.1: inside the square root."),
+        bn("f16", 3009, "f16", [2, 3, 4, 4], {}, all4, "f16."),
+        bn("bf16", 3010, "bf16", [2, 3, 4, 4], {}, all4, "bf16."),
+        bn("large_mean_f32", 3011, "f32", [2, 3, 4], {}, all4, "x and running_mean near 1000.", low=999.0,
+           high=1001.0),
+        bn("permuted_f32", 3012, "f32", [2, 3, 2, 4], {}, all4, "a permuted view."),
+        bn("transposed_f16", 3013, "f16", [2, 3, 5], {}, stats, "a transposed view, no weight and bias."),
+    ]
+    ln = lambda *a, **k: norm_case("nn.layer_norm", *a, **k)  # noqa: E731
+    wb = ("weight", "bias")
+    cases += [
+        ln("last_dim_f32", 3101, "f32", [2, 3, 8], {"normalized_shape": [8]}, wb, "the last dim."),
+        ln("two_dims_f32", 3102, "f32", [2, 3, 4], {"normalized_shape": [3, 4]}, wb, "the last two dims."),
+        ln("all_dims_f32", 3103, "f32", [2, 3, 4], {"normalized_shape": [2, 3, 4]}, wb, "every dim."),
+        ln("rank1_f32", 3104, "f32", [16], {"normalized_shape": [16]}, wb, "rank 1."),
+        ln("rank6_f32", 3105, "f32", [2, 1, 2, 1, 3, 4], {"normalized_shape": [1, 3, 4]}, wb, "rank 6, three dims."),
+        ln("no_weight_no_bias_f32", 3106, "f32", [3, 8], {"normalized_shape": [8]}, (), "no params."),
+        ln("no_bias_f32", 3107, "f32", [3, 8], {"normalized_shape": [8]}, ("weight",), "no bias."),
+        ln("no_weight_f32", 3108, "f32", [3, 8], {"normalized_shape": [8]}, ("bias",), "no weight."),
+        ln("inferred_shape_f32", 3109, "f32", [2, 3, 4], {}, wb, "normalized_shape left out: weight's shape [3, 4].",
+           param_shape=[3, 4]),
+        ln("eps_f32", 3110, "f32", [3, 8], {"normalized_shape": [8], "eps": 0.5}, wb, "eps 0.5.", low=-0.5,
+           high=0.5),
+        ln("long_row_f32", 3111, "f32", [2, 1024], {"normalized_shape": [1024]}, wb, "rows of 1024."),
+        ln("large_mean_f32", 3112, "f32", [2, 64], {"normalized_shape": [64]}, wb, "x near 100, spread ±1.",
+           low=99.0, high=101.0, notes=LARGE_MEAN_NOTES),
+        ln("f16", 3113, "f16", [2, 3, 16], {"normalized_shape": [16]}, wb, "f16."),
+        ln("bf16", 3114, "bf16", [2, 3, 16], {"normalized_shape": [3, 16]}, wb, "bf16, two dims."),
+        ln("long_row_f16", 3115, "f16", [2, 1024], {"normalized_shape": [1024]}, wb, "f16 rows of 1024."),
+        ln("large_mean_f16", 3116, "f16", [2, 64], {"normalized_shape": [64]}, wb, "f16 x near 500, spread ±4.",
+           low=496.0, high=504.0, notes=LARGE_MEAN_NOTES),
+        ln("large_f32", 3117, "f32", [2, 16], {"normalized_shape": [16]}, wb, "x in [-1e4, 1e4).", low=-1e4,
+           high=1e4),
+        ln("permuted_f32", 3118, "f32", [2, 3, 4], {"normalized_shape": [4]}, wb, "a permuted view."),
+        ln("transposed_f16", 3119, "f16", [4, 6], {"normalized_shape": [6]}, ("weight",), "a transposed view."),
+    ]
+    gn = lambda *a, **k: norm_case("nn.group_norm", *a, **k)  # noqa: E731
+    cases += [
+        gn("rank4_f32", 3201, "f32", [2, 6, 3, 3], {"num_groups": 3}, wb, "3 groups of 2 channels."),
+        gn("one_group_f32", 3202, "f32", [2, 4, 3, 2], {"num_groups": 1}, wb, "one group: every channel together."),
+        gn("per_channel_f32", 3203, "f32", [2, 4, 3, 2], {"num_groups": 4}, wb, "num_groups = C."),
+        gn("rank2_f32", 3204, "f32", [3, 6], {"num_groups": 2}, wb, "rank 2: no spatial dims."),
+        gn("rank3_f32", 3205, "f32", [2, 4, 5], {"num_groups": 2}, wb, "rank 3."),
+        gn("rank6_f32", 3206, "f32", [2, 4, 1, 2, 2, 3], {"num_groups": 2}, wb, "rank 6."),
+        gn("no_weight_no_bias_f32", 3207, "f32", [2, 6, 4], {"num_groups": 3}, (), "no params."),
+        gn("no_bias_f32", 3208, "f32", [2, 6, 4], {"num_groups": 3}, ("weight",), "no bias."),
+        gn("no_weight_f32", 3209, "f32", [2, 6, 4], {"num_groups": 3}, ("bias",), "no weight."),
+        gn("eps_f32", 3210, "f32", [2, 4, 3], {"num_groups": 2, "eps": 0.1}, wb, "eps 0.1.", low=-0.5, high=0.5),
+        gn("large_mean_f32", 3211, "f32", [2, 4, 16], {"num_groups": 2}, wb, "x near 100, spread ±1.", low=99.0,
+           high=101.0, notes=LARGE_MEAN_NOTES),
+        gn("f16", 3212, "f16", [2, 6, 3, 3], {"num_groups": 3}, wb, "f16."),
+        gn("bf16", 3213, "bf16", [2, 6, 3, 3], {"num_groups": 2}, wb, "bf16."),
+        gn("wide_f16", 3214, "f16", [1, 32, 8, 8], {"num_groups": 8}, wb, "f16, 8 groups of 256 values."),
+        gn("permuted_f32", 3215, "f32", [2, 4, 3, 2], {"num_groups": 2}, wb, "a permuted view."),
+        gn("transposed_f16", 3216, "f16", [2, 4, 3, 5], {"num_groups": 4}, ("bias",), "a transposed view."),
+    ]
+    rn = lambda *a, **k: norm_case("nn.rms_norm", *a, **k)  # noqa: E731
+    w = ("weight",)
+    cases += [
+        rn("last_dim_f32", 3301, "f32", [2, 3, 8], {"normalized_shape": [8], "eps": 1e-6}, w, "the last dim."),
+        rn("two_dims_f32", 3302, "f32", [2, 3, 4], {"normalized_shape": [3, 4], "eps": 1e-5}, w, "two dims."),
+        rn("all_dims_f32", 3303, "f32", [2, 3, 4], {"normalized_shape": [2, 3, 4], "eps": 1e-6}, w, "every dim."),
+        rn("rank1_f32", 3304, "f32", [16], {"normalized_shape": [16], "eps": 1e-6}, w, "rank 1."),
+        rn("rank6_f32", 3305, "f32", [1, 2, 1, 2, 3, 4], {"normalized_shape": [4], "eps": 1e-6}, w, "rank 6."),
+        rn("no_weight_f32", 3306, "f32", [3, 8], {"normalized_shape": [8], "eps": 1e-6}, (), "no weight."),
+        rn("inferred_shape_f32", 3307, "f32", [2, 3, 4], {"eps": 1e-6}, w,
+           "normalized_shape left out: weight's shape [4].", param_shape=[4]),
+        rn("eps_dominates_f32", 3308, "f32", [3, 8], {"normalized_shape": [8], "eps": 1e-2}, w,
+           "x in [-0.01, 0.01): eps is as large as mean(x²).", low=-0.01, high=0.01),
+        rn("long_row_f32", 3309, "f32", [2, 1024], {"normalized_shape": [1024], "eps": 1e-6}, w, "rows of 1024."),
+        rn("large_f32", 3310, "f32", [2, 16], {"normalized_shape": [16], "eps": 1e-6}, w, "x in [-1e4, 1e4).",
+           low=-1e4, high=1e4),
+        rn("large_mean_f32", 3311, "f32", [2, 64], {"normalized_shape": [64], "eps": 1e-6}, w,
+           "x near 1e4, spread ±1.", low=9999.0, high=10001.0),
+        rn("f16", 3312, "f16", [2, 3, 16], {"normalized_shape": [16], "eps": 1e-5}, w, "f16."),
+        rn("bf16", 3313, "bf16", [2, 3, 16], {"normalized_shape": [3, 16], "eps": 1e-5}, w, "bf16, two dims."),
+        rn("long_row_f16", 3314, "f16", [2, 1024], {"normalized_shape": [1024], "eps": 1e-6}, w, "f16 rows of 1024."),
+        rn("large_f16", 3315, "f16", [2, 64], {"normalized_shape": [64], "eps": 1e-6}, w,
+           "f16 x in [-200, 200): mean(x²) is far above the f16 range in f16 arithmetic.", low=-200.0, high=200.0),
+        rn("permuted_f32", 3316, "f32", [2, 3, 4], {"normalized_shape": [4], "eps": 1e-6}, w, "a permuted view."),
+        rn("transposed_bf16", 3317, "bf16", [4, 6], {"normalized_shape": [6], "eps": 1e-6}, (), "a transposed view."),
+    ]
+    return cases
+
+
+def nn_cases() -> list[Case]:
+    return activation_cases() + layer_cases() + norm_cases()
+
+
 def build_cases() -> list[Case]:
     cases = elementwise_cases() + matmul_cases()
     cases += shape_cases() + indexing_cases() + creation_cases() + reduction_cases()
+    cases += nn_cases()
     seed = 400
     for src in DTYPE_NAMES:
         for dst in DTYPE_NAMES:
@@ -1713,14 +2319,26 @@ def write_case(case: Case, out_dir: str, versions: dict[str, str]) -> None:
         raise SystemExit(f"{case.op}/{case.name}: tensor names are not unique: {names}")
     # No metadata: nothing machine- or time-dependent ends up in the file.
     blob = safetensors.torch.save(dict(inputs + outputs), metadata=None)
+
+    def entries(tensors: list[tuple[str, Any]]) -> list[dict[str, Any]]:
+        return [{"name": n, "dtype": dtype_name(t), "shape": list(t.shape)} for n, t in tensors]
+
+    param_names = case.params or ()
+    names = [n for n, _ in inputs]
+    if param_names and names[len(names) - len(param_names):] != list(param_names):
+        raise SystemExit(f"{case.op}/{case.name}: params {param_names} must follow the inputs, in order")
     sidecar = {
         "schema_version": fixturelib.SCHEMA_VERSION,
         "op": case.op,
         "case": case.name,
         "description": case.description,
         "attributes": case.attributes,
-        "inputs": [{"name": n, "dtype": dtype_name(t), "shape": list(t.shape)} for n, t in inputs],
-        "outputs": [{"name": n, "dtype": dtype_name(t), "shape": list(t.shape)} for n, t in outputs],
+        "inputs": entries([(n, t) for n, t in inputs if n not in param_names]),
+    }
+    if case.params is not None:
+        sidecar["params"] = entries([(n, t) for n, t in inputs if n in param_names])
+    sidecar |= {
+        "outputs": entries(outputs),
         "tolerance": case.tolerance,
         "reference": case.reference_text,
         "notes": case.notes,

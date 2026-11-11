@@ -100,8 +100,8 @@ impl DynTensor {
 
 /// `IndexOutOfRange` unless every element of the integer tensor `index` is in `0..size`. Reads the
 /// minimum and maximum back to the host in one transfer (graph-ir.md §3.1.8: checked before the
-/// op runs).
-fn check_indices(op: &'static str, index: &DynTensor, size: usize) -> Result<()> {
+/// op runs). Also used by `nn.embedding`.
+pub(super) fn check_indices(op: &'static str, index: &DynTensor, size: usize) -> Result<()> {
     let (inner, _, _) = index.clone().into_parts();
     let bounds: Tensor<1, Int> = with_rank!(inner, t => match t {
         Ranked::Int(t) => Tensor::cat(vec![t.clone().min(), t.max()], 0),

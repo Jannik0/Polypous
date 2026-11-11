@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "op": "nn.dropout",
+  "case": "permuted_f32",
+  "description": "f32 [2, 3, 4]: a permuted view.",
+  "attributes": {
+    "p": 0.1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.dropout(x, p, training=False)",
+  "notes": "x is fed as a permuted view: uploaded with its dims reversed, then permuted back. Inference mode: the identity (graph-ir.md \u00a73.3), exact.",
+  "seed": 2905,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
