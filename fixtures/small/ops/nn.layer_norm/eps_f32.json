@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "op": "nn.layer_norm",
+  "case": "eps_f32",
+  "description": "f32 [3, 8], weight, bias: eps 0.5.",
+  "attributes": {
+    "normalized_shape": [
+      8
+    ],
+    "eps": 0.5
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        8
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        8
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "F.layer_norm(x, normalized_shape, weight, bias, eps) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 3110,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

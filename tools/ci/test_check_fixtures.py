@@ -125,6 +125,37 @@ class SidecarValidationTest(unittest.TestCase):
         self.assertTrue(any("'h' has subnormal values at flat indices [2]" in p for p in problems))
         self.assertTrue(any("'b' has subnormal values at flat indices [2]" in p for p in problems))
 
+    def params_after_inputs(self, sidecar: dict) -> None:
+        """Moves input `b` into a `params` key right after `inputs` (the form for ops with params)."""
+        items = list(sidecar.items())
+        sidecar.clear()
+        for key, value in items:
+            if key == "inputs":
+                sidecar["inputs"] = value[:1]
+                sidecar["params"] = value[1:]
+            else:
+                sidecar[key] = value
+
+    def test_params_key_after_inputs(self) -> None:
+        self.edit_sidecar(self.params_after_inputs)
+        self.assertEqual(check_fixtures.check(self.root), [])
+
+    def test_params_are_checked_against_the_file(self) -> None:
+        def change(sidecar: dict) -> None:
+            self.params_after_inputs(sidecar)
+            sidecar["params"][0]["shape"] = [2]
+
+        self.edit_sidecar(change)
+        self.assertTrue(any("params tensor 'b' is f32 [2]" in p for p in check_fixtures.check(self.root)))
+
+    def test_params_key_in_the_wrong_place(self) -> None:
+        def change(sidecar: dict) -> None:
+            sidecar["inputs"] = sidecar["inputs"][:1]
+            sidecar["params"] = []
+
+        self.edit_sidecar(change)
+        self.assertTrue(any("differ from the schema" in p for p in check_fixtures.check(self.root)))
+
     def test_case_name_must_match_file(self) -> None:
         self.edit_sidecar(lambda s: s.update(case="other"))
         self.assertTrue(any("does not match the file name" in p for p in check_fixtures.check(self.root)))

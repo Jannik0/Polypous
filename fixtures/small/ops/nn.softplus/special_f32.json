@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "nn.softplus",
+  "case": "special_f32",
+  "description": "f32 [7]: NaN, \u00b1inf, \u00b10.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        7
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        7
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "reference": "F.softplus(x, beta, threshold) in f64, rounded once to the dtype",
+  "notes": "NaN propagates. Expected NaN must be NaN (any NaN matches any NaN) and expected \u00b1inf must be the same inf. out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2244,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

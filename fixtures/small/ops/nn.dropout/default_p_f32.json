@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "nn.dropout",
+  "case": "default_p_f32",
+  "description": "f32 [3, 4]: p 0.5 (default).",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.dropout(x, p, training=False)",
+  "notes": "Inference mode: the identity (graph-ir.md \u00a73.3), exact.",
+  "seed": 2901,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

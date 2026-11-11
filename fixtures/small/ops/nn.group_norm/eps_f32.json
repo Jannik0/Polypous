@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "op": "nn.group_norm",
+  "case": "eps_f32",
+  "description": "f32 [2, 4, 3], weight, bias: eps 0.1.",
+  "attributes": {
+    "num_groups": 2,
+    "eps": 0.1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "F.group_norm(x, num_groups, weight, bias, eps) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 3210,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

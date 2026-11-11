@@ -69,6 +69,24 @@ All notable changes to Polypous are documented here. The format follows
   rank 6 with broadcast batch dims of different ranks, `k = 1` and `k = 256`, ties and NaN for
   `argmax`/`argmin`/`top_k`, wrap-around for `sum`/`cumsum`, large values for softmax and f16 sums,
   and non-contiguous inputs; `tests/reference_reduce.rs`.
+- `polypous-backend`: the M1 `nn` ops on `DynTensor` (graph-ir.md §3.3, #43): `linear` (on
+  `matmul`), `embedding`, `conv1d` and `conv2d` (stride, padding, dilation, groups), `max_pool2d`,
+  `avg_pool2d` (`count_include_pad`), `adaptive_avg_pool2d`, `dropout` (the identity in inference),
+  `batch_norm` (inference), `layer_norm`, `group_norm`, `rms_norm`, and the activations `relu
+  leaky_relu gelu gelu_tanh silu sigmoid softplus mish`. Params are plain `DynTensor` arguments in
+  PyTorch's layouts (optional ones `Option`), so PyTorch weights load unchanged; every argument is
+  checked (typed errors, output sizes with checked arithmetic). Out-of-range `embedding` ids are a
+  `TensorError::IndexOutOfRange`, checked before the lookup. NaN propagates through activations and
+  `max_pool2d`, `max_pool2d` pads with `-inf` on every backend (CubeCL pads with `-f32::MAX` and
+  dropped NaN on lavapipe), norms use a two-pass variance, and f16/bf16 compute in f32. Known
+  limitation: like `matmul`, f32 `linear` (and possibly conv) on CUDA GPUs with TF32 may miss the
+  spec's accuracy (docs/status.md §4).
+- Reference fixtures for the `nn` ops (265 cases, the first with params): every op × f32/f16/bf16
+  (`embedding` ids i64 and i32), stride/padding/dilation/groups incl. depthwise and non-square
+  kernels, `count_include_pad`, overlapping adaptive cells, all-padding pool windows, NaN/±inf,
+  large and tail inputs, large-mean norms, absent optional params and non-contiguous inputs;
+  `tests/reference_nn.rs` (with out-of-range ids on every device). Sidecars of ops with params
+  gain a `params` key after `inputs` (testing-strategy.md §3.2); existing sidecars are unchanged.
 - graph-ir.md §3.1.8: f16/bf16 `sum`, `mean`, `cumsum`, `softmax` and `log_softmax` compute in f32;
   §3.2 `top_k` note: fixtures use a stable sort, since `torch.topk` leaves the order of ties open.
 - graph-ir.md §3.1.8: subnormal float values are backend-defined (a device may flush them to

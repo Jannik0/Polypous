@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "op": "nn.max_pool2d",
+  "case": "dilation_f32",
+  "description": "f32 [1, 2, 7, 7], kernel_size [3, 2], stride [2, 1], dilation [2, 3]: dilation [2, 3].",
+  "attributes": {
+    "kernel_size": [
+      3,
+      2
+    ],
+    "stride": [
+      2,
+      1
+    ],
+    "dilation": [
+      2,
+      3
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        7,
+        7
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.max_pool2d(x, kernel_size, stride, padding, dilation)",
+  "notes": "Selects values: exact.",
+  "seed": 2805,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "op": "nn.batch_norm",
+  "case": "f16",
+  "description": "f16 [2, 3, 4, 4], running_mean, running_var, weight, bias: f16.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4,
+        4
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "running_mean",
+      "dtype": "f16",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "running_var",
+      "dtype": "f16",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "weight",
+      "dtype": "f16",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f16",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        3,
+        4,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.batch_norm(x, running_mean, running_var, weight, bias, training=False, eps=eps) in f64, rounded once to the dtype",
+  "notes": "f16/bf16 compute in f32 (graph-ir.md \u00a73.1.8). out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 3009,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

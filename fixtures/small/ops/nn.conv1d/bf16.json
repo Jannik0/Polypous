@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "op": "nn.conv1d",
+  "case": "bf16",
+  "description": "bf16 x [2, 3, 10], weight [4, 3, 3], padding 1: bf16.",
+  "attributes": {
+    "padding": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        3,
+        10
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "bf16",
+      "shape": [
+        4,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "bf16",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        4,
+        10
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.conv1d(x, weight, bias, stride, padding, dilation, groups) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2611,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

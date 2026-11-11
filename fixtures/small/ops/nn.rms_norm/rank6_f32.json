@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "op": "nn.rms_norm",
+  "case": "rank6_f32",
+  "description": "f32 [1, 2, 1, 2, 3, 4], weight: rank 6.",
+  "attributes": {
+    "normalized_shape": [
+      4
+    ],
+    "eps": 1e-06
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "F.rms_norm(x, normalized_shape, weight, eps) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 3305,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

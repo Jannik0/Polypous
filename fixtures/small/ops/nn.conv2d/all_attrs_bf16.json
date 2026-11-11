@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "op": "nn.conv2d",
+  "case": "all_attrs_bf16",
+  "description": "bf16 x [2, 6, 7, 7], weight [3, 2, 2, 3], stride [1, 2], padding [2, 0], dilation [1, 2], groups 3: every attribute in bf16.",
+  "attributes": {
+    "stride": [
+      1,
+      2
+    ],
+    "padding": [
+      2,
+      0
+    ],
+    "dilation": [
+      1,
+      2
+    ],
+    "groups": 3
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        6,
+        7,
+        7
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        2,
+        2,
+        3
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "bf16",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        3,
+        10,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.conv2d(x, weight, bias, stride, padding, dilation, groups) in f64, rounded once to the dtype",
+  "notes": "out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2714,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

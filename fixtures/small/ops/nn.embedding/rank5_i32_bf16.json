@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "op": "nn.embedding",
+  "case": "rank5_i32_bf16",
+  "description": "i32 ids [2, 1, 2, 1, 2], bf16 weight [7, 3]: rank-5 ids: rank-6 output.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "ids",
+      "dtype": "i32",
+      "shape": [
+        2,
+        1,
+        2,
+        1,
+        2
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "bf16",
+      "shape": [
+        7,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        2,
+        1,
+        2,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.embedding(ids, weight)",
+  "notes": "A lookup: exact. Out-of-range ids are tested in Rust (tests/reference_nn.rs), since torch raises for them.",
+  "seed": 2504,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

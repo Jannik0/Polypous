@@ -29,6 +29,10 @@ numerical result is checked against an established reference implementation.
 | Whisper | Greedy transcript text identical on fixture clips |
 | Diffusion | Latents after N steps at fixed seed: cosine similarity ≥ 0.99. Final image PSNR ≥ 30 dB vs diffusers |
 
+The reductions/matmul class covers every op that sums over many elements: `core.sum mean cumsum matmul
+softmax log_softmax`, `nn.linear`, `nn.conv1d`/`conv2d` and the normalization ops. Activations, pools and
+`nn.dropout` use the elementwise `rtol`.
+
 Op-specific tolerances may differ and are documented next to the test. Loosening a tolerance requires
 an explanation in the PR.
 
@@ -66,11 +70,12 @@ fixtures/
 
 ### 3.2 Op sidecar (schema version 1)
 
-The safetensors file holds every input and every expected output under the names the sidecar
-gives, **in the dtype under test** (`F32`, `F16`, `BF16`, `I64`, `I32`, `BOOL`; little-endian,
-row-major) and with no `__metadata__`. safetensors stores raw bytes, so `-0.0`, NaN, infinities and
-f16/bf16 values round-trip exactly. The sidecar is UTF-8 JSON with exactly these keys, in this order
-(2-space indent, LF line endings, written by the generator only):
+The safetensors file holds every input, every param and every expected output under the names the
+sidecar gives, **in the dtype under test** (`F32`, `F16`, `BF16`, `I64`, `I32`, `BOOL`;
+little-endian, row-major) and with no `__metadata__`. safetensors stores raw bytes, so `-0.0`, NaN,
+infinities and f16/bf16 values round-trip exactly. The sidecar is UTF-8 JSON with exactly these
+keys, in this order (`params` only for ops that have params; 2-space indent, LF line endings,
+written by the generator only):
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -80,7 +85,8 @@ f16/bf16 values round-trip exactly. The sidecar is UTF-8 JSON with exactly these
 | `description` | string | What the case covers |
 | `attributes` | object | The op's attributes (for example `{"dtype": "f16"}` for `core.cast`, `{"shape": [4, 6]}` for `core.reshape`). Names follow the op catalog; the generator is the only place that writes them |
 | `inputs` | array | The op's inputs **in order**: `{"name", "dtype", "shape"}` with dtype `f32`/`f16`/`bf16`/`i64`/`i32`/`bool` |
-| `outputs` | array | Expected outputs in order, same form. Tensor names are unique across inputs and outputs |
+| `params` | array | Only for ops with params ([graph-ir.md §2.4](specs/graph-ir.md#24-parameters), the op catalog), and then always (possibly empty): the params that are present, **in catalog order**, same form as `inputs`. Each holds the param in the compute dtype the case tests. An absent optional param is left out, and the case name says so (`no_bias_f32`). Ops without params have no `params` key |
+| `outputs` | array | Expected outputs in order, same form. Tensor names are unique across inputs, params and outputs |
 | `tolerance` | object | `{"exact", "atol", "rtol"}`, see below |
 | `reference` | string | The reference expression, for example `torch.add(a, b)` |
 | `notes` | string | Semantics the case relies on and inputs left out on purpose (may be empty) |

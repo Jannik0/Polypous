@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "op": "nn.group_norm",
+  "case": "transposed_f16",
+  "description": "f16 [2, 4, 3, 5], bias: a transposed view.",
+  "attributes": {
+    "num_groups": 4
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        2,
+        4,
+        3,
+        5
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "bias",
+      "dtype": "f16",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        2,
+        4,
+        3,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.group_norm(x, num_groups, weight, bias, eps) in f64, rounded once to the dtype",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. f16/bf16 compute in f32 (graph-ir.md \u00a73.1.8). out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 3216,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

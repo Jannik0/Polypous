@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "op": "nn.gelu_tanh",
+  "case": "random_bf16",
+  "description": "bf16 [3, 8]: uniform in [-4, 4).",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        8
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        3,
+        8
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.gelu(x, approximate=\"tanh\") in f64, rounded once to the dtype",
+  "notes": "f16/bf16 compute in f32 (graph-ir.md \u00a73.1.8). out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2123,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

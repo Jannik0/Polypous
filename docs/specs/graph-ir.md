@@ -523,10 +523,14 @@ A wrong JSON type, a value outside the listed range, an unknown enum value or a 
   therefore backend-defined. Reference results are compared on normal values only: fixtures keep
   subnormals out of their cases.
 - **Half-precision transcendentals:** for `f16` and `bf16`, the transcendental ops (`exp`, `log`,
-  `sqrt`, `rsqrt`, `sin`, `cos`, `tanh`) and `pow` compute in `f32` and round once to the dtype,
-  so results don't depend on a backend's half-precision kernels. The output dtype is unchanged.
-- **Half-precision accumulation:** for `f16` and `bf16`, `sum`, `mean`, `cumsum`, `softmax` and
-  `log_softmax` compute in `f32` and round once to the dtype. The output dtype is unchanged.
+  `sqrt`, `rsqrt`, `sin`, `cos`, `tanh`), `pow` and the `nn` activations other than `relu`
+  (`leaky_relu`, `gelu`, `gelu_tanh`, `silu`, `sigmoid`, `softplus`, `mish`) compute in `f32` and
+  round once to the dtype, so results don't depend on a backend's half-precision kernels. The
+  output dtype is unchanged.
+- **Half-precision accumulation:** for `f16` and `bf16`, `sum`, `mean`, `cumsum`, `softmax`,
+  `log_softmax`, `nn.linear`, `nn.conv1d`, `nn.conv2d`, `nn.avg_pool2d`, `nn.adaptive_avg_pool2d`
+  and the normalization ops (`nn.batch_norm`, `nn.layer_norm`, `nn.group_norm`, `nn.rms_norm`,
+  params included) compute in `f32` and round once to the dtype. The output dtype is unchanged.
 
 #### 3.1.9 The PyTorch column
 
@@ -740,8 +744,11 @@ provably equal to that literal. Optional params are marked `?`.
 - Conv: `stride` and `dilation` entries ≥ 1, `padding` ≥ 0, `groups` ≥ 1 and divides both `C_in` and
   `C_out`. `x`'s `C_in` must be provably equal to `weight.shape[1] * groups`. Only zero padding
   (PyTorch's `padding_mode="zeros"`); string paddings (`"same"`, `"valid"`) are not supported.
-- Pools: `padding` entries ≤ `kernel_size / 2` (as in PyTorch). `ceil_mode`, `return_indices` and
-  `divisor_override` are not supported (always PyTorch's defaults). `max_pool2d` pads with `-inf`.
+- Pools: `padding` entries ≤ `kernel_size / 2` (integer division, as in PyTorch). `ceil_mode`,
+  `return_indices` and `divisor_override` are not supported (always PyTorch's defaults).
+  `max_pool2d` pads with `-inf`, and a NaN in a window gives NaN. With `dilation` > 1 a window can
+  lie entirely in the padding (`H = 2`, `kh = 2`, `p = 1`, `dl = 3` reads rows `-1` and `2`); its
+  result is `-inf`, as in PyTorch.
 - `adaptive_avg_pool2d`: output cell `i` averages input rows `floor(i*H/oh)` to
   `ceil((i+1)*H/oh) - 1`, as in PyTorch.
 - `dropout`: identity in M1 (there is no training mode before M2). `p` is validated so graphs stay
@@ -782,6 +789,10 @@ All take `x`: `C` and return `out`: `C` with `x.shape`. All are differentiable.
 | `nn.sigmoid` | `x`: `C` | — | — | `out`: `C` | `x.shape` | yes | `torch.sigmoid(x)` |
 | `nn.softplus` | `x`: `C` | — | `beta: float = 1.0` (> 0), `threshold: float = 20.0` (> 0) | `out`: `C` | `x.shape` | yes | `F.softplus(x, beta, threshold)` |
 | `nn.mish` | `x`: `C` | — | — | `out`: `C` | `x.shape` | yes | `F.mish(x)` |
+
+- NaN propagates through every activation. Infinities follow the formulas: `silu`, `mish`, `gelu`
+  and `gelu_tanh` of `-inf` are NaN (`-inf · 0`), as in PyTorch. `gelu(+inf)` is `+inf` (PyTorch's
+  `f64` kernel agrees; its `f32` CPU kernel gives NaN).
 
 ### 3.4 Planned ops (not M1)
 

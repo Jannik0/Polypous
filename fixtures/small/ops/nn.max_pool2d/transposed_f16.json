@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "op": "nn.max_pool2d",
+  "case": "transposed_f16",
+  "description": "f16 [1, 2, 4, 6], kernel_size [3, 2], padding [1, 1]: a transposed view.",
+  "attributes": {
+    "kernel_size": [
+      3,
+      2
+    ],
+    "padding": [
+      1,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f16",
+      "shape": [
+        1,
+        2,
+        4,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f16",
+      "shape": [
+        1,
+        2,
+        2,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "reference": "F.max_pool2d(x, kernel_size, stride, padding, dilation)",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. Selects values: exact.",
+  "seed": 2812,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

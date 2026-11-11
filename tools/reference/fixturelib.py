@@ -47,6 +47,11 @@ SIDECAR_KEYS = (
     "versions",
 )
 
+# The keys of a sidecar for an op with params (docs/testing-strategy.md §3.2): `params` right after
+# `inputs`. Which ops have params is the op catalog's business (crates/polypous-ir/tests/catalog.rs
+# checks it); here both forms are valid.
+SIDECAR_KEYS_WITH_PARAMS = SIDECAR_KEYS[:6] + ("params",) + SIDECAR_KEYS[6:]
+
 
 # Float formats by safetensors dtype: (struct code of the bit pattern, mantissa bits, exponent bits).
 # Used to find subnormal values, which fixtures must not contain (docs/specs/graph-ir.md §3.1.8:
@@ -131,8 +136,11 @@ def validate_case(json_path: str) -> list[str]:
         return [f"{json_path}: cannot read sidecar: {e}"]
     if not isinstance(sidecar, dict):
         return [f"{json_path}: sidecar is not a JSON object"]
-    if tuple(sidecar.keys()) != SIDECAR_KEYS:
-        problems.append(f"{json_path}: keys {list(sidecar.keys())} differ from the schema {list(SIDECAR_KEYS)}")
+    if tuple(sidecar.keys()) not in (SIDECAR_KEYS, SIDECAR_KEYS_WITH_PARAMS):
+        problems.append(
+            f"{json_path}: keys {list(sidecar.keys())} differ from the schema {list(SIDECAR_KEYS)} "
+            "(with `params` after `inputs` for ops with params)"
+        )
         return problems
     if sidecar["schema_version"] != SCHEMA_VERSION:
         problems.append(f"{json_path}: schema_version {sidecar['schema_version']!r} is not {SCHEMA_VERSION}")
@@ -158,7 +166,9 @@ def validate_case(json_path: str) -> list[str]:
     except (OSError, FixtureError) as e:
         return problems + [str(e)]
     declared: list[str] = []
-    for role in ("inputs", "outputs"):
+    for role in ("inputs", "params", "outputs"):
+        if role not in sidecar:
+            continue
         entries = sidecar[role]
         if not isinstance(entries, list) or (role == "outputs" and not entries):
             problems.append(f"{json_path}: {role} must be a list (outputs non-empty)")

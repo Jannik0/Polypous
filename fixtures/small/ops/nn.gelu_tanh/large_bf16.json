@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "nn.gelu_tanh",
+  "case": "large_bf16",
+  "description": "bf16 [10]: large magnitudes and tails in bf16.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "bf16",
+      "shape": [
+        10
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "bf16",
+      "shape": [
+        10
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.01
+  },
+  "reference": "F.gelu(x, approximate=\"tanh\") in f64, rounded once to the dtype",
+  "notes": "x = -5, -6 and -10 are left out: at -5 and -6 torch's own bf16 kernel misses rtol 1e-2 (1 + tanh cancels in f32), and from about -6.2 on even torch's f64 result is 0 (1 + tanh(u) cancels in f64), while the true value (about -1.2e-37 at -10, which Polypous's sigmoid form gives) is a normal bf16 number. f16/bf16 compute in f32 (graph-ir.md \u00a73.1.8). out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2127,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
