@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "op": "nn.softplus",
+  "case": "tail_f32",
+  "description": "f32 [15]: far negative x: softplus(x) = exp(x) to f32 precision.",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        15
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        15
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.0,
+    "rtol": 0.0001
+  },
+  "reference": "F.softplus(x, beta, threshold) in f64, rounded once to the dtype",
+  "notes": "atol 0 (stricter than the f32 default 1e-5, which would accept 0 for every value here): the results are tiny but normal, and log(1 + t) with t = exp(x) rounds to 0 in f32 below x = -16.6. Values around -3 (softplus) and -2.25 (mish) sit on both sides of where Polypous switches from a series to the plain formula. out is computed in f64 from the inputs and params and rounded once to the dtype under test, so the bytes don't depend on the CPU's kernels; torch in the dtype itself meets the tolerance (checked by the generator).",
+  "seed": 2265,
+  "generator": "tools/reference/gen_ops.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

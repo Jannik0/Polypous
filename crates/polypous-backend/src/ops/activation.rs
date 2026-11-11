@@ -13,7 +13,9 @@
 //!   `relu` is a `max(x, 0)` on some backends, which may drop NaN.
 //! - **No `exp` overflow:** `sigmoid` is `1 / (1 + exp(-x))`, whose `exp` overflows to `inf` only
 //!   where the result is `0` anyway; `softplus` uses the overflow-free form
-//!   `max(z, 0) + log1p(exp(-|z|))` (with `z = beta·x`); `gelu_tanh` uses
+//!   `max(z, 0) + log1p(exp(-|z|))` (with `z = beta·x`), with a `log1p` of its own that stays
+//!   accurate for tiny arguments (CubeCL's is `ln(1 + x)`); `mish` takes the `tanh` of that
+//!   (`≥ 0`) with a series for tiny arguments, where lavapipe's `tanh` is noise; `gelu_tanh` uses
 //!   `0.5·(1 + tanh(u)) = sigmoid(2u)`, so neither needs `tanh` of large arguments.
 //! - **Infinities** follow the formulas, as in PyTorch: `silu(-inf)`, `mish(-inf)` and
 //!   `gelu_tanh(-inf)` are NaN (`-inf · 0`), `gelu(-inf)` too. `gelu(+inf)` is `+inf`
@@ -159,9 +161,43 @@ fn softplus<const D: usize>(x: Tensor<D>, beta: f64, threshold: f64) -> Tensor<D
     let z = x.clone().mul_scalar(beta);
     let linear = z.clone().greater_elem(threshold);
     let smooth = relu(z.clone())
-        .add(z.abs().neg().exp().log1p())
+        .add(log1p(z.abs().neg().exp()))
         .div_scalar(beta);
     smooth.mask_where(linear, x)
+}
+
+/// `tanh(s)` for `s ≥ 0` (and NaN, `+inf`), accurate for tiny `s` on every backend. Mesa's
+/// Vulkan `tanh` (lavapipe) returned noise of about `3e-8` for arguments near `1e-37`, so
+/// `mish(-85)` came out near `-2.5e-6` instead of `-1.03e-35`. Below `0.1` this uses the series
+/// `s - s³/3 + 2s⁵/15 - 17s⁷/315` (relative error below `3e-10`), above it `(1 - e) / (1 + e)`
+/// with `e = exp(-2s)` in `(0, 1)`, which can't overflow (`tanh(+inf) = 1`) and whose relative
+/// error there is below `1e-6`.
+fn tanh_nonnegative<const D: usize>(s: Tensor<D>) -> Tensor<D> {
+    let small = s.clone().lower_elem(0.1);
+    let q = s.clone().mul(s.clone());
+    // s · (1 - q · (1/3 - q · (2/15 - q · 17/315))), as plain multiply-adds.
+    let inner = q.clone().mul_scalar(-17.0 / 315.0).add_scalar(2.0 / 15.0);
+    let inner = q.clone().mul(inner).neg().add_scalar(1.0 / 3.0);
+    let series = s.clone().mul(q.mul(inner).neg().add_scalar(1.0));
+    let e = s.mul_scalar(-2.0).exp();
+    let wide = e.clone().neg().add_scalar(1.0).div(e.add_scalar(1.0));
+    wide.mask_where(small, series)
+}
+
+/// `log(1 + t)` for `t` in `[0, 1]` (and NaN), accurate for small `t` on every backend. Burn
+/// 0.22.1's CubeCL `log1p` is `ln(1 + t)`, which rounds `1 + t` to 1 in `f32` below
+/// `t ≈ 6e-8`: `softplus(-17)` gave 0 instead of `4.14e-8` on lavapipe and CUDA. Below `0.05`
+/// this uses the series `t - t²/2 + t³/3 - t⁴/4 + t⁵/5` (relative error below `3e-8`), written as
+/// plain multiply-adds that no compiler rewrites into `ln(1 + t)`; above it `ln(1 + t)`, whose
+/// relative error there (one `f32` ulp of 1 against a value ≥ 0.048) is below `2e-6`.
+fn log1p<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    let small = t.clone().lower_elem(0.05);
+    // t · (1 - t · (1/2 - t · (1/3 - t · (1/4 - t/5)))).
+    let inner = t.clone().mul_scalar(-0.2).add_scalar(0.25);
+    let inner = t.clone().mul(inner).neg().add_scalar(1.0 / 3.0);
+    let inner = t.clone().mul(inner).neg().add_scalar(0.5);
+    let series = t.clone().mul(t.clone().mul(inner).neg().add_scalar(1.0));
+    t.add_scalar(1.0).log().mask_where(small, series)
 }
 
 /// The activations other than `relu`, on `f32` (or an `f16`/`bf16` tensor's `f32` copy).
@@ -191,7 +227,7 @@ fn activate<const D: usize>(x: Tensor<D>, op: Activation) -> Tensor<D> {
         Activation::Silu => x.clone().mul(sigmoid(x)),
         Activation::Sigmoid => sigmoid(x),
         Activation::Softplus { beta, threshold } => softplus(x, beta, threshold),
-        Activation::Mish => x.clone().mul(softplus(x, 1.0, 20.0).tanh()),
+        Activation::Mish => x.clone().mul(tanh_nonnegative(softplus(x, 1.0, 20.0))),
     }
 }
 

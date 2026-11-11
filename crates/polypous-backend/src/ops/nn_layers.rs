@@ -103,9 +103,12 @@ impl DynTensor {
     /// `[…, out]`. Float only; `x` and the params share the dtype and the device.
     ///
     /// Built on [`DynTensor::matmul`] (the transposed weight is a view), then the bias is added.
-    /// `f16`/`bf16` compute in `f32` and round once (graph-ir.md §3.1.8). It shares matmul's known
-    /// limitation: on CUDA GPUs with TF32, Burn 0.22.1 runs `f32` matmul on TF32 tensor cores
-    /// (docs/status.md §4).
+    /// `f16`/`bf16` compute in `f32` and round once (graph-ir.md §3.1.8).
+    ///
+    /// **Known limitation:** it shares matmul's: on CUDA GPUs with TF32 (Ampere or newer), Burn
+    /// 0.22.1 runs `f32` matmul on TF32 tensor cores, which misses the spec's f32 accuracy (7 of 8
+    /// `f32` reference cases fail on the reference machine's RTX 3060). No workaround here by
+    /// design; it waits for an upstream precision flag (docs/status.md §4).
     pub fn linear(self, weight: Self, bias: Option<Self>) -> Result<Self> {
         const OP: &str = "linear";
         DTypeClass::Float.check(OP, self.dtype())?;

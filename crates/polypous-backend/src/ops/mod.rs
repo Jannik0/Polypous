@@ -164,10 +164,17 @@
 //! - Conv with groups and dilation, `avg_pool2d` with and without `count_include_pad`,
 //!   `adaptive_avg_pool2d` with overlapping cells and `erf` in `f32` (incl. `|x|` up to 10) matched
 //!   PyTorch with Burn's kernels as they are, on both devices. CubeCL's `erf` is the
-//!   Abramowitz–Stegun 7.1.26 approximation (absolute error 1.5e-7) and its `log1p` is
-//!   `ln(1 + x)`; both are inside the tolerances for these ops.
+//!   Abramowitz–Stegun 7.1.26 approximation (absolute error 1.5e-7), inside the `gelu`
+//!   tolerances.
+//! - **`softplus` and `mish` far below zero:** CubeCL's `log1p` is `ln(1 + x)`, so `softplus(x)`
+//!   was 0 below `x ≈ -16.6` on every CubeCL device (CUDA and Vulkan; `softplus(-17)` should be
+//!   `4.14e-8`), and with it `mish`; Mesa's Vulkan `tanh` returns noise near `3e-8` for tiny
+//!   arguments. `softplus` has its own `log1p` and `mish` its own `tanh` for `s ≥ 0`, each with a
+//!   series for small arguments (`activation.rs`). The f32 `tail_f32` fixtures (atol 0) fail on
+//!   lavapipe without them.
 //! - **CUDA:** `linear` uses [`DynTensor::matmul`], so f32 `linear` shares matmul's TF32
-//!   limitation on CUDA (docs/status.md §4); conv may use TF32 too. No workaround, by design.
+//!   limitation on CUDA (7 of 8 f32 cases fail on the RTX 3060; docs/status.md §4). Conv passes
+//!   on CUDA in every dtype. No workaround, by design.
 //!
 //! # Semantics (graph-ir.md §3.1)
 //!

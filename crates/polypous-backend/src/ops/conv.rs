@@ -9,8 +9,8 @@
 //!
 //! `f16`/`bf16` compute in `f32` and round once (graph-ir.md §3.1.8): Burn's f16 convolution
 //! missed `rtol 1e-2` on `flex` and lavapipe where outputs cancel to near zero. `f32` runs Burn's
-//! kernel as it is. On CUDA GPUs with TF32, Burn may run `f32` convolutions as an implicit GEMM on
-//! TF32 tensor cores, like `matmul` (docs/status.md §4); there is no workaround here by design.
+//! kernel as it is. Unlike `matmul`, Burn's `f32` convolutions met the spec's accuracy on CUDA
+//! (RTX 3060, every dtype), so the TF32 limitation of docs/status.md §4 doesn't apply here.
 
 use burn::tensor::module;
 use burn::tensor::ops::ConvOptions;

@@ -78,10 +78,11 @@ All notable changes to Polypous are documented here. The format follows
   checked (typed errors, output sizes with checked arithmetic). Out-of-range `embedding` ids are a
   `TensorError::IndexOutOfRange`, checked before the lookup. NaN propagates through activations and
   `max_pool2d`, `max_pool2d` pads with `-inf` on every backend (CubeCL pads with `-f32::MAX` and
-  dropped NaN on lavapipe), norms use a two-pass variance, and f16/bf16 compute in f32. Known
-  limitation: like `matmul`, f32 `linear` (and possibly conv) on CUDA GPUs with TF32 may miss the
-  spec's accuracy (docs/status.md §4).
-- Reference fixtures for the `nn` ops (265 cases, the first with params): every op × f32/f16/bf16
+  dropped NaN on lavapipe), `softplus` and `mish` stay accurate far below zero (CubeCL's
+  `log1p` is `ln(1 + x)`), norms use a two-pass variance, and f16/bf16 compute in f32. Known
+  limitation: like `matmul`, f32 `linear` on CUDA GPUs with TF32 misses the spec's accuracy (7 of
+  8 f32 cases on the RTX 3060; docs/status.md §4); conv passes on CUDA.
+- Reference fixtures for the `nn` ops (268 cases, the first with params): every op × f32/f16/bf16
   (`embedding` ids i64 and i32), stride/padding/dilation/groups incl. depthwise and non-square
   kernels, `count_include_pad`, overlapping adaptive cells, all-padding pool windows, NaN/±inf,
   large and tail inputs, large-mean norms, absent optional params and non-contiguous inputs;

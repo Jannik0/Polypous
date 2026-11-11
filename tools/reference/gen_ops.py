@@ -1723,6 +1723,15 @@ ACTIVATIONS: dict[str, tuple[Callable[..., Any], str]] = {
     "nn.mish": (lambda x: F.mish(x), "F.mish(x)"),
 }
 ACT_NAN = "NaN propagates. " + NAN_NOTES
+# Far negative inputs of softplus and mish: tiny but normal f32 results. The default f32 atol (1e-5) would
+# accept 0 for all of them, so these cases use atol 0 (rtol unchanged): a stricter tolerance, not a looser one.
+TAIL_VALUES = [-2.2, -2.25, -2.3, -2.99, -3.0, -3.01, -4.0, -10.0, -16.0, -17.0, -20.0, -30.0, -50.0, -80.0, -85.0]
+TAIL_TOL = {"exact": False, "atol": 0.0, "rtol": 1e-4}
+TAIL_NOTES = (
+    "atol 0 (stricter than the f32 default 1e-5, which would accept 0 for every value here): the results are "
+    "tiny but normal, and log(1 + t) with t = exp(x) rounds to 0 in f32 below x = -16.6. Values around -3 (softplus) "
+    "and -2.25 (mish) sit on both sides of where Polypous switches from a series to the plain formula."
+)
 # Tail values left out of the bf16 activation cases (bf16 has f32's exponent range, so tiny results are
 # normal there and rtol 1e-2 applies to them).
 BF16_TAIL_LEFT_OUT = {"nn.gelu": (-6.0, -5.0), "nn.gelu_tanh": (-10.0, -6.0, -5.0)}
@@ -1737,7 +1746,8 @@ TAIL_BF16_NOTES = {
 
 def act_case(op: str, name: str, seed: int, dtype: str, description: str, shape: list[int] | None = None,
              values: list[Any] | None = None, attributes: dict[str, Any] | None = None,
-             low: float = -4.0, high: float = 4.0, notes: str = "") -> Case:
+             low: float = -4.0, high: float = 4.0, notes: str = "",
+             tolerance: dict[str, Any] | None = None) -> Case:
     fn, text = ACTIVATIONS[op]
     attrs = attributes or {}
 
@@ -1749,7 +1759,7 @@ def act_case(op: str, name: str, seed: int, dtype: str, description: str, shape:
     half = NN_HALF_NOTES if dtype != "f32" and op != "nn.relu" else ""
     size = shape if shape is not None else [len(values or [])]
     return nn_case(op, name, seed, f"{dtype} {size}: {description}", attrs, tensors, None,
-                   lambda d: fn(d["x"], **attrs), text, elementwise_tol(dtype), (notes + half).strip())
+                   lambda d: fn(d["x"], **attrs), text, tolerance or elementwise_tol(dtype), (notes + half).strip())
 
 
 def activation_cases() -> list[Case]:
@@ -1822,6 +1832,13 @@ def activation_cases() -> list[Case]:
                  attributes={"beta": 3.0, "threshold": 4.0}, low=-2.5, high=2.5),
         act_case("nn.softplus", "threshold_bf16", 2264, "bf16", "threshold 1: linear above x = 1.", [3, 6],
                  attributes={"threshold": 1.0}),
+        act_case("nn.softplus", "tail_f32", 2265, "f32", "far negative x: softplus(x) = exp(x) to f32 precision.",
+                 values=TAIL_VALUES, tolerance=TAIL_TOL, notes=TAIL_NOTES),
+        act_case("nn.softplus", "tail_beta2_f32", 2266, "f32", "far negative x with beta 2.",
+                 values=[-1.49, -1.5, -1.51, -3.0, -5.0, -8.5, -10.0, -15.0, -25.0, -40.0, -42.0],
+                 attributes={"beta": 2.0}, tolerance=TAIL_TOL, notes=TAIL_NOTES),
+        act_case("nn.mish", "tail_f32", 2267, "f32", "far negative x: mish(x) = x · exp(x) to f32 precision.",
+                 values=TAIL_VALUES, tolerance=TAIL_TOL, notes=TAIL_NOTES),
     ]
     return cases
 
