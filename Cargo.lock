@@ -4556,6 +4556,9 @@ dependencies = [
  "polypous-formats",
  "polypous-ir",
  "polypous-quant",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

@@ -47,7 +47,7 @@ Planned Cargo workspace under `crates/`:
 | `polypous-polyp` | `.polyp` schema, parsing, validation, hyperparameter expression evaluation, match rules, weight-name mapping | `ir`, `formats` |
 | `polypous-backend` | Burn integration on `burn::Tensor` + `burn::Device` (Burn's runtime dispatch, ADR-0011): `BackendKind` value type, device discovery/probing, `DynTensor` (dynamic rank + dtype), implementations of every IR op as `DynTensor` functions with plain Rust arguments and no `polypous-ir` types (`polypous-runtime` maps IR nodes onto them), cross-device transfer, autodiff | `burn` |
 | `polypous-quant` | Quantized tensor representation, GGUF block formats, dequantization, quantized matmul/matvec kernels (CubeCL for GPUs, SIMD Rust for CPU) | `backend`, `cubecl` |
-| `polypous-runtime` | Graph interpreter, executable plan compilation, placement planner, weight residency (resident / streamed), prefetching, KV/state management | `ir`, `backend`, `quant`, `formats` |
+| `polypous-runtime` | Graph interpreter ([spec](specs/runtime.md)), executable plan compilation, placement planner, weight residency (resident / streamed), prefetching, KV/state management | `ir`, `backend`, `quant`, `formats` |
 | `polypous-train` | Training config, training loop, optimizers/schedulers via Burn, metrics, checkpoints, events | `runtime`, `backend` |
 | `polypous-pipelines` | Task pipelines and their built-in components (tokenizers, chat templates, samplers, mel spectrogram, diffusion schedulers, image codecs) | `runtime`, `polyp` |
 | `polypous` | Public facade: `Engine`, `Model`, `Session`, `Pipeline`, `Trainer`, events, errors | all of the above |

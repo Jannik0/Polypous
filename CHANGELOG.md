@@ -7,6 +7,22 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `polypous-runtime`: the graph interpreter on one device (#44), specified in the new
+  `docs/specs/runtime.md`. `Plan::new` validates a graph with a compute dtype (default `f32`),
+  checks the compute dtype and every value dtype against the device before anything runs
+  (`UnsupportedOperation` naming the node, op, dtype and device), orders each scope
+  topologically and computes value lifetimes, so intermediates are dropped after their last use
+  (per iteration inside `repeat` bodies). `Model::load` loads the params from a safetensors file or
+  a sharded checkpoint (`WeightFile`): the file must hold exactly the declared params (missing,
+  extra, non-float and wrong-shape tensors are errors naming the tensor, checked on the header
+  before anything is allocated), `F16`/`BF16`/`F32` storage is cast once to the compute dtype,
+  repeat prefixes are expanded and tied params loaded once. `Model::run` takes inputs and state by
+  name, binds symbols through `Analysis::bind`, rejects values on another device, runs every node
+  (all 78 M1 ops, `repeat` with carries, `params_prefix`, body state and nesting), returns the
+  outputs and every state entry, and checks a `CancellationToken` before every node and
+  iteration. `RuntimeError` carries the node path (`layers[3]/attn`) and maps to the facade's
+  error kinds (`RuntimeError::kind`). Every op fixture runs through the interpreter as a one-node
+  graph (CPU and Vulkan).
 - `polypous-ir`: the M1 op catalog, dtype inference and symbolic shape inference
   (`docs/specs/graph-ir.md` §3, §4.1 checks 4, 6–8, #39). `catalog::OPS` has one entry per row of
   the §3.2/§3.3 tables (inputs with dtype class and rank, params, attributes with type, default and

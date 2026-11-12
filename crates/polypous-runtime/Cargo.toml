@@ -8,11 +8,30 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# Backend features, forwarded to `polypous-backend` (ADR-0003). The GPU reference tests of the
+# interpreter (`#[ignore = "gpu"]`) need one of them.
+[features]
+default = ["cpu"]
+cpu = ["polypous-backend/cpu"]
+cuda = ["polypous-backend/cuda"]
+vulkan = ["polypous-backend/vulkan"]
+metal = ["polypous-backend/metal"]
+
 [dependencies]
 polypous-ir.workspace = true
 polypous-backend.workspace = true
 polypous-quant.workspace = true
 polypous-formats.workspace = true
+# Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file.
+thiserror = "2.0.21"
+# Logging of plan building and weight loading (CLAUDE.md conventions). MIT; already in the lock file.
+tracing = "0.1.44"
+
+# The reference tests build graphs from the op fixtures' JSON sidecars and reuse the backend's
+# fixture harness (`tests/reference/common.rs` of polypous-backend, through `#[path]`), which
+# parses sidecars with serde_json. MIT OR Apache-2.0; already in the lock file.
+[dev-dependencies]
+serde_json = "1.0.154"
 
 [lints]
 workspace = true

@@ -302,7 +302,8 @@ The runtime keeps state per **session** and places it on the device of the block
   values as extra inputs, keyed by state name next to the graph inputs, and returns every state
   entry as an extra output in a separate map keyed by state name: the updated value, or the input
   value unchanged if the entry has no update. A missing state value is `InvalidInput`. The caller
-  creates the initial values (zeros of the declared dtype and shape).
+  creates the initial values (zeros of the declared dtype and shape). The call contract of the
+  interpreter is in [runtime.md §3](runtime.md#3-calls).
 
 ### 2.6 Repeat blocks
 
@@ -917,7 +918,8 @@ JSON levels, and real models nest at most twice.
 
 ### 4.4 Runtime errors
 
-These are not validation codes; the runtime raises them as `polypous::Error` kinds:
+These are not validation codes; the runtime raises them as `polypous::Error` kinds (the full list
+of runtime errors, with weight loading and cancellation, is [runtime.md §5](runtime.md#5-errors)):
 
 | Kind | When |
 |---|---|
