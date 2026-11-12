@@ -15,6 +15,7 @@
 | Spec | Covers | Milestone |
 |---|---|---|
 | [graph-ir.md](specs/graph-ir.md) | The serializable model graph, opsets, validation, versioning | M1, M3 |
+| [runtime.md](specs/runtime.md) | The graph interpreter on one device: plan, weight loading, calls, cancellation, errors | M1 |
 | [formats.md](specs/formats.md) | Model file formats: safetensors reader and writer (§1), GGUF (§2, later) | M1, M3 |
 | [training.md](specs/training.md) | Declarative training config, catalog, events, checkpoints | M2 |
 | [polyp-format.md](specs/polyp-format.md) | `.polyp` architecture definitions | M3 |

@@ -21,13 +21,14 @@ this file when a milestone closes or when a known limitation is fixed or found. 
 | `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json` |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
 | `polypous-ir` | Real code (M1, #38, #39). Graph document model, loading under the limits of graph-ir.md §4.3, canonical JSON, structural validation with collected errors, dim expressions, the catalog of the 78 M1 ops, dtype and symbolic shape inference, and the runtime API (`Graph::analyze`, `Analysis::bind`) |
-| `polypous-runtime`, `-polyp`, `-quant`, `-train`, `-pipelines` | Skeletons (a doc comment each). M1 fills `-runtime` (#44) |
+| `polypous-runtime` | Real code (M1, #44). The single-device graph interpreter of [runtime.md](specs/runtime.md): plans (validation with a compute dtype, device dtype check, topological order, value lifetimes), strict weight loading from safetensors files and sharded checkpoints (header checks before any allocation, one rounding to the compute dtype), calls with inputs and state by name, `repeat`, cancellation, errors with node paths. Every M1 op runs as a one-node graph against its fixture (CPU and lavapipe; not yet on CUDA or a real Vulkan GPU, see #47) |
+| `-polyp`, `-quant`, `-train`, `-pipelines` | Skeletons (a doc comment each) |
 | `tools/reference/`, `fixtures/` | PyTorch fixture generator with `--check`, first op fixtures, `fetch_fixtures.py` and the fixture checks in CI (M1, #36) |
 
 Specs that describe implemented behavior: [placement.md §1](specs/placement.md#1-device-discovery)
 (discovery, probing, cache, fingerprints, enumeration rules), [public-api.md §1.1, §1.2, §2](specs/public-api.md)
 and [formats.md §1](specs/formats.md) (safetensors). [graph-ir.md](specs/graph-ir.md) is binding for M1 as its
-status line says: validation and inference are implemented (#38, #39), the backend ops in part (#40, #41), the interpreter not yet. All other specs are drafts until their milestone starts.
+status line says: validation and inference are implemented (#38, #39), the backend ops (#40–#43) and the interpreter (#44, [runtime.md](specs/runtime.md)). All other specs are drafts until their milestone starts.
 
 CI (`.github/workflows/`): seven checks. Six are required by the `main` ruleset:
 - Lint & test (Linux)
