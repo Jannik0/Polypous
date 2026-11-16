@@ -5,6 +5,10 @@
   under fixtures/small/ under 50 MiB.
 - Every sidecar under fixtures/small/ops/ follows the schema and matches its safetensors header
   (names, dtypes, shapes, data offsets), and every `.safetensors` file has a sidecar.
+- Every model under fixtures/small/models/<model>/ (§3.1, §3.5): `model.safetensors` holds exactly
+  the params of `model.graph.json` (F32, declared shapes), and every case sidecar follows the model
+  schema, names the graph's inputs and outputs in order and matches its safetensors header.
+- No float tensor anywhere holds a subnormal value.
 
 Standard library only (no PyTorch), so it runs in CI without setup. Exit status 0 if clean, 1 otherwise.
 The helpers live in tools/reference/fixturelib.py.
@@ -26,8 +30,15 @@ def check(root: str) -> list[str]:
     problems = fixturelib.check_sizes(root)
     files = fixturelib.list_files(root)
     present = set(files)
+    models = sorted({rel.split("/")[1] for rel in files if rel.startswith("models/") and rel.count("/") >= 2})
+    for model in models:
+        problems += fixturelib.validate_model_dir(os.path.join(root, "models", model))
     for rel in files:
         stem, ext = os.path.splitext(rel)
+        if rel.startswith("models/"):
+            if rel.count("/") < 2:
+                problems.append(f"{rel}: a file directly in models/ (expected models/<model>/)")
+            continue
         if ext == ".json" and rel.startswith("ops/"):
             problems += fixturelib.validate_case(os.path.join(root, rel))
         elif ext == ".safetensors" and stem + ".json" not in present:

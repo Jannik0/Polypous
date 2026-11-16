@@ -21,6 +21,7 @@ import fixturelib  # noqa: E402  (put on sys.path by check_fixtures)
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE = os.path.join(REPO, "fixtures", "small", "ops", "core.add", "same_shape_f32")
+MODEL_SAMPLE = os.path.join(REPO, "fixtures", "small", "models", "cnn")
 
 
 def write(path: str, data: bytes) -> None:
@@ -184,6 +185,112 @@ class SidecarValidationTest(unittest.TestCase):
     def test_safetensors_without_sidecar(self) -> None:
         os.remove(self.json)
         self.assertEqual(check_fixtures.check(self.root), ["ops/core.add/same_shape_f32.safetensors: no JSON sidecar"])
+
+
+@unittest.skipUnless(os.path.isdir(MODEL_SAMPLE), "committed model fixtures not present")
+class ModelValidationTest(unittest.TestCase):
+    """Copies the committed CNN model (graph, weights, one case) and breaks it in different ways."""
+
+    def setUp(self) -> None:
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.dir = os.path.join(self.root, "models", "cnn")
+        os.makedirs(self.dir)
+        for name in ("model.graph.json", "model.safetensors", "batch1_f32.json", "batch1_f32.safetensors"):
+            shutil.copy(os.path.join(MODEL_SAMPLE, name), os.path.join(self.dir, name))
+        self.json = os.path.join(self.dir, "batch1_f32.json")
+        self.graph = os.path.join(self.dir, "model.graph.json")
+        self.weights = os.path.join(self.dir, "model.safetensors")
+
+    def edit(self, path: str, change) -> None:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        change(doc)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(fixturelib.canonical_json(doc))
+
+    def problems(self) -> list[str]:
+        return check_fixtures.check(self.root)
+
+    def assert_problem(self, text: str) -> None:
+        problems = self.problems()
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def test_copy_is_clean(self) -> None:
+        self.assertEqual(self.problems(), [])
+
+    def test_graph_and_weights_are_one_fixture(self) -> None:
+        sizes = fixturelib.fixture_sizes(self.root)
+        self.assertEqual(sorted(sizes), ["models/cnn/batch1_f32", "models/cnn/model"])
+        self.assertEqual(
+            sizes["models/cnn/model"], os.path.getsize(self.graph) + os.path.getsize(self.weights)
+        )
+
+    def test_param_missing_from_the_weights(self) -> None:
+        self.edit(self.graph, lambda g: g["params"].append({"name": "extra.weight", "dtype": "float", "shape": [2]}))
+        self.assert_problem("param 'extra.weight' is missing")
+
+    def test_weight_that_is_not_a_param(self) -> None:
+        self.edit(self.graph, lambda g: g["params"].pop())
+        self.assert_problem("tensor 'fc.bias' is not a param of the graph")
+
+    def test_weight_with_another_shape(self) -> None:
+        self.edit(self.graph, lambda g: g["params"][-1].update(shape=[11]))
+        self.assert_problem("param 'fc.bias' is F32 [10], the graph declares F32 [11]")
+
+    def test_case_inputs_must_match_the_graph(self) -> None:
+        self.edit(self.graph, lambda g: g["inputs"][0].update(name="x"))
+        self.assert_problem("inputs ['image'] differ from the graph's inputs ['x']")
+
+    def test_case_outputs_must_match_the_graph(self) -> None:
+        self.edit(self.json, lambda s: s["outputs"].append({"name": "probs", "dtype": "f32", "shape": [1, 10]}))
+        self.assert_problem("outputs ['logits', 'probs'] differ from the graph's outputs ['logits']")
+
+    def test_input_must_have_the_compute_dtype(self) -> None:
+        self.edit(self.json, lambda s: s.update(compute_dtype="f16"))
+        self.assert_problem("input 'image' is f32, the compute dtype is f16")
+
+    def test_unknown_compute_dtype(self) -> None:
+        self.edit(self.json, lambda s: s.update(compute_dtype="f64"))
+        self.assert_problem("compute_dtype 'f64' is not one of")
+
+    def test_sidecar_shape_against_the_file(self) -> None:
+        self.edit(self.json, lambda s: s["outputs"][0].update(shape=[2, 10]))
+        self.assert_problem("outputs tensor 'logits' is f32 [2, 10] in the sidecar, F32 [1, 10] in the file")
+
+    def test_model_name_must_match_the_directory(self) -> None:
+        self.edit(self.json, lambda s: s.update(model="mlp"))
+        self.assert_problem("model 'mlp' does not match the directory name")
+
+    def test_keys_follow_the_model_schema(self) -> None:
+        self.edit(self.json, lambda s: s.pop("compute_dtype"))
+        self.assert_problem("differ from the schema")
+
+    def test_subnormal_weight(self) -> None:
+        with open(self.weights, "r+b") as f:
+            f.seek(-4, os.SEEK_END)
+            f.write(struct.pack("<I", 1))
+        self.assert_problem("model.safetensors: tensor 'fc.weight' has subnormal values")
+
+    def test_missing_graph(self) -> None:
+        os.remove(self.graph)
+        self.assertEqual(self.problems(), [f"{self.dir}: no model.graph.json"])
+
+    def test_case_without_tensors(self) -> None:
+        os.remove(os.path.join(self.dir, "batch1_f32.safetensors"))
+        self.assert_problem("batch1_f32.safetensors")
+
+    def test_model_without_cases(self) -> None:
+        for ext in (".json", ".safetensors"):
+            os.remove(os.path.join(self.dir, "batch1_f32" + ext))
+        self.assertEqual(self.problems(), [f"{self.dir}: no cases"])
+
+    def test_unexpected_files(self) -> None:
+        write(os.path.join(self.dir, "notes.txt"), b"x")
+        write(os.path.join(self.root, "models", "stray.json"), b"{}")
+        problems = self.problems()
+        self.assertTrue(any("notes.txt: unexpected file in a model directory" in p for p in problems), problems)
+        self.assertIn("models/stray.json: a file directly in models/ (expected models/<model>/)", problems)
 
 
 class CommittedFixturesTest(unittest.TestCase):

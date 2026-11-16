@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "model": "mlp",
+  "case": "batch1_f32",
+  "description": "MLP 784 -> 128 -> 10 with ReLU; logits and their log_softmax. Batch 1, compute dtype f32.",
+  "compute_dtype": "f32",
+  "inputs": [
+    {
+      "name": "image",
+      "dtype": "f32",
+      "shape": [
+        1,
+        784
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "dtype": "f32",
+      "shape": [
+        1,
+        10
+      ]
+    },
+    {
+      "name": "log_probs",
+      "dtype": "f32",
+      "shape": [
+        1,
+        10
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "model.double()(x.double()) on the weights and input in the compute dtype, rounded once to it",
+  "notes": "The reference is the PyTorch module in f64 on the weights and the input as the runtime holds them, rounded once to the compute dtype. PyTorch's own result in the compute dtype and an emulation of the runtime (each layer in f64, its output rounded to the compute dtype, subnormals flushed to zero) meet the tolerance (checked by the generator).",
+  "seed": 46101,
+  "generator": "tools/reference/gen_models.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

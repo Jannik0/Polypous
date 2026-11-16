@@ -15,6 +15,7 @@ Setup: [docs/dev-environment.md](../../docs/dev-environment.md#python-reference-
 | File | Purpose |
 |---|---|
 | `gen_ops.py` | Op fixtures in `fixtures/small/ops/<op>/<case>.{safetensors,json}`, from PyTorch |
+| `gen_models.py` | End-to-end model fixtures in `fixtures/small/models/<model>/` (graph, weights, cases), from PyTorch modules |
 | `fetch_fixtures.py` | Downloads `fixtures/manifest.json` entries into `fixtures/cache/` (size limit, SHA-256) |
 | `fixturelib.py` | Shared, standard library only: sidecar format, safetensors header check, `--check` comparison, size budget |
 | `test_*.py` | Unit tests; the ones that need PyTorch skip without it |
@@ -24,6 +25,9 @@ Setup: [docs/dev-environment.md](../../docs/dev-environment.md#python-reference-
 ```bash
 python tools/reference/gen_ops.py            # rewrites fixtures/small/ops/ (removes cases that no longer exist)
 python tools/reference/gen_ops.py --check    # regenerates into a temp dir, fails on changed/missing/extra files
+python tools/reference/gen_models.py         # rewrites fixtures/small/models/
+python tools/reference/gen_models.py --check
+python tools/reference/gen_models.py --report  # the measured errors behind the model tolerances
 python -m unittest discover -s tools/reference -v
 python tools/ci/check_fixtures.py            # size budget and sidecar schema, what CI runs
 ```
@@ -72,6 +76,24 @@ Commit the regenerated files together with the generator change. Never edit a fi
 3. Add the op to a Rust reference test (`crates/polypous-backend/tests/reference_*.rs`), which
    loads every case of the op directory.
 4. Keep fixtures small: each case under 1 MiB, `fixtures/small/` under 50 MiB. A few KB per case is enough.
+
+## Add a model or a model case
+
+Layout, sidecar and tolerances: [testing-strategy.md §3.5 and §2](../../docs/testing-strategy.md#35-model-fixtures-schema-version-1).
+
+1. A model is a `ModelSpec` in `MODELS` of `gen_models.py`: an `nn.Sequential` of named layers
+   (`layers`), the input's name and shape without the batch dim, and fixed seeds for the weights
+   and for calibration data (BatchNorm statistics). `layer_node` exports each layer as one graph
+   node (node id = layer name, params named like the `state_dict` keys); a layer type it doesn't
+   know is an error, so add its export there first (the op must exist in graph-ir.md §3).
+   `extra_outputs` adds outputs computed from the last layer (the MLP's `log_softmax`).
+2. A case is a `CaseSpec` in `CASES` (model, `batch<N>_<dtype>`, batch size, compute dtype, a new
+   seed). The tolerance comes from the dtype (`TOLERANCES`, testing-strategy.md §2); the generator
+   refuses to write a case where PyTorch's own result in the dtype or the runtime emulation misses it.
+   Check the margins with `--report`.
+3. Run the generator, `--check`, the unit tests and `tools/ci/check_fixtures.py`, then
+   `cargo test -p polypous --test models`, which loads every case of every model directory listed
+   in `MODELS` there.
 
 ## Large fixtures
 

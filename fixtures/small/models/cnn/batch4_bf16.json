@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "model": "cnn",
+  "case": "batch4_bf16",
+  "description": "Small CNN on 1x28x28 images: conv2d 1->8 (3x3, padding 1), relu, max_pool2d 2x2, conv2d 8->16 (3x3, padding 1, no bias), batch_norm (inference), relu, adaptive_avg_pool2d 3x3, flatten, linear 144->10. Batch 4, compute dtype bf16.",
+  "compute_dtype": "bf16",
+  "inputs": [
+    {
+      "name": "image",
+      "dtype": "bf16",
+      "shape": [
+        4,
+        1,
+        28,
+        28
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "dtype": "bf16",
+      "shape": [
+        4,
+        10
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 0.02,
+    "rtol": 0.01
+  },
+  "reference": "model.double()(x.double()) on the weights and input in the compute dtype, rounded once to it",
+  "notes": "The reference is the PyTorch module in f64 on the weights and the input as the runtime holds them, rounded once to the compute dtype. PyTorch's own result in the compute dtype and an emulation of the runtime (each layer in f64, its output rounded to the compute dtype, subnormals flushed to zero) meet the tolerance (checked by the generator). bf16 compute: the reference starts from the f32 weights of model.safetensors rounded once to bf16 (runtime.md \u00a72 step 5) and the input stored here in bf16. bn's running_mean and running_var are the per-channel mean and (unbiased) variance of conv2's output on a calibration batch of 32 images (calibration_seed in the generator), times 1.1 and 0.9 respectively, so they are non-trivial and the normalized values stay O(1); bn.weight is in [0.5, 1.5), bn.bias in [-0.5, 0.5).",
+  "seed": 46116,
+  "generator": "tools/reference/gen_models.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}
