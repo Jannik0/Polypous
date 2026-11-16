@@ -7,6 +7,15 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- End-to-end model reference tests (#46, M1 exit): `tools/reference/gen_models.py` writes an MLP
+  (784 → 128 → 10, logits and `log_softmax`) and a small CNN (conv2d, relu, max_pool2d, conv2d,
+  batch_norm with non-trivial running statistics, relu, adaptive_avg_pool2d, flatten, linear) as
+  graph JSON with PyTorch-named weights, inputs and f64 reference outputs for batch 1 and 4 in f32,
+  f16 and bf16 (`fixtures/small/models/`, layout and sidecar in `docs/testing-strategy.md` §3.5,
+  end-to-end tolerances in §2). `crates/polypous/tests/models.rs` runs every case through the
+  facade on every available device; `crates/polypous-cli/tests/models.rs` runs `polyp run` on the
+  MLP. `tools/ci/check_fixtures.py` checks the model fixtures (weights against the graph's params,
+  case sidecars against the graph and their tensors, no subnormals).
 - `polypous` facade and `polyp` CLI for graphs (#45), specified in `docs/specs/public-api.md` §1.3.
   `polypous::Graph` loads (`from_json`, `from_file`), saves (`to_json`, canonical form) and
   validates graph documents; `ValidationReport` lists every diagnostic with its stable code, node id

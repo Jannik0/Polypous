@@ -25,6 +25,9 @@ numerical result is checked against an established reference implementation.
 | f32 op vs PyTorch f32 | `atol = 1e-5`, `rtol = 1e-4` (reductions/matmul: `rtol = 1e-3`) |
 | f16/bf16 compute | `rtol = 1e-2` |
 | Gradients | `rtol = 1e-3` |
+| Model end-to-end, f32 compute (MLP, small CNN; §3.5) | `atol = 1e-5`, `rtol = 1e-3` |
+| Model end-to-end, f16 compute | `atol = 2e-3`, `rtol = 1e-2` |
+| Model end-to-end, bf16 compute | `atol = 2e-2`, `rtol = 1e-2` |
 | LLM end-to-end | Greedy decoding: first 32 tokens identical to the reference for fixture prompts; logits of the first step: cosine similarity ≥ 0.999 and top-5 overlap = 5 |
 | Whisper | Greedy transcript text identical on fixture clips |
 | Diffusion | Latents after N steps at fixed seed: cosine similarity ≥ 0.99. Final image PSNR ≥ 30 dB vs diffusers |
@@ -35,6 +38,31 @@ softmax log_softmax`, `nn.linear`, `nn.conv1d`/`conv2d` and the normalization op
 
 Op-specific tolerances may differ and are documented next to the test. Loosening a tolerance requires
 an explanation in the PR.
+
+**Model end-to-end tolerances.** A model output is compared with the module in f64 on the same weights
+and inputs, rounded once to the compute dtype (§3.5). The models are chains of the reductions/matmul
+class (`nn.linear`, `nn.conv2d`, `nn.batch_norm`, `nn.adaptive_avg_pool2d`, `log_softmax`) and exact or
+elementwise ops (`relu`, `max_pool2d`, `flatten`), with outputs of scale ≤ 1 (logits up to 0.6,
+log-probabilities up to 2.6 in magnitude):
+
+- **f32** uses the reductions/matmul class unchanged. Each op meets it on its own, and the chain stays
+  far inside it: PyTorch's own f32 result is within 1e-7 of the reference (worst element at 0.001 of
+  the allowed error). The margin is for other summation orders and kernels (GPU tiling, Winograd
+  convolution), not for lower precision: f32 matmul on TF32 tensor cores misses it by 1.5–5×
+  (generator `--report`, info only), which is the known CUDA limitation of [status.md §4](status.md#4-known-limitations-and-open-items).
+- **f16/bf16** keep the class's `rtol = 1e-2`, which covers the final rounding (at most one ulp, `2u`,
+  between a device's rounding and the reference's; `u` is the unit roundoff, `2^-11` for f16 and
+  `2^-8` for bf16). Unlike a single op, a model rounds every intermediate value to the compute dtype
+  (graph-ir.md §3.1.8), so an output that sums many rounded terms has an absolute error of order `u`
+  times the size of the terms, however close to zero the sum is. `atol = 4u` rounded up (`2e-3` for f16,
+  `2e-2` for bf16) covers that for outputs of scale ≤ 1. Measured: PyTorch's own f16/bf16 result and an
+  emulation of the runtime's numerics (every layer in f64, rounded to the dtype, subnormals flushed to
+  zero) have the same worst errors, at most about `u` absolute (f16: 2.4e-4 on the CNN logits; bf16:
+  3.9e-3), so the worst element uses at most 0.08 (f16) and 0.37 (bf16, a log-probability one ulp off)
+  of the allowed error. A model with larger outputs needs its own `atol`, scaled to its output.
+
+The generator checks both computations against every case's tolerance before writing it
+(`tools/reference/gen_models.py`, `--report` prints the numbers).
 
 ## 3. Reference fixtures
 
@@ -58,13 +86,20 @@ fixtures/
   small/                           committed, size-checked in CI
     ops/<op>/<case>.safetensors    one op case: inputs and expected outputs
     ops/<op>/<case>.json           its sidecar (§3.2)
+    models/<model>/model.graph.json      an end-to-end model's graph (§3.5)
+    models/<model>/model.safetensors     its weights
+    models/<model>/<case>.safetensors    one model case: inputs and expected outputs
+    models/<model>/<case>.json           its sidecar (§3.5)
 ```
 
 - `<op>` is the IR op name from [graph-ir.md §3](specs/graph-ir.md#3-opsets), for example
   `fixtures/small/ops/core.add/broadcast_row_f32.json`. `<case>` is `[a-z0-9_]`, unique per op,
   and usually ends in the dtype under test.
 - A **fixture** is one case: its `.safetensors` file and its `.json` sidecar. The size budget counts
-  both together.
+  both together. A model's `model.graph.json` and `model.safetensors` are one fixture too: files
+  belong to the same fixture when their paths agree up to the first `.` of the file name.
+- `<model>` is `[a-z0-9_]`, for example `fixtures/small/models/mlp/batch4_f32.json`. Its cases are
+  usually named `batch<N>_<dtype>`.
 - Other areas (`quant/`, `tokenizers/`, …) get their own directories under `small/` when they get
   their first fixtures, with the same pairing of tensors and sidecar.
 
@@ -130,6 +165,59 @@ hex), `size` (bytes), `license` and `path` (relative, `/`-separated, inside `fix
 download (or `--max-bytes`, default 8 GiB, for any entry), writes to a temporary file, checks the
 SHA-256 and only then moves the file into place. A file already in the cache with the right hash is
 kept.
+
+### 3.5 Model fixtures (schema version 1)
+
+End-to-end reference tests for whole models (roadmap M1 exit: "an MLP and a small CNN defined as JSON
+give the same outputs as identical PyTorch models with the same weights"). Generated by
+[`tools/reference/gen_models.py`](../tools/reference/gen_models.py) with the rules of §3.3.
+
+- **`model.graph.json`**: the graph ([graph-ir.md](specs/graph-ir.md)), written by the generator from
+  the PyTorch module's structure (one node per layer, node ids equal to the layer names), with the
+  batch dim as the symbol `batch`, so one loaded model runs every batch size. Every param is named
+  exactly like the PyTorch `state_dict` key (`fc1.weight`, `bn.running_mean`), in PyTorch's layout
+  (graph-ir.md §3.3), so PyTorch's weights load unchanged.
+- **`model.safetensors`**: exactly the graph's params (the runtime's strict match, runtime.md §2), stored
+  as `F32`, no `__metadata__`. State that inference doesn't read is left out (BatchNorm's
+  `num_batches_tracked`). Weights have no values below the smallest normal f16 (`2^-14`) other than zero,
+  since the f16 cases round them to f16 (runtime.md §2 step 5) and subnormals are backend-defined.
+- **Cases**: `<case>.safetensors` holds the graph inputs and the expected outputs under their graph
+  names, in the case's compute dtype (names unique across both). The sidecar is UTF-8 JSON with exactly
+  these keys, in this order (2-space indent, LF line endings, written by the generator only):
+
+| Key | Type | Meaning |
+|---|---|---|
+| `schema_version` | int | `1` |
+| `model` | string | Model name, equal to the directory name |
+| `case` | string | Case name, equal to the file name without extension |
+| `description` | string | The model and what the case covers (batch size, dtype) |
+| `compute_dtype` | string | `f32`, `f16` or `bf16`: the `GraphLoadOptions::compute_dtype` to load the model with. `float` inputs are stored in it |
+| `inputs` | array | The graph inputs **in graph order**, `{"name", "dtype", "shape"}` as in §3.2 |
+| `outputs` | array | The graph outputs **in graph order**, same form |
+| `tolerance` | object | `{"exact", "atol", "rtol"}` (§3.2), from the model rows of §2 |
+| `reference` | string | How the expected outputs were computed |
+| `notes` | string | Semantics and choices the case relies on |
+| `seed` | int | Seed of the case's input data |
+| `generator` | string | Script that wrote it, relative to the repository root |
+| `versions` | object | As in §3.2 |
+
+**References.** The module runs in f64 on the weights and inputs **as the runtime holds them**: the f32
+weights (for an f16/bf16 case, rounded once to that dtype first) and the inputs as stored in the case
+file. The outputs are rounded once to the compute dtype. Weights and inputs come from NumPy's PCG64 with
+fixed seeds; non-trivial state (BatchNorm running statistics and affine params) is set by the generator,
+never left at PyTorch's defaults. Inputs and outputs have no subnormal values.
+
+**Comparing** follows §3.2. Tests load each graph through the facade (`Graph::from_file`,
+`Engine::load_graph` with `model.safetensors` and the case's compute dtype), run every case on every
+available device, skip a compute dtype a device doesn't support with a `SKIP` line, and print a
+`SUMMARY <model> <device> <dtype>` line ([`crates/polypous/tests/models.rs`](../crates/polypous/tests/models.rs)).
+`crates/polypous-cli/tests/models.rs` runs one case through `polyp run`.
+
+**Checks.** `tools/ci/check_fixtures.py` checks every model directory: the graph lists `inputs`,
+`outputs` and `params`; `model.safetensors` holds exactly the params with their declared shapes as
+`F32`; every case sidecar follows this schema, names the graph's inputs and outputs in order, stores
+`float` inputs in the compute dtype and matches its safetensors header; no float tensor holds a
+subnormal; no other files. Full graph validation is `polypous-ir`'s: the Rust tests load every graph.
 
 ## 4. Backends in tests
 

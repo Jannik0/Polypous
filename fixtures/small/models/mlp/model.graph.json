@@ -1,0 +1,107 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "opsets": {
+    "core": 1,
+    "nn": 1
+  },
+  "name": "mlp",
+  "dims": {
+    "batch": {
+      "min": 1
+    }
+  },
+  "inputs": [
+    {
+      "name": "image",
+      "dtype": "float",
+      "shape": [
+        "batch",
+        784
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "value": "fc2"
+    },
+    {
+      "name": "log_probs",
+      "value": "log_softmax"
+    }
+  ],
+  "params": [
+    {
+      "name": "fc1.weight",
+      "dtype": "float",
+      "shape": [
+        128,
+        784
+      ]
+    },
+    {
+      "name": "fc1.bias",
+      "dtype": "float",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "fc2.weight",
+      "dtype": "float",
+      "shape": [
+        10,
+        128
+      ]
+    },
+    {
+      "name": "fc2.bias",
+      "dtype": "float",
+      "shape": [
+        10
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fc1",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "image"
+      },
+      "params": {
+        "weight": "fc1.weight",
+        "bias": "fc1.bias"
+      }
+    },
+    {
+      "id": "relu",
+      "op": "nn.relu",
+      "inputs": {
+        "x": "fc1"
+      }
+    },
+    {
+      "id": "fc2",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "relu"
+      },
+      "params": {
+        "weight": "fc2.weight",
+        "bias": "fc2.bias"
+      }
+    },
+    {
+      "id": "log_softmax",
+      "op": "core.log_softmax",
+      "inputs": {
+        "x": "fc2"
+      },
+      "attrs": {
+        "dim": -1
+      }
+    }
+  ]
+}
