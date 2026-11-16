@@ -60,6 +60,10 @@ fn mlp_analysis() {
     assert_eq!(a.inputs[0].info.shape_string(), "[batch, 784]");
     assert_eq!(port_shape(&a.nodes[0], "out"), "f32 [batch, 128]");
     assert_eq!(port_shape(&a.nodes[2], "out"), "f32 [batch, 10]");
+    assert_eq!(a.outputs.len(), 1);
+    assert_eq!(a.outputs[0].name, "logits");
+    assert_eq!(a.outputs[0].info.dtype, Dtype::F32);
+    assert_eq!(a.outputs[0].info.shape_string(), "[batch, 10]");
 
     let b = a
         .bind(&[("image", desc(Dtype::F32, &[3, 784]))], &[])
@@ -105,6 +109,16 @@ fn repeat_example_analysis() {
     assert_eq!(port_shape(&a.nodes[2], "out"), "f32 [batch, seq, 4]");
     let names: Vec<&str> = a.state.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, vec!["step", "layers.0.cache", "layers.1.cache"]);
+    // Outputs resolve bare node ids and `node:port` references.
+    let outputs: Vec<String> = a
+        .outputs
+        .iter()
+        .map(|o| format!("{} {} {}", o.name, o.info.dtype, o.info.shape_string()))
+        .collect();
+    assert_eq!(
+        outputs,
+        vec!["logits f32 [batch, seq, 4]", "rest f32 [batch, seq, 8]"]
+    );
 
     let state_shape = [2usize, 5, 16];
     let state = [

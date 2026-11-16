@@ -17,11 +17,20 @@
 //! # Ok::<(), polypous::Error>(())
 //! ```
 
+// `Error` is the documented public shape `{ kind, message, context }` (public-api.md §2 rule 7)
+// with optional context strings; it is returned by value on the cold error path, so its size
+// doesn't matter. Boxing it would change the public type.
+#![allow(clippy::result_large_err)]
+
 mod cancel;
 mod device;
 mod engine;
 mod error;
+mod graph;
+mod model;
 pub mod probe;
+mod tensor;
+pub mod tensor_file;
 
 pub use cancel::CancellationToken;
 pub use device::{
@@ -30,4 +39,7 @@ pub use device::{
 };
 pub use engine::{Engine, EngineConfig};
 pub use error::{Error, ErrorContext, ErrorKind};
+pub use graph::{Diagnostic, Graph, GraphValidateOptions, ValidationReport};
+pub use model::{Dim, GraphLoadOptions, Model, ModelInfo, RunOutput, TensorSpec};
 pub use probe::{Isolation, ProbeEvent, ProbeOptions, ProbeReport};
+pub use tensor::{ComputeDtype, Dtype, NamedTensor, TensorData};

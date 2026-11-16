@@ -1,0 +1,10 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "opsets": { "core": 1 },
+  "inputs": [ { "name": "x", "dtype": "float", "shape": [2] } ],
+  "state": [ { "name": "acc", "dtype": "float", "shape": [2], "init": "zeros" } ],
+  "outputs": [ { "name": "y", "value": "sum" } ],
+  "nodes": [ { "id": "sum", "op": "core.add", "inputs": { "a": "acc", "b": "x" } } ],
+  "state_updates": { "acc": "sum" }
+}

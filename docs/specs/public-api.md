@@ -206,14 +206,232 @@ values (the Rust types are `#[non_exhaustive]`).
 **Error JSON.** `{"kind":"invalid_input","message":"…","context":{"operation":"…","details":"…"}}`.
 `kind` is the `snake_case` name of an `ErrorKind` from §2 rule 7 (`invalid_input`, `invalid_graph`,
 `unsupported_model`, `unsupported_operation`, `io`, `out_of_memory`, `backend_unavailable`, `backend`,
-`cancelled`, `internal`). `message` is for end users. `context` fields are optional and omitted when
-absent: `operation` (the facade call that failed, for example `engine_new`) and `details` (the
-underlying error or panic message). More context fields (node id, file, tensor name, device) are
-added as needed.
+`cancelled`, `internal`). `message` is for end users. `context` fields are strings, optional and
+omitted when absent:
+
+| Field | Meaning |
+|---|---|
+| `operation` | The facade call that failed, for example `engine_new`, `engine_load_graph`, `model_run` |
+| `details` | The underlying error or panic message (for an invalid graph: every diagnostic, one per line) |
+| `node` | The node: a graph node id from a validation diagnostic, or the runtime's node path (`fc1`, `layers[3]/attn`, runtime.md §5) |
+| `pointer` | JSON pointer (RFC 6901) into the graph document, from a validation diagnostic (`""` is the whole document) |
+| `tensor` | A weight (param), input, output or state entry name, or a tensor of a tensor file |
+| `file` | The file concerned (graph, weight file or shard, tensor file), as given |
+| `device` | The device, in its id syntax (`cpu`, `cuda:0`, `vulkan:discrete_gpu:0`, §1.3) |
+
+Readers must accept new context fields.
 
 **Logging.** Discovery logs through `tracing` under the `polypous` target: per-device enumeration,
 description and probe results at `debug` (`RUST_LOG=polypous=debug`), unavailable devices at
 `warn`, the primary GPU at `info`.
+
+### 1.3 Graphs and models (M1, issue #45)
+
+Load a graph document ([graph-ir.md](graph-ir.md)), validate it, load it with safetensors weights
+on one device, run it and save it. The facade is a thin layer over `polypous-ir` (validation) and
+`polypous-runtime` ([runtime.md](runtime.md): plan, weights, calls, cancellation, errors); it adds
+no op, shape or weight logic of its own beyond the `TensorData` checks of §2 rule 4. Training and
+parameter initialization (M2), `.polyp` and GGUF (M3) and placement options (M4) come later.
+
+```rust
+use polypous::{CancellationToken, Engine, EngineConfig, Graph, GraphLoadOptions, NamedTensor, tensor_file};
+
+let engine = Engine::new(EngineConfig::default())?;
+let graph = Graph::from_file("mlp.graph.json")?;              // InvalidGraph with node and pointer
+let mut options = GraphLoadOptions::default();                 // primary GPU, else the CPU; f32
+options.weights = Some("mlp.safetensors".into());
+let model = engine.load_graph(&graph, options, &CancellationToken::new())?;
+println!("{}", serde_json::to_string(&model.info())?);         // device, inputs, outputs, state
+
+let inputs = tensor_file::read("image.safetensors")?;         // Vec<NamedTensor>
+let out = model.run(inputs, vec![], &CancellationToken::new())?;
+tensor_file::write("logits.safetensors", &out.outputs)?;
+model.save("model.graph.json", "model.safetensors")?;
+```
+
+**Items.**
+
+| Item | Behavior |
+|---|---|
+| `Graph` | A loaded, valid graph. `Arc` handle: `Clone + Send + Sync + 'static`, immutable |
+| `Graph::from_json(json: &str) -> Result<Graph, Error>` | Loads and validates a document (graph-ir.md §4, compute dtype `f32`). Any diagnostic is `InvalidGraph` (below) |
+| `Graph::from_file(path) -> Result<Graph, Error>` | The same for a file: `Io` if it can't be read; a file larger than the document limit (graph-ir.md §4.3, 64 MiB) is `InvalidGraph` (`document_too_large`) without reading the rest; bytes that are not UTF-8 are `invalid_json` |
+| `graph.to_json() -> String` | The canonical JSON form (graph-ir.md §6). `Graph::from_json(&g.to_json())` equals `g` |
+| `graph.validate(&GraphValidateOptions) -> ValidationReport` | Validates again, for example with another compute dtype |
+| `Graph::validate_json(json, &GraphValidateOptions) -> ValidationReport` | Every diagnostic of a document that may not load (editors, `polyp graph validate`) |
+| `Graph::validate_file(path, &GraphValidateOptions) -> Result<ValidationReport, Error>` | The same for a file; `Io` if it can't be read |
+| `Engine::load_graph(&graph, GraphLoadOptions, &CancellationToken) -> Result<Model, Error>` | Compiles the graph for one device and loads its weights (runtime.md §1, §2). Blocking |
+| `Model` | A loaded model. `Arc` handle: `Clone + Send + Sync + 'static`; calls on clones share the weights, and may run concurrently from several threads |
+| `model.info() -> ModelInfo` | Device, compute dtype, inputs, outputs, state entries and params |
+| `model.graph() -> Graph` | The graph it was loaded from |
+| `model.run(inputs, state, &CancellationToken) -> Result<RunOutput, Error>` | One call (runtime.md §3). Blocking |
+| `model.save(graph_path, weights_path) -> Result<(), Error>` | Writes `model.graph.json` and `model.safetensors` (below) |
+| `model.close()` | Frees the weights now (§2 rule 2). Later `run` and `save` calls on any clone are `InvalidInput`; `info` and `graph` still work. Calls that are running finish first. Idempotent |
+| `tensor_file::read(path) -> Result<Vec<NamedTensor>, Error>`, `tensor_file::write(path, &[NamedTensor])` | Named tensors from and to a safetensors file (below), for apps and the CLI |
+| `DeviceId::parse(text) -> Result<DeviceId, Error>` (also `FromStr`) | The device id syntax that `Display` writes: `cpu`, `cuda:0`, `vulkan:discrete_gpu:0`, `metal:integrated_gpu:0` (adapters as in §1.2). Anything else is `InvalidInput` |
+
+Paths are `impl AsRef<Path>`, so `&Path`, `PathBuf` and UTF-8 strings all work (§2 rule 10).
+
+**`GraphValidateOptions` JSON.** `{"compute_dtype":"f32"}`: an object, every field optional,
+unknown fields rejected (as `EngineConfig`, §1.2), `from_json`/`to_json`. `compute_dtype` is
+`"f32"` (default), `"f16"` or `"bf16"` (`ComputeDtype`, graph-ir.md §2.2).
+
+**`ValidationReport` JSON.** Plain data, the diagnostics in the order the checks ran:
+
+```jsonc
+{
+  "valid": false,                                 // true iff diagnostics is empty
+  "diagnostics": [
+    {
+      "code": "unknown_reference",                // stable code of graph-ir.md §4.2
+      "node": "fc1",                              // node id as written (not qualified by repeats), or null
+      "pointer": "/nodes/0/inputs/x",             // JSON pointer into the document; "" is the whole document
+      "message": "unknown value `imgae`"          // human-readable
+    }
+  ]
+}
+```
+
+For `graph.validate`, pointers point into the canonical form (`to_json`), which may differ from the
+file the graph was loaded from. The validation functions never fail on a document: if validation
+itself panics (a bug), the report has one diagnostic with the code `internal_error`, so a graph
+never looks valid by accident.
+
+**Invalid graphs.** `from_json` and `from_file` fail with `InvalidGraph`. `message` is
+`The graph is not valid: <first diagnostic's message>` (with `(and N more errors)` when there are
+more); `context.node` and `context.pointer` are the first diagnostic's (node omitted when it has
+none), `context.details` lists every diagnostic, one per line, `context.file` the file. Use
+`validate_json`/`validate_file` to get them as data. `load_graph` validates again with the
+requested compute dtype; a graph that is valid with `f32` but not with that dtype is the same
+`InvalidGraph` error.
+
+**`GraphLoadOptions` JSON.** An object, every field optional, unknown fields rejected,
+`from_json`/`to_json`:
+
+| Field | Type, default | Meaning |
+|---|---|---|
+| `weights` | path string or null, null | A safetensors file, or a sharded checkpoint's `*.safetensors.index.json` (formats.md §1.5). Null: the graph must declare no params |
+| `device` | device id (§1.2 JSON) or null, null | The device. Null: the engine's primary GPU, or the CPU if there is none |
+| `compute_dtype` | `"f32"` \| `"f16"` \| `"bf16"`, `"f32"` | The compute dtype (graph-ir.md §2.2) |
+
+`load_graph`, in this order:
+
+1. **Device.** The device must be in `engine.devices()` with status `available`. A device that is
+   unknown to the engine, unavailable (a failed probe, a skipped software rasterizer) or of a
+   backend that isn't compiled in is `BackendUnavailable` with `context.device`. The default device
+   needs no GPU: with no primary GPU it is the CPU.
+2. **Plan** (runtime.md §1): validation with the compute dtype (`InvalidGraph`), then the device's
+   dtype check. A compute dtype or value dtype the device lacks (`bf16` on Vulkan) is
+   `UnsupportedOperation` with `context.device` (and `context.node` for a node output).
+3. **Weights** (runtime.md §2): strict name match, storage dtype, shape, one rounding to the
+   compute dtype. Errors name the tensor in `context.tensor` and the file in `context.file`.
+4. **Cancellation** is checked before each step and after the last one; a cancelled load returns
+   `Cancelled` and frees what it loaded. The runtime doesn't check the token while it uploads
+   weights, so one step runs to its end.
+
+The engine and the model are independent: a model keeps its device when the engine re-probes
+(§1.1), and stays usable after the last `Engine` clone is dropped.
+
+**`ModelInfo` JSON.** Plain data:
+
+```jsonc
+{
+  "device": {"backend": "cpu"},                   // DeviceId JSON (§1.2)
+  "compute_dtype": "f32",
+  "inputs":  [ {"name": "image", "dtype": "f32", "shape": ["batch", 784]} ],    // declaration order
+  "outputs": [ {"name": "logits", "dtype": "f32", "shape": ["batch", 10]} ],    // declaration order
+  "state":   [ ],                                 // root-level state entries, expanded names, binding order
+  "params":  [ {"name": "fc1.weight", "dtype": "f32", "shape": [128, 784]} ]   // declaration order
+}
+```
+
+`dtype` is a value dtype (`f32`, `f16`, `bf16`, `i64`, `i32`, `bool`) with `float` resolved to the
+compute dtype; params have the compute dtype. A `shape` entry is a number for a literal dim and a
+string for a symbolic one: a symbol (`"batch"`) or a dim expression in its canonical form
+(`"seq + 1"`, graph-ir.md §2.3), as validation inferred it.
+
+**Tensors.** `TensorData { dtype, shape: Vec<u64>, bytes: Vec<u8> }` with the encodings of §2
+rule 4, and `NamedTensor { name, tensor: TensorData }`. JSON:
+`{"name":"x","tensor":{"dtype":"f32","shape":[2,3],"bytes":[0,0,128,63,…]}}` (`bytes` as an array
+of numbers; wrappers should pass tensors natively, not as JSON). `TensorData::validate` checks a
+value: the byte length must equal the product of `shape` times the element size, computed with
+checked arithmetic (an overflow is an error, not a panic), and every `bool` byte must be `0` or `1`;
+errors are `InvalidInput`.
+
+**Running.** `model.run(inputs: Vec<NamedTensor>, state: Vec<NamedTensor>, cancel)`:
+
+1. Every input and state value is checked with `TensorData::validate`, and a dimension of size `0`
+   is rejected (M1 graphs have no zero-size dims, graph-ir.md §2.3): `InvalidInput` with
+   `context.tensor`.
+2. The facade uploads each value to the model's device (the runtime never moves values, runtime.md
+   §3). A rank outside 1–6 is `InvalidInput`; a dtype the device can't hold (`bf16` on Vulkan) is
+   `UnsupportedOperation`. Values are uploaded before the binding check, so this happens before a
+   dtype mismatch with the graph is detected.
+3. The runtime binds and runs the graph (runtime.md §3, §4). Binding errors are `InvalidInput` with
+   the input or state entry in `context.tensor` (or the node in `context.node`); errors while running
+   carry the node path in `context.node`; a set token is `Cancelled` with the node it stopped before.
+4. `RunOutput { outputs, state }`: every graph output in declaration order and every root-level state
+   entry (expanded names, the order of `ModelInfo::state`), read back as `TensorData`. A failed call
+   returns nothing.
+
+State is passed in explicitly on every call; the model keeps none between calls (sessions are M3).
+
+**Saving.** `model.save(graph_path, weights_path)` writes the graph's canonical JSON to
+`graph_path` and every declared param to `weights_path` as one safetensors file (formats.md §1.6,
+by param name, no metadata). Params a node uses are read back from the device in the compute dtype
+they are held in (`F32`, `F16` or `BF16` storage): an `f16` model saves `F16` tensors. Declared
+params that no node uses are not on the device (runtime.md §2 step 1); they are copied byte for byte,
+in their stored dtype, from the weight file the model was loaded from, which is opened again for
+this: if it is gone or no longer holds the tensor with the declared shape and a float storage, save
+fails (`Io` or `InvalidInput` naming the tensor and the file). The weights file is written to a
+temporary file first and renamed (formats.md §1.6), so an existing file is never half overwritten;
+the graph file is written after it. Loading the saved pair with the same options gives a model whose
+outputs are identical.
+
+**Tensor files.** `tensor_file::read` opens a safetensors file (formats.md §1: whole header
+validated, sizes checked before allocating) and returns every tensor in name order. Tensors must be
+stored as `F32`, `F16`, `BF16`, `I64`, `I32` or `BOOL` (bytes `0`/`1`); any other dtype is
+`InvalidInput` naming the tensor. `tensor_file::write` validates every value first, then writes
+them with the safetensors writer (temporary file and rename; a duplicate name is `InvalidInput`).
+File errors are `Io` (I/O) or `InvalidInput` (malformed, truncated) with `context.file`.
+
+**Error mapping.** Runtime errors map through `RuntimeError::kind()` (runtime.md §5) to the
+`ErrorKind` of the same name. `message` is `Could not load the model: …`, `The model run failed: …`
+or `Could not save the model: …` followed by the runtime's description, which names the node,
+tensor, file or device; `context` carries them as fields (`node`, `tensor`, `file`, `device`) and
+`details` the runtime's error text. A cancelled call's message is `The operation was cancelled.`,
+and a broken invariant's (`Internal`) asks to report a bug, with the runtime's text in `details`.
+
+| Failure | Kind | Context |
+|---|---|---|
+| Graph document does not parse or fails validation | `InvalidGraph` | `node`, `pointer`, `details`, `file` |
+| Device unknown, unavailable or not compiled in | `BackendUnavailable` | `device` |
+| Compute dtype or a value dtype unsupported by the device | `UnsupportedOperation` | `device`, `node` |
+| Missing, extra, wrong-shape or non-float weight; malformed or truncated weight file | `InvalidInput` | `tensor`, `file` |
+| Unsupported float storage (`F64`, `F8_*`) | `UnsupportedModel` | `tensor` |
+| Weight, graph or tensor file can't be read or written | `Io` | `file` |
+| Malformed `TensorData`, zero-size dim, wrong input or state names, dtypes or shapes | `InvalidInput` | `tensor` (or `node`) |
+| Out-of-range index while running | `InvalidInput` | `node` |
+| Cancelled | `Cancelled` | `node` (if a node was next) |
+| A model used after `close()` | `InvalidInput` | |
+| Backend failure | `Backend` | `node` |
+
+**`CancellationToken`.** There is one token type for the whole API: `polypous::CancellationToken`
+(§1.1, `new`, `cancel`, `is_cancelled`, `Clone`, `Default`, `Debug`) works for probing, loading and
+running. It holds the runtime's token, and clones share one flag.
+
+**CLI.** `polyp graph validate <file> [--json] [--compute-dtype D]` prints every diagnostic (code,
+node, pointer, message) or, with `--json`, the `ValidationReport` JSON. `polyp run <graph>
+[--weights FILE] --input NAME=FILE … --output FILE [--device ID] [--compute-dtype D] [--json]`
+loads the graph through `load_graph`, reads each input from a safetensors file holding exactly one
+tensor (of any name), runs it once, and writes every output, by name, to `--output`. `--device`
+takes the id syntax above (`polyp devices` prints it). Graphs with state are rejected in M1 (the
+initial state's shapes depend on the bound symbols); use `Model::run`. Exit codes: `0` success (or
+a valid graph), `1` an error (`polypous::Error`: message and context on stderr, the error JSON with
+`--json`), `2` a usage error, `3` `graph validate` found the graph invalid.
+
+C ABI (M7): `pp_graph_from_json`, `pp_graph_validate_json`, `pp_engine_load_graph`,
+`pp_model_info_json`, `pp_model_run`, `pp_model_save`.
 
 ## 4. Events and threading
 

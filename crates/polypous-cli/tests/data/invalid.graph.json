@@ -1,0 +1,18 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "opsets": { "nn": 1 },
+  "dims": { "batch": {} },
+  "inputs": [ { "name": "x", "dtype": "float", "shape": ["batch", 4] } ],
+  "outputs": [ { "name": "y", "value": "fc2" } ],
+  "params": [
+    { "name": "fc1.weight", "dtype": "float", "shape": [3, 4] }
+  ],
+  "nodes": [
+    { "id": "fc1", "op": "nn.linear", "inputs": { "x": "imgae" },
+      "params": { "weight": "fc1.weight" } },
+    { "id": "act", "op": "nn.relux", "inputs": { "x": "fc1" } },
+    { "id": "fc2", "op": "nn.linear", "inputs": { "x": "act" },
+      "params": { "weight": "fc2.weight" } }
+  ]
+}

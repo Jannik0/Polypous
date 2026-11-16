@@ -7,6 +7,29 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `polypous` facade and `polyp` CLI for graphs (#45), specified in `docs/specs/public-api.md` §1.3.
+  `polypous::Graph` loads (`from_json`, `from_file`), saves (`to_json`, canonical form) and
+  validates graph documents; `ValidationReport` lists every diagnostic with its stable code, node id
+  and JSON pointer, and an invalid graph is an `InvalidGraph` error with the first diagnostic's node
+  and pointer in `context`. `Engine::load_graph(&graph, GraphLoadOptions, &cancel)` compiles a graph
+  for one device (default: the primary GPU, else the CPU; a device that isn't available is
+  `BackendUnavailable`) with a compute dtype (`f32`, `f16`, `bf16`) and loads its safetensors weights
+  (one file or a sharded index). `Model` is an `Arc` handle: `info()` (device, compute dtype, inputs,
+  outputs, state entries and params with dtypes and symbolic shapes), `run(inputs, state, &cancel)`
+  with named `TensorData` (validated: byte length, `bool` bytes, no zero-size dims), `save()` to
+  `model.graph.json` + `model.safetensors` (params in the compute dtype; unused params copied from
+  the original weight file) and `close()`. `polypous::tensor_file::{read, write}` read and write
+  named tensors as safetensors files, and `DeviceId::parse` reads the `cuda:0` /
+  `vulkan:discrete_gpu:0` / `cpu` syntax. Runtime errors map to the facade's kinds with the node
+  path, tensor, file and device in the error `context`, which gains the fields `node`, `pointer`,
+  `tensor`, `file` and `device`. There is one `CancellationToken` for probing, loading and running.
+- `polyp graph validate <file> [--json] [--compute-dtype D]` (exit code 3 for an invalid graph) and
+  `polyp run <graph> [--weights FILE] --input NAME=FILE … --output FILE [--device ID]
+  [--compute-dtype D] [--json]` (safetensors inputs and outputs; graphs with state are rejected
+  until sessions exist). Errors print the message and context to stderr, or the error JSON with
+  `--json`.
+- `polypous-ir`: `Analysis::outputs`, the dtype and inferred shape of every graph output.
+  `polypous-runtime`: `Model::param`, a loaded param tensor by name.
 - `polypous-runtime`: the graph interpreter on one device (#44), specified in the new
   `docs/specs/runtime.md`. `Plan::new` validates a graph with a compute dtype (default `f32`),
   checks the compute dtype and every value dtype against the device before anything runs

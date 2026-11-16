@@ -130,6 +130,69 @@ impl fmt::Display for DeviceId {
     }
 }
 
+impl DeviceId {
+    /// Parses the id syntax that `Display` writes: `cpu`, `cuda:0`, `vulkan:discrete_gpu:0`,
+    /// `metal:integrated_gpu:0` (adapters: `discrete_gpu`, `integrated_gpu`, `virtual_gpu`, `cpu`,
+    /// `other`; public-api.md §1.3). `polyp devices` prints ids in this form.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::InvalidInput`](crate::ErrorKind::InvalidInput) for anything else.
+    pub fn parse(text: &str) -> Result<DeviceId, crate::Error> {
+        let invalid = || {
+            crate::Error::new(
+                crate::ErrorKind::InvalidInput,
+                format!(
+                    "`{text}` is not a device id. Use `cpu`, `cuda:<index>`, \
+                     `vulkan:<adapter>:<index>` or `metal:<adapter>:<index>`, as `polyp devices` prints them."
+                ),
+            )
+            .in_operation("device_id_parse")
+        };
+        let index = |part: &str| -> Result<usize, crate::Error> {
+            // Plain decimal digits only (`+1` and ` 1` are not ids).
+            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(invalid());
+            }
+            part.parse().map_err(|_| invalid())
+        };
+        let adapter = |part: &str| -> Result<AdapterKind, crate::Error> {
+            [
+                AdapterKind::DiscreteGpu,
+                AdapterKind::IntegratedGpu,
+                AdapterKind::VirtualGpu,
+                AdapterKind::Cpu,
+                AdapterKind::Other,
+            ]
+            .into_iter()
+            .find(|kind| kind.as_str() == part)
+            .ok_or_else(invalid)
+        };
+        let parts: Vec<&str> = text.split(':').collect();
+        match parts.as_slice() {
+            ["cpu"] => Ok(DeviceId::Cpu),
+            ["cuda", i] => Ok(DeviceId::Cuda { index: index(i)? }),
+            ["vulkan", a, i] => Ok(DeviceId::Vulkan {
+                adapter: adapter(a)?,
+                index: index(i)?,
+            }),
+            ["metal", a, i] => Ok(DeviceId::Metal {
+                adapter: adapter(a)?,
+                index: index(i)?,
+            }),
+            _ => Err(invalid()),
+        }
+    }
+}
+
+impl std::str::FromStr for DeviceId {
+    type Err = crate::Error;
+
+    fn from_str(text: &str) -> Result<DeviceId, crate::Error> {
+        DeviceId::parse(text)
+    }
+}
+
 /// What kind of hardware a device is. JSON: `"discrete"`, `"integrated"`, `"cpu"`, `"other"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -647,6 +710,59 @@ pub(crate) mod tests {
     use super::*;
 
     const GIB: u64 = 1 << 30;
+
+    #[test]
+    fn device_ids_parse_their_display_form() {
+        let ids = [
+            DeviceId::Cpu,
+            DeviceId::Cuda { index: 0 },
+            DeviceId::Cuda { index: 12 },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::DiscreteGpu,
+                index: 0,
+            },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::Cpu,
+                index: 1,
+            },
+            DeviceId::Metal {
+                adapter: AdapterKind::IntegratedGpu,
+                index: 0,
+            },
+            DeviceId::Vulkan {
+                adapter: AdapterKind::VirtualGpu,
+                index: 3,
+            },
+            DeviceId::Metal {
+                adapter: AdapterKind::Other,
+                index: 2,
+            },
+        ];
+        for id in ids {
+            assert_eq!(DeviceId::parse(&id.to_string()), Ok(id));
+            assert_eq!(id.to_string().parse::<DeviceId>(), Ok(id));
+        }
+        for bad in [
+            "",
+            "CPU",
+            "cpu:0",
+            "cuda",
+            "cuda:",
+            "cuda:-1",
+            "cuda:+1",
+            "cuda: 1",
+            "cuda:99999999999999999999999",
+            "vulkan:0",
+            "vulkan:gpu:0",
+            "vulkan:discrete_gpu",
+            "vulkan:discrete_gpu:0:1",
+            "opencl:0",
+        ] {
+            let error = DeviceId::parse(bad).unwrap_err();
+            assert_eq!(error.kind, crate::ErrorKind::InvalidInput, "{bad}");
+            assert!(error.message.contains("not a device id"));
+        }
+    }
 
     /// A synthetic backend device.
     pub(crate) fn synthetic(
