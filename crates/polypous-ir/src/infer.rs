@@ -72,6 +72,17 @@ pub(crate) fn run(
         "/state_updates",
         None,
     );
+    // Graph outputs resolve in the root scope (`Analysis::outputs`).
+    let outputs: Vec<Option<NamedValue>> = graph
+        .outputs
+        .iter()
+        .map(|o| {
+            inf.resolve(&o.value).map(|info| NamedValue {
+                name: o.name.clone(),
+                info,
+            })
+        })
+        .collect();
     inf.scopes.pop();
 
     let mut state = Vec::new();
@@ -85,8 +96,11 @@ pub(crate) fn run(
     }
     let nodes: Option<Vec<NodeInfo>> = nodes.into_iter().collect();
     let inputs: Option<Vec<NamedValue>> = inputs.into_iter().collect();
-    let analysis = match (inf.complete, nodes, inputs) {
-        (true, Some(nodes), Some(inputs)) if root_state.iter().all(Option::is_some) => {
+    let outputs: Option<Vec<NamedValue>> = outputs.into_iter().collect();
+    let analysis = match (inf.complete, nodes, inputs, outputs) {
+        (true, Some(nodes), Some(inputs), Some(outputs))
+            if root_state.iter().all(Option::is_some) =>
+        {
             expand_body_state(&graph.nodes, &nodes, &mut Vec::new(), &mut state);
             Some(Analysis {
                 compute_dtype: options.compute_dtype,
@@ -100,6 +114,7 @@ pub(crate) fn run(
                     })
                     .collect(),
                 inputs,
+                outputs,
                 state,
                 nodes,
             })

@@ -10,17 +10,30 @@
 //! - `polyp probe --json`: runs the device prober in this process and writes the prober protocol
 //!   (placement.md §1, "Prober protocol"). `Engine::new` starts `polyp` itself as its prober
 //!   (`polyp --polypous-prober …`, handled by `run_prober_if_requested` first thing in `main`).
+//! - `polyp graph validate <file> [--json]`: every validation error of a graph document, or the
+//!   `ValidationReport` JSON (public-api.md §1.3).
+//! - `polyp run <graph> [--weights FILE] --input NAME=FILE … --output FILE [options]`: loads a graph
+//!   with safetensors weights, runs it once on safetensors inputs and writes its outputs
+//!   (public-api.md §1.3).
 //!
-//! Output goes to stdout; logs go to stderr through `tracing` (filter with `RUST_LOG`, for example
-//! `RUST_LOG=polypous=debug` for probe details; the default shows warnings).
+//! Output goes to stdout; errors and logs go to stderr, logs through `tracing` (filter with
+//! `RUST_LOG`, for example `RUST_LOG=polypous=debug` for probe details; the default shows
+//! warnings). Exit codes: `0` success, `1` an error, `2` a usage error, `3` `graph validate` found
+//! the graph invalid.
+
+// `polypous::Error` is large (public-api.md §2 rule 7: optional context strings) and only returned
+// on the error path; see the same allowance in the `polypous` crate.
+#![allow(clippy::result_large_err)]
 
 mod devices;
+mod graphs;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use polypous::{Engine, EngineConfig, Error, Isolation};
+use graphs::{CliError, EXIT_INVALID_GRAPH, RunArgs, ValidateArgs};
+use polypous::{ComputeDtype, DeviceId, Engine, EngineConfig, Error, Isolation};
 use tracing_subscriber::EnvFilter;
 
 const USAGE: &str = "\
@@ -28,6 +41,10 @@ polyp: the Polypous developer CLI
 
 Usage:
   polyp devices [--json] [OPTIONS]   List devices, their probe status and the primary GPU
+  polyp graph validate FILE [--json] [--compute-dtype D]
+                                     Validate a graph document and list every error
+  polyp run GRAPH [--weights FILE] --input NAME=FILE... --output FILE [OPTIONS]
+                                     Run a graph once on safetensors inputs
   polyp probe --json [--software-rasterizers] [--request JSON]
                                      Run the device prober here and print its protocol lines
   polyp --help                       Show this help
@@ -40,6 +57,28 @@ Options of `devices`:
   --probe-cache-dir DIR        Probe cache directory (default: the platform cache directory)
   --prober-path PATH           Prober executable (default: polyp itself)
   --timeout-per-device-ms MS   Prober timeout per device (default 60000)
+
+Options of `graph validate`:
+  --json                       Print the validation report as JSON
+  --compute-dtype D            f32 (default), f16 or bf16: what `float` resolves to
+
+Options of `run`:
+  --weights FILE               Weights: a .safetensors file or a sharded *.safetensors.index.json
+                               (needed if the graph declares params)
+  --input NAME=FILE            Graph input NAME from a safetensors file holding exactly one tensor
+                               (of any name); once per input
+  --output FILE                Write every graph output, by name, to this safetensors file
+  --device ID                  cpu, cuda:0, vulkan:discrete_gpu:0, ... as `polyp devices` prints
+                               them (default: the primary GPU, else the CPU)
+  --compute-dtype D            f32 (default), f16 or bf16
+  --json                       Print a JSON summary, and errors as JSON
+  --software-rasterizers       Also open software rasterizers (needed for --device vulkan:cpu:0)
+  --probe-cache-dir DIR        Probe cache directory (default: the platform cache directory)
+  --prober-path PATH           Prober executable (default: polyp itself)
+  Graphs with state are not supported by `run` yet; use the API.
+
+Exit codes: 0 success, 1 an error (message and context on stderr; the error JSON with --json),
+2 a usage error, 3 `graph validate` found the graph invalid.
 
 Logs go to stderr. Set RUST_LOG to filter them, for example RUST_LOG=polypous=debug.
 ";
@@ -60,6 +99,8 @@ struct DevicesArgs {
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
     Devices(DevicesArgs),
+    GraphValidate(ValidateArgs),
+    Run(RunArgs),
     Probe { request: String },
     Help,
     Version,
@@ -71,6 +112,12 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         None | Some("-h" | "--help" | "help") => Ok(Command::Help),
         Some("-V" | "--version") => Ok(Command::Version),
         Some("devices") => parse_devices(&args[1..]).map(Command::Devices),
+        Some("graph") => match args.get(1).map(String::as_str) {
+            Some("validate") => parse_validate(&args[2..]).map(Command::GraphValidate),
+            Some(other) => Err(format!("unknown command: graph {other}")),
+            None => Err("`graph` needs a subcommand: validate".into()),
+        },
+        Some("run") => parse_run(&args[1..]).map(Command::Run),
         Some("probe") => parse_probe(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
     }
@@ -114,6 +161,80 @@ fn parse_devices(args: &[String]) -> Result<DevicesArgs, String> {
     if parsed.report && !parsed.json {
         return Err("`--report` needs `--json`".into());
     }
+    Ok(parsed)
+}
+
+fn parse_validate(args: &[String]) -> Result<ValidateArgs, String> {
+    let mut file = None;
+    let mut json = false;
+    let mut compute_dtype = ComputeDtype::default();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => json = true,
+            "--compute-dtype" => {
+                let text = args
+                    .next()
+                    .ok_or_else(|| "`--compute-dtype` needs a value".to_string())?;
+                compute_dtype = graphs::parse_compute_dtype(text)?;
+            }
+            other if other.starts_with("--") => {
+                return Err(format!("unknown argument for `graph validate`: {other}"));
+            }
+            other if file.is_none() => file = Some(PathBuf::from(other)),
+            other => return Err(format!("`graph validate` takes one file, got also {other}")),
+        }
+    }
+    Ok(ValidateArgs {
+        file: file.ok_or_else(|| "`graph validate` needs a graph file".to_string())?,
+        json,
+        compute_dtype,
+    })
+}
+
+fn parse_run(args: &[String]) -> Result<RunArgs, String> {
+    let mut parsed = RunArgs::default();
+    let mut graph = None;
+    let mut output = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let mut value = || {
+            args.next()
+                .cloned()
+                .ok_or_else(|| format!("`{arg}` needs a value"))
+        };
+        match arg.as_str() {
+            "--weights" => parsed.weights = Some(PathBuf::from(value()?)),
+            "--input" => {
+                let text = value()?;
+                let (name, file) = text
+                    .split_once('=')
+                    .filter(|(name, file)| !name.is_empty() && !file.is_empty())
+                    .ok_or_else(|| format!("`--input` takes NAME=FILE, got `{text}`"))?;
+                if parsed.inputs.iter().any(|(known, _)| known == name) {
+                    return Err(format!("input `{name}` is given twice"));
+                }
+                parsed.inputs.push((name.to_string(), PathBuf::from(file)));
+            }
+            "--output" => output = Some(PathBuf::from(value()?)),
+            "--device" => {
+                let text = value()?;
+                parsed.device = Some(DeviceId::parse(&text).map_err(|error| error.message)?);
+            }
+            "--compute-dtype" => parsed.compute_dtype = graphs::parse_compute_dtype(&value()?)?,
+            "--json" => parsed.json = true,
+            "--software-rasterizers" => parsed.software_rasterizers = true,
+            "--probe-cache-dir" => parsed.probe_cache_dir = Some(PathBuf::from(value()?)),
+            "--prober-path" => parsed.prober_path = Some(PathBuf::from(value()?)),
+            other if other.starts_with("--") => {
+                return Err(format!("unknown argument for `run`: {other}"));
+            }
+            other if graph.is_none() => graph = Some(PathBuf::from(other)),
+            other => return Err(format!("`run` takes one graph file, got also {other}")),
+        }
+    }
+    parsed.graph = graph.ok_or_else(|| "`run` needs a graph file".to_string())?;
+    parsed.output = output.ok_or_else(|| "`run` needs `--output FILE`".to_string())?;
     Ok(parsed)
 }
 
@@ -170,6 +291,25 @@ fn main() -> ExitCode {
         Command::Help => Ok(USAGE.to_string()),
         Command::Version => Ok(format!("polyp {}\n", env!("CARGO_PKG_VERSION"))),
         Command::Devices(args) => devices(&args),
+        Command::GraphValidate(args) => {
+            return match graphs::validate(&args) {
+                Ok((text, valid)) => {
+                    let code = write_stdout(&text);
+                    if valid || code != ExitCode::SUCCESS {
+                        code
+                    } else {
+                        ExitCode::from(EXIT_INVALID_GRAPH)
+                    }
+                }
+                Err(error) => report_error(&error, args.json),
+            };
+        }
+        Command::Run(args) => {
+            return match graphs::run(&args) {
+                Ok(text) => write_stdout(&text),
+                Err(error) => report_error(&error, args.json),
+            };
+        }
         Command::Probe { request } => {
             let code = polypous::probe::run_prober(&request);
             return ExitCode::from(u8::try_from(code).unwrap_or(1));
@@ -185,6 +325,17 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Prints a failed command's error to stderr: the message and context, or with `json` the error
+/// JSON on one line. Exit code 1.
+fn report_error(error: &CliError, json: bool) -> ExitCode {
+    if json {
+        eprintln!("{}", error.to_json());
+    } else {
+        eprint!("{}", error.render());
+    }
+    ExitCode::FAILURE
 }
 
 /// `polyp devices [--json] [options]`.
@@ -310,5 +461,102 @@ mod tests {
         assert!(parse(&["devices", "--report"]).is_err());
         assert!(parse(&["devices", "--timeout-per-device-ms", "x"]).is_err());
         assert!(parse(&["probe"]).unwrap_err().contains("--json"));
+        assert!(parse(&["graph"]).unwrap_err().contains("subcommand"));
+        assert!(parse(&["graph", "check", "g.json"]).is_err());
+        assert!(parse(&["graph", "validate"]).unwrap_err().contains("file"));
+        assert!(parse(&["graph", "validate", "a", "b"]).is_err());
+        assert!(parse(&["graph", "validate", "a", "--yaml"]).is_err());
+        assert!(parse(&["graph", "validate", "a", "--compute-dtype", "f64"]).is_err());
+        assert!(parse(&["run", "g.json"]).unwrap_err().contains("--output"));
+        assert!(
+            parse(&["run", "--output", "o"])
+                .unwrap_err()
+                .contains("graph")
+        );
+        for bad in ["x", "=f", "x=", ""] {
+            assert!(
+                parse(&["run", "g", "--output", "o", "--input", bad]).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(
+            parse(&[
+                "run", "g", "--output", "o", "--input", "x=a", "--input", "x=b"
+            ])
+            .unwrap_err()
+            .contains("twice")
+        );
+        assert!(
+            parse(&["run", "g", "--output", "o", "--device", "gpu0"])
+                .unwrap_err()
+                .contains("not a device id")
+        );
+        assert!(parse(&["run", "g", "--output", "o", "--device"]).is_err());
+    }
+
+    #[test]
+    fn parses_graph_commands() {
+        assert_eq!(
+            parse(&["graph", "validate", "g.json"]),
+            Ok(Command::GraphValidate(ValidateArgs {
+                file: PathBuf::from("g.json"),
+                json: false,
+                compute_dtype: ComputeDtype::F32,
+            }))
+        );
+        assert_eq!(
+            parse(&[
+                "graph",
+                "validate",
+                "--json",
+                "g.json",
+                "--compute-dtype",
+                "bf16"
+            ]),
+            Ok(Command::GraphValidate(ValidateArgs {
+                file: PathBuf::from("g.json"),
+                json: true,
+                compute_dtype: ComputeDtype::Bf16,
+            }))
+        );
+        assert_eq!(
+            parse(&[
+                "run",
+                "g.json",
+                "--weights",
+                "w.safetensors",
+                "--input",
+                "x=x.safetensors",
+                "--input",
+                "mask=a=b.safetensors",
+                "--output",
+                "out.safetensors",
+                "--device",
+                "vulkan:cpu:0",
+                "--compute-dtype",
+                "f16",
+                "--json",
+                "--software-rasterizers",
+                "--probe-cache-dir",
+                "/tmp/c",
+                "--prober-path",
+                "/bin/p",
+            ]),
+            Ok(Command::Run(RunArgs {
+                graph: PathBuf::from("g.json"),
+                weights: Some(PathBuf::from("w.safetensors")),
+                inputs: vec![
+                    ("x".into(), PathBuf::from("x.safetensors")),
+                    ("mask".into(), PathBuf::from("a=b.safetensors")),
+                ],
+                output: PathBuf::from("out.safetensors"),
+                device: Some(DeviceId::parse("vulkan:cpu:0").unwrap()),
+                compute_dtype: ComputeDtype::F16,
+                json: true,
+                software_rasterizers: true,
+                probe_cache_dir: Some(PathBuf::from("/tmp/c")),
+                prober_path: Some(PathBuf::from("/bin/p")),
+            }))
+        );
     }
 }

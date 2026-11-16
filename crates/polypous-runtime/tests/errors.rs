@@ -305,6 +305,10 @@ fn tied_and_unused_params() {
         f32w("unused", &[4]),
     ]);
     let model = Model::load(plan(), &file).unwrap();
+    // `Model::param`: the used param is loaded, the unused one and unknown names are not.
+    assert_eq!(model.param("w").map(|t| t.shape()), Some(vec![2, 2]));
+    assert!(model.param("unused").is_none());
+    assert!(model.param("nope").is_none());
     let out = run(
         &model,
         vec![("x", f32_tensor(&[1, 2], &[1.0, 1.0], CPU))],

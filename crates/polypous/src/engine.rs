@@ -385,6 +385,13 @@ mod tests {
         assert_handle::<Error>();
         assert_handle::<ProbeReport>();
         assert_handle::<CancellationToken>();
+        assert_handle::<crate::Graph>();
+        assert_handle::<crate::Model>();
+        assert_handle::<crate::GraphLoadOptions>();
+        assert_handle::<crate::ModelInfo>();
+        assert_handle::<crate::RunOutput>();
+        assert_handle::<crate::ValidationReport>();
+        assert_handle::<crate::TensorData>();
     }
 
     #[test]

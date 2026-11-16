@@ -2,14 +2,14 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-11, M1 in progress (#35–#43 done).
+2026-11-16, M1 in progress (#35–#45 done).
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops), #42 (reductions, `matmul`, softmax, `cumsum`, `top_k`), #43 (`nn` ops); f32 `matmul` and `nn.linear` on CUDA miss the spec, see §4. Next: #44 (interpreter). M1 can't close before the Burn TF32 fix (§4) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops), #42 (reductions, `matmul`, softmax, `cumsum`, `top_k`), #43 (`nn` ops), #44 (interpreter), #45 (facade and CLI for graphs); f32 `matmul` and `nn.linear` on CUDA miss the spec, see §4. Next: #46, then #47. M1 can't close before the Burn TF32 fix (§4) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
 ## 2. What exists after M0
@@ -17,8 +17,8 @@ this file when a milestone closes or when a known limitation is fixed or found. 
 | Crate | State |
 |---|---|
 | `polypous-backend` | Real code. Device discovery, probing, primary GPU selection and physical-GPU grouping (`device`). `DynTensor` with runtime rank 1–6 and dtypes f32/f16/bf16/i64/i32/bool over `burn::Tensor` (`tensor`). Crash-safe probing: prober protocol, supervisor, probe cache, driver fingerprints (Linux and Windows), crash journal, reasons for backends without devices (`probe`). Core ops on `DynTensor` (`ops`, M1): elementwise, comparison, logic and `cast` (#40); shape, indexing (out-of-range indices checked before the op runs) and creation ops (#41); reductions, `matmul`, softmax, `cumsum` and `top_k` (#42); the `nn` ops: layers, convolution, pools, norms and activations (#43), with a fixture-based reference harness that runs every case on every device and dtype |
-| `polypous` (facade) | Real code. `Engine`, `EngineConfig`, facade device types (`DeviceInfo` with `physical_gpu` and `primary`), probe API (`polypous::probe`), `Error`/`ErrorKind`, panics caught at the boundary |
-| `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json` |
+| `polypous` (facade) | Real code. `Engine`, `EngineConfig`, facade device types (`DeviceInfo` with `physical_gpu` and `primary`, `DeviceId::parse`), probe API (`polypous::probe`), `Error`/`ErrorKind` with `node`/`pointer`/`tensor`/`file`/`device` context, panics caught at the boundary. Graphs and models (M1, #45, [public-api.md §1.3](specs/public-api.md)): `Graph` (JSON, files, `ValidationReport`), `Engine::load_graph`, `Model` (`info`, `run` with named `TensorData`, `save`, `close`), `tensor_file`, one `CancellationToken`. Tested on the CPU and lavapipe |
+| `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json`, `polyp graph validate <file> [--json]`, `polyp run <graph> --weights … --input NAME=FILE … --output FILE [--device ID]` (no state yet) |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
 | `polypous-ir` | Real code (M1, #38, #39). Graph document model, loading under the limits of graph-ir.md §4.3, canonical JSON, structural validation with collected errors, dim expressions, the catalog of the 78 M1 ops, dtype and symbolic shape inference, and the runtime API (`Graph::analyze`, `Analysis::bind`) |
 | `polypous-runtime` | Real code (M1, #44). The single-device graph interpreter of [runtime.md](specs/runtime.md): plans (validation with a compute dtype, device dtype check, topological order, value lifetimes), strict weight loading from safetensors files and sharded checkpoints (header checks before any allocation, one rounding to the compute dtype), calls with inputs and state by name, `repeat`, cancellation, errors with node paths. Every M1 op runs as a one-node graph against its fixture (CPU and lavapipe; not yet on CUDA or a real Vulkan GPU, see #47) |
@@ -26,7 +26,7 @@ this file when a milestone closes or when a known limitation is fixed or found. 
 | `tools/reference/`, `fixtures/` | PyTorch fixture generator with `--check`, first op fixtures, `fetch_fixtures.py` and the fixture checks in CI (M1, #36) |
 
 Specs that describe implemented behavior: [placement.md §1](specs/placement.md#1-device-discovery)
-(discovery, probing, cache, fingerprints, enumeration rules), [public-api.md §1.1, §1.2, §2](specs/public-api.md)
+(discovery, probing, cache, fingerprints, enumeration rules), [public-api.md §1.1–§1.3, §2](specs/public-api.md)
 and [formats.md §1](specs/formats.md) (safetensors). [graph-ir.md](specs/graph-ir.md) is binding for M1 as its
 status line says: validation and inference are implemented (#38, #39), the backend ops (#40–#43) and the interpreter (#44, [runtime.md](specs/runtime.md)). All other specs are drafts until their milestone starts.
 

@@ -84,6 +84,13 @@ impl Model {
         &self.plan
     }
 
+    /// The loaded tensor of graph param `name`, in the compute dtype on the plan's device. `None`
+    /// for a name the graph doesn't declare, and for a declared param that no node uses: those are
+    /// checked but not uploaded (runtime.md §2 step 1).
+    pub fn param(&self, name: &str) -> Option<&DynTensor> {
+        self.params.get(name)
+    }
+
     /// Runs the graph once (runtime.md §3): `inputs` are the graph inputs by name, `state` the
     /// values of every root-level state entry by (expanded) name.
     ///

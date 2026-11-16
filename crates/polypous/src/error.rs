@@ -64,10 +64,11 @@ impl fmt::Display for ErrorKind {
     }
 }
 
-/// Technical details of an error, for logs and bug reports rather than for end users.
+/// Technical details of an error, for logs and bug reports rather than for end users
+/// (public-api.md §1.2, "Error JSON").
 ///
-/// Every field is optional and omitted from JSON when absent. More fields (node id, file, tensor
-/// name, device) are added as the facade grows.
+/// Every field is optional and omitted from JSON when absent. Fields are added as the facade
+/// grows; readers must accept new ones.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
@@ -78,6 +79,22 @@ pub struct ErrorContext {
     /// Technical detail: the underlying error or the panic message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// The node: a graph node id from a validation diagnostic, or the runtime's node path
+    /// (`layers[3]/attn`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    /// JSON pointer into the graph document, from a validation diagnostic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<String>,
+    /// A weight, input, output or state entry name, or a tensor of a tensor file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tensor: Option<String>,
+    /// The file concerned, as given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The device, in its id syntax (`cuda:0`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
 }
 
 /// The error of every fallible public function (public-api.md §2 rule 7).
@@ -119,6 +136,38 @@ impl Error {
     /// The same error with technical details.
     pub(crate) fn with_details(mut self, details: impl Into<String>) -> Self {
         self.context.details = Some(details.into());
+        self
+    }
+
+    /// The same error with the node, unless one is already set.
+    pub(crate) fn with_node(mut self, node: impl Into<String>) -> Self {
+        self.context.node.get_or_insert_with(|| node.into());
+        self
+    }
+
+    /// The same error with a JSON pointer, unless one is already set.
+    pub(crate) fn with_pointer(mut self, pointer: impl Into<String>) -> Self {
+        self.context.pointer.get_or_insert_with(|| pointer.into());
+        self
+    }
+
+    /// The same error with a tensor name, unless one is already set.
+    pub(crate) fn with_tensor(mut self, tensor: impl Into<String>) -> Self {
+        self.context.tensor.get_or_insert_with(|| tensor.into());
+        self
+    }
+
+    /// The same error with a file, unless one is already set.
+    pub(crate) fn with_file(mut self, file: &std::path::Path) -> Self {
+        self.context
+            .file
+            .get_or_insert_with(|| file.display().to_string());
+        self
+    }
+
+    /// The same error with a device, unless one is already set.
+    pub(crate) fn with_device(mut self, device: impl Into<String>) -> Self {
+        self.context.device.get_or_insert_with(|| device.into());
         self
     }
 
@@ -195,6 +244,23 @@ mod tests {
             serde_json::from_str::<Error>(r#"{"kind":"internal","message":"x"}"#).unwrap(),
             bare
         );
+    }
+
+    #[test]
+    fn context_fields_are_omitted_when_absent() {
+        let error = Error::new(ErrorKind::InvalidGraph, "bad")
+            .with_node("fc1")
+            .with_pointer("")
+            .with_tensor("fc1.weight")
+            .with_file(std::path::Path::new("m.safetensors"))
+            .with_device("cpu")
+            .with_node("ignored");
+        let json = serde_json::to_string(&error).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"invalid_graph","message":"bad","context":{"node":"fc1","pointer":"","tensor":"fc1.weight","file":"m.safetensors","device":"cpu"}}"#
+        );
+        assert_eq!(serde_json::from_str::<Error>(&json).unwrap(), error);
     }
 
     #[test]

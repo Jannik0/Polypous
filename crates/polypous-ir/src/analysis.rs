@@ -301,7 +301,7 @@ impl NodeInfo {
     }
 }
 
-/// A named value (graph input or root-level state entry).
+/// A named value (graph input, graph output or root-level state entry).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedValue {
     /// Name (state: expanded, with the repeat prefixes).
@@ -330,6 +330,9 @@ pub struct Analysis {
     pub symbols: Vec<SymbolInfo>,
     /// Graph inputs, in declaration order.
     pub inputs: Vec<NamedValue>,
+    /// Graph outputs by output name, in declaration order: the dtype and inferred shape of the
+    /// value each one references.
+    pub outputs: Vec<NamedValue>,
     /// Every root-level state entry after expanding repeats (§2.5, §2.6): root state in
     /// declaration order, then body state, depth-first in node order, iterations in order
     /// (`layers.0.k`, `layers.0.v`, `layers.1.k`, …). This is the order in which state values bind
