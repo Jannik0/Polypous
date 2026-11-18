@@ -9,9 +9,11 @@
 #
 # Job name (stable): Build (macOS, Metal)
 #
-# There is no Mac hardware for testing, so this job only builds. Until `polypous-backend` has a
-# `metal` feature (issue #2) it builds the default features and emits a warning annotation;
-# tools/ci/backend_feature.py switches to `--features polypous-backend/metal` automatically.
+# There is no Mac hardware for testing, so this job only builds. It builds with
+# `--features polypous-cli/metal`, which enables `polypous/metal`, `polypous-runtime/metal` and
+# `polypous-backend/metal`, so the Metal-gated test code of all four crates is compile-checked
+# (issue #65, docs/dev-environment.md "GPU tests"). If `polypous-cli` has no `metal` feature,
+# tools/ci/backend_feature.py falls back to the default features with a warning annotation.
 
 name: macOS
 
@@ -56,7 +58,7 @@ jobs:
 
       - name: Select Metal feature
         id: features
-        run: python3 tools/ci/backend_feature.py metal | tee -a "$GITHUB_OUTPUT"
+        run: python3 tools/ci/backend_feature.py metal --package polypous-cli | tee -a "$GITHUB_OUTPUT"
 
-      - name: cargo build
+      - name: cargo build --features polypous-cli/metal
         run: cargo build --workspace --all-targets --locked ${{ steps.features.outputs.args }}

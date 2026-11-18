@@ -148,16 +148,19 @@ jobs:
       - name: Check lavapipe Vulkan device
         run: vulkaninfo --summary
 
+      # `polypous-cli/vulkan` enables `polypous/vulkan`, which enables `polypous-runtime/vulkan` and
+      # `polypous-backend/vulkan`, so the GPU tests of all four crates are compiled in (issue #65).
+      # This is the canonical GPU test command (docs/dev-environment.md) restricted to Vulkan.
       - name: Select Vulkan feature
         id: features
-        run: python3 tools/ci/backend_feature.py vulkan | tee -a "$GITHUB_OUTPUT"
+        run: python3 tools/ci/backend_feature.py vulkan --package polypous-cli | tee -a "$GITHUB_OUTPUT"
 
       # `--include-ignored` also runs the `#[ignore = "gpu"]` tests; with only the `vulkan`
       # feature compiled in, the only GPU device they find is lavapipe. Polypous skips software
       # rasterizers unless opted in (placement.md §1, issue #21); the test-only variable
       # POLYPOUS_TEST_SOFTWARE_VULKAN=1 makes the GPU tests open and test lavapipe. `--nocapture`
       # keeps the device list and the tested devices in the log.
-      - name: cargo test --features polypous-backend/vulkan
+      - name: cargo test --features polypous-cli/vulkan
         if: steps.features.outputs.available == 'true'
         env:
           POLYPOUS_TEST_SOFTWARE_VULKAN: "1"
@@ -166,4 +169,4 @@ jobs:
       - name: Skip Vulkan tests (feature not available yet)
         if: steps.features.outputs.available != 'true'
         run: |
-          echo "polypous-backend has no 'vulkan' feature yet (issue #2). Lavapipe is set up; tests are skipped."
+          echo "polypous-cli has no 'vulkan' feature. Lavapipe is set up; tests are skipped."

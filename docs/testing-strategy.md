@@ -241,17 +241,18 @@ helper scripts in [`tools/ci/`](../tools/ci/). The toolchain is always the one i
 | `Lint & test (Windows)` | `ci.yml` | every PR, push to `main` | same on Windows |
 | `cargo-deny (licenses, advisories)` | `ci.yml` | every PR, push to `main` | `cargo deny check` with [`deny.toml`](../deny.toml): MIT-compatible licenses only ([ADR-0010](adr/0010-mit-license.md)), RustSec advisories, crates.io only |
 | `Dependency boundary` | `ci.yml` | every PR, push to `main` | `tools/ci/check_dependency_boundary.py` (and its tests): Burn/CubeCL only in `polypous-backend`/`polypous-quant` ([ADR-0007](adr/0007-burn-version-pinning.md)); no GPU dependency, direct or transitive, in `polypous-ir`/`-formats`/`-polyp`. Also the fixture checks (§3.3): `tools/ci/check_fixtures.py` and the standard-library tests of `tools/reference/` |
-| `Vulkan tests (Linux, lavapipe)` | `ci.yml` | every PR, push to `main` | `cargo test --workspace --features polypous-backend/vulkan -- --include-ignored` on Mesa lavapipe (software Vulkan) |
-| `Build (macOS, Metal)` | `macos.yml` | push to `main`, manual dispatch, PRs touching `crates/polypous-backend/**`, `crates/polypous-quant/**`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | `cargo build --workspace --all-targets --features polypous-backend/metal` (build only, no Mac hardware) |
+| `Vulkan tests (Linux, lavapipe)` | `ci.yml` | every PR, push to `main` | `cargo test --workspace --features polypous-cli/vulkan -- --include-ignored --nocapture` on Mesa lavapipe (software Vulkan): the GPU tests of `polypous-backend`, `polypous-runtime`, `polypous` and `polypous-cli` |
+| `Build (macOS, Metal)` | `macos.yml` | push to `main`, manual dispatch, PRs touching `crates/polypous-backend/**`, `crates/polypous-quant/**`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | `cargo build --workspace --all-targets --features polypous-cli/metal` (build only, no Mac hardware; compiles the Metal-gated test code of the backend, runtime, facade and CLI) |
 
 - **Minutes budget.** The repository is private on the free plan, where macOS minutes count 10×.
   The macOS job therefore runs only on PRs that touch the backend crates or the dependency set (so it
   cannot be a required check); trigger it by hand for other branches if needed. Superseded runs on PR
   branches are cancelled. Cargo caching (`Swatinem/rust-cache`) keeps a no-change run at roughly
   10 minutes or less.
-- **Backend features.** `tools/ci/backend_feature.py` selects the `cpu`, `vulkan` and `metal`
-  features of `polypous-backend` when they exist, and falls back to the default features with a
-  warning annotation otherwise.
+- **Backend features.** `tools/ci/backend_feature.py` selects the `cpu` feature of
+  `polypous-backend` and the `vulkan` and `metal` features of `polypous-cli` (which enable the
+  facade's, the runtime's and the backend's, [dev-environment.md](dev-environment.md#gpu-tests))
+  when they exist, and falls back to the default features with a warning annotation otherwise.
 - **Actions** are pinned to full commit SHAs with a version comment. Update them deliberately.
 - Nightly on T1 (self-hosted runner, optional, later): GPU and model reference tests.
 

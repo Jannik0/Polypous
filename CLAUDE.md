@@ -51,13 +51,14 @@ entry point. Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). The rul
 ```bash
 cargo fmt --all                                   # format
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features polypous/cuda,polypous/vulkan -- -D warnings
+cargo clippy --workspace --all-targets --features polypous-cli/cuda,polypous-cli/vulkan -- -D warnings
 cargo test --workspace                            # CPU tests, must pass everywhere
-cargo test --workspace --features polypous/cuda,polypous/vulkan -- --include-ignored   # GPU tests on the reference machine
+cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored   # every crate's GPU tests (reference machine)
 cargo run -p polypous-cli --features cuda,vulkan -- devices   # detected devices, isolated probing
 ```
 
-On PowerShell, refresh `PATH` first if `cargo` isn't found (development-workflow.md §8.5). After
+On PowerShell, refresh `PATH` first if `cargo` isn't found (development-workflow.md §8.5). On 16 GB
+machines, build GPU features with `-j 2` (dev-environment.md, "GPU tests"). After
 `cargo test`, rebuild `polyp` before using `target/debug/polyp`: the test build contains prober
 fault injection.
 
