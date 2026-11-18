@@ -529,7 +529,7 @@ A wrong JSON type, a value outside the listed range, an unknown enum value or a 
   round once to the dtype, so results don't depend on a backend's half-precision kernels. The
   output dtype is unchanged.
 - **Half-precision accumulation:** for `f16` and `bf16`, `sum`, `mean`, `cumsum`, `softmax`,
-  `log_softmax`, `nn.linear`, `nn.conv1d`, `nn.conv2d`, `nn.avg_pool2d`, `nn.adaptive_avg_pool2d`
+  `log_softmax`, `core.matmul`, `nn.linear`, `nn.conv1d`, `nn.conv2d`, `nn.avg_pool2d`, `nn.adaptive_avg_pool2d`
   and the normalization ops (`nn.batch_norm`, `nn.layer_norm`, `nn.group_norm`, `nn.rms_norm`,
   params included) compute in `f32` and round once to the dtype. The output dtype is unchanged.
 
@@ -697,7 +697,7 @@ These ops have no tensor inputs (except `full_like`) and are not differentiable.
 
 - `a` is `[…, n, k]`, `b` is `[…, k, m]`. The two `k` must be provably equal. The batch dims (all but
   the last two) broadcast (§3.1.3). Rank-1 operands are not allowed (PyTorch's vector forms change
-  the output rank); use `unsqueeze`.
+  the output rank); use `unsqueeze`. `f16`/`bf16` compute in `f32` and round once (§3.1.8).
 
 #### Other
 
