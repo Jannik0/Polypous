@@ -2,17 +2,17 @@
 
 What exists, what is known to be missing or fragile, and where the next milestone starts. Update
 this file when a milestone closes or when a known limitation is fixed or found. Last updated:
-2026-11-16, M1 in progress (#35–#46 done).
+2026-11-18, M1 closed; M2 not started.
 
 ## 1. Milestones
 
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 — Foundations | **Done** (closed 2026-11-06) | Exit check results: [#7](https://github.com/Jannik0/Polypous/issues/7#issuecomment-6684237754), on Windows 11 and Debian 13 |
-| M1 — Graph IR and interpreter | In progress. Issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2); done: #35 (spec pass), #36 (fixture tooling), #37 (safetensors), #38 and #39 (`polypous-ir`), #40 (elementwise ops), #41 (shape, indexing and creation ops), #42 (reductions, `matmul`, softmax, `cumsum`, `top_k`), #43 (`nn` ops), #44 (interpreter), #45 (facade and CLI for graphs), #46 (MLP and small CNN end to end against PyTorch, CPU and lavapipe); f32 `matmul` and `nn.linear` on CUDA miss the spec, see §4. Next: #47 (exit check on the reference machine). M1 can't close before the Burn TF32 fix (§4) | [roadmap.md](roadmap.md#m1--graph-ir-and-interpreter) |
+| M1 — Graph IR and interpreter | **Done** (closed 2026-11-18) with one known limitation: f32 `matmul` and `nn.linear` on CUDA (TF32 in Burn, #64, §4) | Exit check results: [#47](https://github.com/Jannik0/Polypous/issues/47#issuecomment-6990026543), on Windows 11 and Debian 13 |
 | M2–M7 | Not started | [roadmap.md](roadmap.md) |
 
-## 2. What exists after M0
+## 2. What exists after M1
 
 | Crate | State |
 |---|---|
@@ -21,14 +21,14 @@ this file when a milestone closes or when a known limitation is fixed or found. 
 | `polypous-cli` (`polyp`) | `polyp devices [--json] [--report] [probe options]`, `polyp probe --json`, `polyp graph validate <file> [--json]`, `polyp run <graph> --weights … --input NAME=FILE … --output FILE [--device ID]` (no state yet) |
 | `polypous-formats` | safetensors reader (memory-mapped, validated header, sharded checkpoints) and writer (M1, #37). GGUF follows in M3 |
 | `polypous-ir` | Real code (M1, #38, #39). Graph document model, loading under the limits of graph-ir.md §4.3, canonical JSON, structural validation with collected errors, dim expressions, the catalog of the 78 M1 ops, dtype and symbolic shape inference, and the runtime API (`Graph::analyze`, `Analysis::bind`) |
-| `polypous-runtime` | Real code (M1, #44). The single-device graph interpreter of [runtime.md](specs/runtime.md): plans (validation with a compute dtype, device dtype check, topological order, value lifetimes), strict weight loading from safetensors files and sharded checkpoints (header checks before any allocation, one rounding to the compute dtype), calls with inputs and state by name, `repeat`, cancellation, errors with node paths. Every M1 op runs as a one-node graph against its fixture (CPU and lavapipe; not yet on CUDA or a real Vulkan GPU, see #47) |
+| `polypous-runtime` | Real code (M1, #44). The single-device graph interpreter of [runtime.md](specs/runtime.md): plans (validation with a compute dtype, device dtype check, topological order, value lifetimes), strict weight loading from safetensors files and sharded checkpoints (header checks before any allocation, one rounding to the compute dtype), calls with inputs and state by name, `repeat`, cancellation, errors with node paths. Every M1 op runs as a one-node graph against its fixture (verified on every device of the reference machine in #47) |
 | `-polyp`, `-quant`, `-train`, `-pipelines` | Skeletons (a doc comment each) |
-| `tools/reference/`, `fixtures/` | PyTorch fixture generator with `--check`, first op fixtures, `fetch_fixtures.py` and the fixture checks in CI (M1, #36) |
+| `tools/reference/`, `fixtures/` | PyTorch fixture generators with `--check`: 885 op cases (`gen_ops.py`, #36, #40–#43) and the end-to-end MLP and CNN (`gen_models.py`, #46); `fetch_fixtures.py` and the fixture checks in CI |
 
 Specs that describe implemented behavior: [placement.md §1](specs/placement.md#1-device-discovery)
 (discovery, probing, cache, fingerprints, enumeration rules), [public-api.md §1.1–§1.3, §2](specs/public-api.md)
-and [formats.md §1](specs/formats.md) (safetensors). [graph-ir.md](specs/graph-ir.md) is binding for M1 as its
-status line says: validation and inference are implemented (#38, #39), the backend ops (#40–#43) and the interpreter (#44, [runtime.md](specs/runtime.md)). All other specs are drafts until their milestone starts.
+and [formats.md §1](specs/formats.md) (safetensors). [graph-ir.md](specs/graph-ir.md) and [runtime.md](specs/runtime.md) are implemented:
+validation and inference (#38, #39), the backend ops (#40–#43, #67), the interpreter (#44) and the facade (#45). All other specs are drafts until their milestone starts.
 
 CI (`.github/workflows/`): seven checks. Six are required by the `main` ruleset:
 - Lint & test (Linux)
@@ -41,7 +41,8 @@ CI (`.github/workflows/`): seven checks. Six are required by the `main` ruleset:
 The seventh, Build (macOS, Metal), runs only on pushes to `main`, by hand, and on PRs that touch
 the backend crates or the dependency set, so it can't be required ([testing-strategy.md §5](testing-strategy.md#5-ci)).
 When it runs on a PR, it must be green too. CodeQL code scanning (Rust, Actions, Python, GitHub's
-default setup) also runs on PRs; it isn't required, but its findings are reviewed.
+default setup) also runs on PRs; it isn't required, but its findings are reviewed. The lavapipe job runs the GPU tests
+of every crate (`polypous-cli/vulkan`, #65); the macOS job builds with `polypous-cli/metal`.
 
 ## 3. Verified on the reference machine
 
@@ -61,17 +62,31 @@ Driver versions at the M0 exit check:
 - Windows: NVIDIA 621.14 and Intel 32.0.101.7092.
 - Debian: NVIDIA 620.70.06 and Mesa 25.0.7.
 
+**M1 exit check (#47, both systems on `ddb6bf0`, drivers unchanged from M0):**
+
+| | Windows 11 | Debian 13 |
+|---|---|---|
+| All 885 op fixture cases (78 ops), backend and as one-node graphs through the interpreter: CPU, Vulkan RTX 3060, Vulkan Iris Xe (bf16 skipped on Vulkan) | ✓ | ✓ |
+| The same on CUDA, f16/bf16 and every f32 op except `matmul`/`nn.linear` | ✓ | ✓ |
+| f32 `core.matmul` (9 of 11) and `nn.linear` (7 of 8) on CUDA | ✗ (#64, TF32) | ✗ (#64, TF32) |
+| MLP and CNN from JSON vs PyTorch through the facade and `polyp run`, every device and dtype except f32 on CUDA | ✓ | ✓ |
+| Out-of-range indices and `embedding` ids are errors on every device | ✓ | ✓ |
+| No crash, no GPU error in the system/kernel log, failures identical in three runs | ✓ | ✓ |
+
+GPU builds of the whole workspace need `-j 2` on the 16 GB reference machine (dev-environment.md, "GPU tests").
+
 ## 4. Known limitations and open items
 
-Fix an item when its area is touched, or file an issue first. Only the first item blocks M1.
+Fix an item when its area is touched, or file an issue first.
 
-- **f32 `matmul` and `nn.linear` on CUDA are not f32-accurate (blocks the M1 exit check, #47).**
+- **f32 `matmul` and `nn.linear` on CUDA are not f32-accurate ([#64](https://github.com/Jannik0/Polypous/issues/64); M1 closed with it, owner decision).**
   - Burn 0.22.1 / cubek-matmul 0.3.1 run f32 `matmul` on TF32 tensor cores when the GPU supports TF32 (Ampere or newer): `adjust_dtypes` in cubek-matmul's `multi_level/definition/blueprint.rs`, mirrored in burn-cubecl's `kernel/matmul/tune/base.rs`. TF32 rounds the inputs to a 10-bit mantissa. There is no setting to turn it off.
   - On the RTX 3060 (Windows, NVIDIA 621.14), 9 of 11 `core.matmul` f32 cases fail on `cuda:0`: relative errors of 6e-4 to 6.5e-2 against `rtol 1e-3`. The output equals an f32 matmul with TF32-rounded inputs (max rel difference 6.7e-6). Vulkan on the same GPU, the Iris Xe, the CPU and lavapipe pass; f16/bf16 pass on CUDA.
   - **No workaround in Polypous (owner decision):** the spec (graph-ir.md §3.2, testing-strategy.md §2) stays as it is, and the tests keep failing on `cuda:0`. A trial computing in f64 on CUDA was exact but 61× slower than TF32 at 2048³, and was discarded.
   - Upstream: [tracel-ai/burn#6140](https://github.com/tracel-ai/burn/issues/6140) asked for control over TF32 in f32 matmul; the PRs answering it are merged into Burn's `main` (not in a release yet). They don't add a Rust-level API to switch it off easily, which [tracel-ai/burn#6480](https://github.com/tracel-ai/burn/issues/6480) asks for. Fix when Burn is updated (ADR-0007): select full f32 precision, then the CUDA tests must pass.
   - `nn.linear` runs on `matmul` and fails the same way: 7 of 8 f32 cases on `cuda:0` (#43, PR 60). `nn.conv1d`/`conv2d` pass on CUDA in every dtype, f32 included.
   - f16/bf16 `matmul` computes in f32 since #67 and is not affected: f16 and bf16 values are exact in TF32 (10-bit mantissa, the same as f16's).
+  - The M1 exit check confirmed it on Windows and Debian: 16 op cases (in the backend and the runtime tests) and the f32 cases of both end-to-end models (1.5–5.2× the allowed error) fail on `cuda:0`; nothing else does.
 
 - **Burn 0.22.1 bool bug** in `bool_to_device` across Dispatch backends:
   - Burn hands native bool storage to CubeCL, which panics on storage that isn't its own.
@@ -106,23 +121,16 @@ Fix an item when its area is touched, or file an issue first. Only the first ite
   - If cargo-deny starts failing once RustSec publishes the advisories, add a `deny.toml` ignore entry with this reason. The owner decides whether to dismiss the GitHub alerts.
 - **`target/` size:** debug test binaries with `cuda` or `vulkan` are about 1.2 GB each. Plan for 20 GB.
 
-## 5. Where M1 starts
+## 5. Where M2 starts
 
-[roadmap.md, M1](roadmap.md#m1--graph-ir-and-interpreter). Specs to refine first:
-- [graph-ir.md](specs/graph-ir.md): core opset, validation, symbolic shapes, `repeat` blocks.
-- [testing-strategy.md](testing-strategy.md): reference fixtures.
-- [public-api.md](specs/public-api.md): the facade surface for graphs.
+[roadmap.md, M2](roadmap.md#m2--training-toolkit): `DynamicModel` implementing Burn's `Module`,
+parameter init from the IR (`init`, graph-ir.md §2.4), the declarative training config,
+optimizers, schedules, losses, metrics, datasets, events, checkpoints and resume. Exit: an
+MNIST-sized CNN trains to the expected accuracy from a JSON graph and a JSON config on CPU and CUDA,
+the gradients of every differentiable op match PyTorch, and training resumes from a checkpoint.
 
-The order below is filed as issues #35–#47 on the [M1 milestone](https://github.com/Jannik0/Polypous/milestone/2).
-Each issue names its dependencies and whether it runs in the cloud or on the reference machine.
+Specs to refine first: [training.md](specs/training.md), and graph-ir.md for the training modes of
+`nn.batch_norm` and `nn.dropout` and the `init` kinds. M2's issues are not filed yet.
 
-1. **Spec pass on `graph-ir.md` for the core opset.** Decide the M1 op list and its exact semantics, with a Proposed ADR for anything that changes a decision.
-2. **Reference fixture tooling.** Write `tools/reference/requirements.txt`, the first PyTorch generators and the fixture layout from testing-strategy.md. The cloud environment already allows `download.pytorch.org`.
-3. **`polypous-ir`:** types, JSON serde, validation, shape inference, `repeat`. Pure Rust, so cloud-friendly.
-4. **`polypous-formats`:** safetensors reader (mmap, sharded, size checks on untrusted input). Cloud-friendly.
-5. **`polypous-backend` core-op implementations on `DynTensor`**, with reference tests on CPU (cloud) and CUDA/Vulkan (reference machine).
-6. **`polypous-runtime`:** an interpreter on a single device.
-7. **Facade and CLI surface** for loading and running a graph.
-8. **M1 exit check on the reference machine:** an MLP and a small CNN from JSON match PyTorch on CPU, CUDA and Vulkan.
-
-Items 3 and 4 can run in parallel with 2. Item 5 needs 1. Item 6 needs 3 and 5.
+Open items to keep in mind: #64 (CUDA f32 `matmul`, a Burn upgrade task once Burn ships the
+precision switch; M2's exit check includes CUDA) and the Burn/CubeCL findings of §4.
