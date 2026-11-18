@@ -8,13 +8,15 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# Backend features (ADR-0003), forwarded to `polypous-backend`. `cpu` is always available.
+# Backend features (ADR-0003), forwarded to `polypous-backend` and `polypous-runtime`. `cpu` is
+# always available. Forwarding to the runtime too means `--features polypous/<backend>` also
+# compiles the runtime's GPU tests in a workspace build (issue #65).
 [features]
 default = ["cpu"]
-cpu = ["polypous-backend/cpu"]
-cuda = ["polypous-backend/cuda"]
-vulkan = ["polypous-backend/vulkan"]
-metal = ["polypous-backend/metal"]
+cpu = ["polypous-backend/cpu", "polypous-runtime/cpu"]
+cuda = ["polypous-backend/cuda", "polypous-runtime/cuda"]
+vulkan = ["polypous-backend/vulkan", "polypous-runtime/vulkan"]
+metal = ["polypous-backend/metal", "polypous-runtime/metal"]
 # TEST ONLY: prober fault injection (polypous-backend's `test-fault-injection`). Enabled only by
 # polypous-cli's dev-dependency, never in a release build.
 test-fault-injection = ["polypous-backend/test-fault-injection"]

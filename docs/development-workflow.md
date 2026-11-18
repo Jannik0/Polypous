@@ -197,3 +197,7 @@ Vulkan enumeration race), #29 (the prober) and #32 (the Debian findings) went th
   - Refresh `PATH` before `cargo`: `$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")`.
   - Piping `cargo` into `Select-Object -First N` cuts the pipeline short and distorts the exit code. Write logs to a file instead.
 - **`target/`:** debug test binaries with `cuda` or `vulkan` are about 1.2 GB each.
+- **GPU tests:** `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored`
+  runs every crate's GPU tests ([dev-environment.md](dev-environment.md#gpu-tests)). `--features polypous/…`
+  or `polypous-backend/…` alone skips some of them. On 16 GB machines add `-j 2` (or set
+  `CARGO_BUILD_JOBS=2`): a parallel GPU-feature build of the workspace runs out of memory.

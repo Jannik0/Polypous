@@ -258,6 +258,10 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- GPU tests (#65): `polypous`'s backend features now also enable `polypous-runtime`'s, so
+  `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored`
+  runs every crate's GPU tests, and the CI lavapipe job runs those of `polypous-backend`,
+  `polypous-runtime`, `polypous` and `polypous-cli` (before: only the backend's).
 - When a device could not be opened because a worker thread panicked (CubeCL's device runner, for
   example `Unable to acquire wgpu device: RequestDevice { … "Initialization of an object has
   failed" }`), the `probe failed` reason only said `… RecvError`. The prober process now records

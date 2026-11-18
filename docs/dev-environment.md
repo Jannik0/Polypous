@@ -77,6 +77,30 @@ probe report, and `--probe-cache-dir <dir>` for a cold run without touching the 
 After `cargo test`, run `cargo build -p polypous-cli --features cuda,vulkan` again before using
 `target/debug/polyp`: the test build contains the prober's fault injection.
 
+## GPU tests
+
+One command runs every crate's GPU tests (`#[ignore = "gpu"]`) on the reference machine:
+
+```bash
+cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored
+```
+
+Each crate gates its GPU tests on its **own** backend features. They are forwarded down the
+dependency chain, `polypous-cli` → `polypous` → `polypous-runtime` → `polypous-backend`, so naming
+the CLI's features enables them in all four crates, and in a workspace build cargo compiles every
+crate's tests with them. (Cargo can't forward a feature upwards: `--features polypous/vulkan` alone
+skips the CLI's GPU test, and `--features polypous-backend/vulkan` runs only the backend's.) Add
+`--no-fail-fast` before the `--` to see every failing test binary, and `--nocapture` after it for
+the per-device `SUMMARY` lines. For Vulkan on lavapipe only (as in CI and the cloud sessions), use
+`--features polypous-cli/vulkan` with the variables in the [Debian notes](#debian-notes).
+
+**Memory:** a debug build of the whole workspace with GPU features needs about **5 GB per `rustc`
+process** at its peak. With the default parallelism, a 16 GB machine runs out of memory: on Windows
+(16 GB RAM, 7 GB page file) three such processes made the system report "virtual memory low", and
+the build failed with random errors such as `E0786` ("found invalid metadata files"), `E0463`
+("can't find crate") or other "metadata" errors. On 16 GB machines build GPU features with
+**`-j 2`** (`cargo test -j 2 --workspace …`) or set `CARGO_BUILD_JOBS=2`.
+
 ## Windows notes
 
 - Use the MSVC toolchain (`x86_64-pc-windows-msvc`). Install "Desktop development with C++" from the Visual Studio Build Tools.

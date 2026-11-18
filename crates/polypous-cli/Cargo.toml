@@ -12,7 +12,10 @@ publish.workspace = true
 name = "polyp"
 path = "src/main.rs"
 
-# Backend features (ADR-0003), forwarded through `polypous`. `cpu` is always available.
+# Backend features (ADR-0003), forwarded through `polypous` (and from there to `polypous-runtime`
+# and `polypous-backend`). `cpu` is always available. This crate is the top of the chain, so
+# `--features polypous-cli/<backend>` compiles every crate's GPU tests in a workspace build
+# (docs/dev-environment.md, "GPU tests"; issue #65).
 [features]
 default = ["cpu"]
 cpu = ["polypous/cpu"]
