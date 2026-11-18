@@ -60,28 +60,28 @@ fn broadcast_batch_values() {
 /// `[2, k] @ [k, 3]` with `k = 4096` in `dtype` (`f16` or `bf16`) on `device`, and the expected
 /// output: the exact sum (in `f64`) rounded once to `dtype`.
 ///
-/// `a` is `±1`, `b` is `±(1 + j · 2^-p)` with `p` the mantissa bits of `dtype` (10 or 7), signs
-/// and `j` pseudo-random. Every product is exact, and every partial sum, in any order, is a
-/// multiple of `2^-p` below `2 · 4096` in magnitude, so exact in `f32` (at most 23 significant
-/// bits). An `f32` accumulator therefore gives the exact sum in any order; an `f16`/`bf16`
-/// accumulator drops low bits once a partial sum passes `2^(p - 1)` or so.
+/// Every element is `j · 2^-s` with a pseudo-random integer `|j| ≤ J`: `J = 63`, `s = 6` for
+/// `f16`, `J = 31`, `s = 5` for `bf16`, so the inputs are exact in `dtype`. A product needs up to
+/// 12 (10) significant bits, more than `f16` (`bf16`) holds, but is exact in `f32`. Every partial
+/// sum, in any order, is a multiple of `2^-2s` below `2^12` in magnitude (`|product| < 1`), so it
+/// needs at most 24 (22) bits and is exact in `f32` too: an `f32` accumulator gives the exact sum
+/// in any order. Rounding products or partial sums to `dtype` loses bits, and the random signs
+/// make the outputs cancel.
 fn half_case(dtype: DType, device: DeviceId) -> Result<(DynTensor, DynTensor, Vec<f32>)> {
     const K: usize = 4096;
-    let bits = if dtype == DType::F16 { 10 } else { 7 };
-    let mut state = 0x2545_f491_u32;
-    let mut next = move || {
-        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        state >> 8
+    let (max, scale) = if dtype == DType::F16 {
+        (63, 64.0)
+    } else {
+        (31, 32.0)
     };
-    let sign = |r: u32| if r & 1 == 0 { 1.0 } else { -1.0 };
-    let a: Vec<f32> = (0..2 * K).map(|_| sign(next())).collect();
-    let b: Vec<f32> = (0..K * 3)
-        .map(|_| {
-            let r = next();
-            let j = (r >> 1) % (1 << bits);
-            sign(r) * (1.0 + j as f32 / (1u32 << bits) as f32)
-        })
-        .collect();
+    let mut state = 0x2545_f491_u32;
+    let mut value = move || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let j = (state >> 8) % (2 * max + 1);
+        (j as f32 - max as f32) / scale
+    };
+    let a: Vec<f32> = (0..2 * K).map(|_| value()).collect();
+    let b: Vec<f32> = (0..K * 3).map(|_| value()).collect();
     let mut expected = Vec::with_capacity(6);
     for i in 0..2 {
         for col in 0..3 {

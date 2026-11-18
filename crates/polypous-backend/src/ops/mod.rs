@@ -120,7 +120,9 @@
 //!   `rtol 1e-2` on the Iris Xe with Mesa ANV (Debian; 1 of 24 elements, expected `9.009e-2`, got
 //!   `8.813e-2`, about 32 ulps), while `flex`, lavapipe, CUDA and the other drivers passed. The
 //!   cause isn't confirmed (cubek-matmul 0.3.1 may stage the accumulator in the output dtype,
-//!   `MatmulElems::adjust_stage_dtypes`). `f32` `matmul` keeps the backend's kernel.
+//!   `MatmulElems::adjust_stage_dtypes`). Without the f32 path, the `linalg.rs` unit test with
+//!   `k = 4096` misses in `f16` on `flex` too (lavapipe passes it). `f32` `matmul` keeps the
+//!   backend's kernel.
 //! - **`softmax`/`log_softmax`** subtract the NaN-propagating row maximum first, so large inputs
 //!   don't overflow; rows with NaN or `+inf`, and rows of only `-inf`, are NaN, as in PyTorch.
 //! - **`top_k` runs on the host** on every backend, with one device sync per call: Burn 0.22.1
