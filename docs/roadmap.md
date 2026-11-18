@@ -34,6 +34,10 @@ without CUDA installed still succeeds and falls back cleanly.
 
 ## M1 — Graph IR and interpreter
 
+**Status: done (2026-11-18)**, with one known limitation: f32 `matmul` and `nn.linear` on CUDA miss f32
+accuracy because Burn runs them on TF32 tensor cores ([#64](https://github.com/Jannik0/Polypous/issues/64)). Exit criteria
+verified on Windows 11 and Debian 13, results in [#47](https://github.com/Jannik0/Polypous/issues/47#issuecomment-6990026543).
+
 Scope: [Graph IR spec](specs/graph-ir.md) core opset; interpreter; safetensors.
 
 - `polypous-ir`: types, JSON serde, validation, symbolic shape inference, `repeat` blocks.
