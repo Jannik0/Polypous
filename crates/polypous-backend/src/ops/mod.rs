@@ -112,11 +112,15 @@
 //!   (`attempt to add with overflow`). On the CPU they run on the host with `wrapping_add`
 //!   (`i32` `sum` widens to `i64` in `flex` and wraps already). GPU integer arithmetic wraps
 //!   (lavapipe: `i64::MAX + 1` and `i32::MAX + 1` wrap in `sum` and `cumsum`).
-//! - **Half-precision accumulation:** `sum`, `mean`, `cumsum`, `softmax` and `log_softmax` of
-//!   `f16`/`bf16` compute in `f32` and round once to the dtype, on every backend (§3.1.8). On
-//!   lavapipe, CubeCL's `f16` `cumsum` accumulates in `f16`: the cumulative sum of 4096 ones
-//!   stops at 2048. `matmul` keeps the backend's kernel; with `k = 256` it meets `rtol 1e-2` in
-//!   `f16` and `bf16` on `flex` and in `f16` on lavapipe (which has no `bf16`).
+//! - **Half-precision accumulation:** `sum`, `mean`, `cumsum`, `softmax`, `log_softmax` and
+//!   `matmul` of `f16`/`bf16` compute in `f32` and round once to the dtype, on every backend
+//!   (§3.1.8). On lavapipe, CubeCL's `f16` `cumsum` accumulates in `f16`: the cumulative sum of
+//!   4096 ones stops at 2048. `matmul` casts both operands to `f32` after its checks and the
+//!   product back once (#67): with the backend's own `f16` kernel, `core.matmul/k256_f16` missed
+//!   `rtol 1e-2` on the Iris Xe with Mesa ANV (Debian; 1 of 24 elements, expected `9.009e-2`, got
+//!   `8.813e-2`, about 32 ulps), while `flex`, lavapipe, CUDA and the other drivers passed. The
+//!   cause isn't confirmed (cubek-matmul 0.3.1 may stage the accumulator in the output dtype,
+//!   `MatmulElems::adjust_stage_dtypes`). `f32` `matmul` keeps the backend's kernel.
 //! - **`softmax`/`log_softmax`** subtract the NaN-propagating row maximum first, so large inputs
 //!   don't overflow; rows with NaN or `+inf`, and rows of only `-inf`, are NaN, as in PyTorch.
 //! - **`top_k` runs on the host** on every backend, with one device sync per call: Burn 0.22.1
@@ -174,7 +178,10 @@
 //!   lavapipe without them.
 //! - **CUDA:** `linear` uses [`DynTensor::matmul`], so f32 `linear` shares matmul's TF32
 //!   limitation on CUDA (7 of 8 f32 cases fail on the RTX 3060; docs/status.md §4). Conv passes
-//!   on CUDA in every dtype. No workaround, by design.
+//!   on CUDA in every dtype. No workaround, by design. `linear` passes `f32` tensors to `matmul`
+//!   (its own f32 compute), so half-precision `linear` is converted once, not twice. f16 and bf16
+//!   `matmul` run on the f32 path but stay correct on CUDA: their values are exact in TF32
+//!   (10-bit mantissa, as in `f16`).
 //!
 //! # Semantics (graph-ir.md §3.1)
 //!

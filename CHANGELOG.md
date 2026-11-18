@@ -258,6 +258,9 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- `core.matmul` in `f16`/`bf16` computes in `f32` and rounds once to the dtype, like `nn.linear`,
+  conv and the reductions (#67; graph-ir.md §3.1.8). `core.matmul/k256_f16` missed `rtol 1e-2` on
+  an Intel Iris Xe with Mesa ANV. `f32` `matmul` is unchanged.
 - GPU tests (#65): `polypous`'s backend features now also enable `polypous-runtime`'s, so
   `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored`
   runs every crate's GPU tests, and the CI lavapipe job runs those of `polypous-backend`,
