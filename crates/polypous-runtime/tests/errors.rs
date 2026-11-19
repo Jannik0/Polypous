@@ -557,6 +557,14 @@ fn cancelled_before_the_first_node() {
 
 /// A long chain: `repeat` 65,536 times around a body of 8 nodes. Cancelled from another thread
 /// while it runs, the call stops between nodes (not before the first one) with no outputs.
+///
+/// The delay before cancelling starts only once the runner thread is about to call `run` (a
+/// barrier), so a slow thread start can't use it up. If the runner is still slow to reach the
+/// repeat body (a heavily loaded machine), the call stops before `first` or before the `repeat`
+/// node `loop` itself; that attempt proves nothing about cancellation between nodes inside the
+/// body, so it is retried with a longer delay. Only an attempt that reached the body is checked. `x` has 65,536 elements so that an uncancelled call
+/// takes far longer than the longest delay: about 3.5–4 s in a release build and 230 s in a debug
+/// build on a 4 vCPU cloud VM.
 #[test]
 fn cancelled_between_nodes() {
     let body: Vec<Value> = (0..8)
@@ -571,7 +579,7 @@ fn cancelled_between_nodes() {
         .collect();
     let doc = json!({
         "format": "polypous.graph", "format_version": 1, "opsets": { "core": 1 },
-        "inputs": [ { "name": "x", "dtype": "f32", "shape": [4] }, { "name": "one", "dtype": "f32", "shape": [1] } ],
+        "inputs": [ { "name": "x", "dtype": "f32", "shape": [65536] }, { "name": "one", "dtype": "f32", "shape": [1] } ],
         "outputs": [ { "name": "y", "value": "loop:h" } ],
         "nodes": [
             { "id": "first", "op": "core.neg", "inputs": { "x": "x" } },
@@ -581,34 +589,44 @@ fn cancelled_between_nodes() {
     });
     let m =
         Model::without_weights(Plan::new(&graph(&doc), PlanOptions::new(CPU)).unwrap()).unwrap();
-    let token = CancellationToken::new();
-    let canceller = token.clone();
-    let started = Instant::now();
-    let err = std::thread::scope(|s| {
-        let handle = s.spawn(|| {
-            let options = RunOptions {
-                cancel: Some(&token),
-                trace: false,
-            };
-            m.run(
-                vec![
-                    ("x".into(), f32_tensor(&[4], &[0.0; 4], CPU)),
+    let delays = [50, 200, 1000].map(Duration::from_millis);
+    for (attempt, &delay) in delays.iter().enumerate() {
+        let token = CancellationToken::new();
+        let canceller = token.clone();
+        let ready = std::sync::Barrier::new(2);
+        let started = Instant::now();
+        let err = std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let options = RunOptions {
+                    cancel: Some(&token),
+                    trace: false,
+                };
+                let inputs = vec![
+                    ("x".into(), f32_tensor(&[65536], &[0.0; 65536], CPU)),
                     ("one".into(), f32_tensor(&[1], &[1.0], CPU)),
-                ],
-                vec![],
-                &options,
-            )
-        });
-        std::thread::sleep(Duration::from_millis(50));
-        canceller.cancel();
-        handle.join().unwrap()
-    })
-    .expect_err("the call should be cancelled before 524,288 nodes have run");
-    assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
-    let before = err.node().unwrap().to_owned();
-    assert!(before.starts_with("loop["), "stopped before {before}");
-    assert!(before != "first", "{before}");
-    assert!(started.elapsed() < Duration::from_secs(60));
+                ];
+                ready.wait();
+                m.run(inputs, vec![], &options)
+            });
+            ready.wait();
+            std::thread::sleep(delay);
+            canceller.cancel();
+            handle.join().unwrap()
+        })
+        .expect_err("the call should be cancelled before 524,288 nodes have run");
+        assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
+        let before = err.node().unwrap().to_owned();
+        if (before == "first" || before == "loop") && attempt + 1 < delays.len() {
+            // The runner hadn't reached the repeat body after `delay`: try again, waiting longer.
+            eprintln!("attempt {attempt}: cancelled before `{before}` after {delay:?}, retrying");
+            continue;
+        }
+        assert!(before.starts_with("loop["), "stopped before {before}");
+        assert!(before != "first", "{before}");
+        assert!(started.elapsed() < Duration::from_secs(60));
+        return;
+    }
+    unreachable!("the last attempt either returns or fails an assertion");
 }
 
 // ---- Graph and device ----
