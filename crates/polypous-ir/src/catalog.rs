@@ -138,6 +138,8 @@ pub enum FloatRange {
     Positive,
     /// `0 ≤ p < 1`.
     Probability,
+    /// `0 ≤ v ≤ 1` (`nn.batch_norm` `momentum`).
+    UnitInterval,
 }
 
 impl FloatRange {
@@ -147,6 +149,7 @@ impl FloatRange {
             FloatRange::Any => true,
             FloatRange::Positive => v > 0.0,
             FloatRange::Probability => (0.0..1.0).contains(&v),
+            FloatRange::UnitInterval => (0.0..=1.0).contains(&v),
         }
     }
 
@@ -155,6 +158,7 @@ impl FloatRange {
             FloatRange::Any => "any number",
             FloatRange::Positive => "> 0",
             FloatRange::Probability => "0 <= p < 1",
+            FloatRange::UnitInterval => "0 <= v <= 1",
         }
     }
 }
@@ -1083,7 +1087,11 @@ pub const OPS: &[OpDef] = &[
             opt_param("weight", "[C]"),
             opt_param("bias", "[C]"),
         ],
-        attrs: &[EPS],
+        attrs: &[
+            EPS,
+            // Used only in training mode (graph-ir.md §3.3).
+            def("momentum", T::Float(FloatRange::UnitInterval), "0.1"),
+        ],
         outputs: OUT_C,
         shape: ShapeRule::BatchNorm,
         differentiable: Differentiable::Only(&["x", "weight", "bias"]),

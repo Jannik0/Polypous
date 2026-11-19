@@ -22,5 +22,6 @@
 | **Session** | A stateful use of a loaded model (for example a conversation with its KV cache). |
 | **Streaming (disk)** | Running a block whose weights stay on disk and are read into memory just before use. Not to be confused with **token streaming** (sending output tokens to the app as they are generated). |
 | **Symbolic dim** | A tensor dimension given by a name declared in a graph's `dims` (`batch`, `seq`) or an expression over such names, bound to a value on each call. See [graph-ir.md §2.3](specs/graph-ir.md#23-shapes-and-symbolic-dims). |
+| **Training mode** | The mode of a graph call in which `nn.batch_norm` uses batch statistics and returns updated running statistics and `nn.dropout` drops elements; the default is inference mode. See [graph-ir.md §3.1.10](specs/graph-ir.md#3110-training-mode). |
 | **Tier** | One of `Gpu`, `Cpu`, `Disk`. |
 | **Unified memory** | GPU and CPU share physical RAM (integrated GPUs, Apple Silicon). The GPU and CPU tiers then share one budget. |
