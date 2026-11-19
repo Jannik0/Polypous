@@ -2,7 +2,7 @@
   "schema_version": 2,
   "op": "core.log",
   "case": "zero_f32",
-  "description": "x = 0 (log'(0) = +inf \u00b7 g) and x < 0 (forward NaN, gradient g / x).",
+  "description": "x = 0 and -0 (log'(0) = +inf \u00b7 g, log'(-0) = -inf \u00b7 g) and x < 0 (forward NaN, gradient g / x).",
   "mode": "inference",
   "attributes": {},
   "inputs": [
@@ -10,7 +10,7 @@
       "name": "x",
       "dtype": "f32",
       "shape": [
-        6
+        8
       ]
     }
   ],
@@ -20,7 +20,7 @@
       "port": "out",
       "dtype": "f32",
       "shape": [
-        6
+        8
       ]
     }
   ],
@@ -29,7 +29,7 @@
       "name": "out",
       "dtype": "f32",
       "shape": [
-        6
+        8
       ]
     }
   ],
@@ -39,7 +39,7 @@
       "of": "x",
       "dtype": "f32",
       "shape": [
-        6
+        8
       ]
     }
   ],
@@ -54,7 +54,7 @@
     "rtol": 0.001
   },
   "reference": "torch.autograd.grad(torch.log(x), (x,), grad_out) in f64, rounded once to f32",
-  "notes": "Finite inputs: PyTorch's gradient is the reference also where it is \u00b1inf (graph-ir.md \u00a73.1.11). x = -0 is left out: graph-ir.md doesn't say which sign its infinite gradient has. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): finite inputs give PyTorch's gradient, also \u00b1inf: g / x, whose sign at x = -0 follows 1 / (-0) = -inf (IEEE 754). Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
   "seed": 112,
   "generator": "tools/reference/gen_grads.py",
   "versions": {

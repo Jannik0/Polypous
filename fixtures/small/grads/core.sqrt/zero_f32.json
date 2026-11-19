@@ -2,7 +2,7 @@
   "schema_version": 2,
   "op": "core.sqrt",
   "case": "zero_f32",
-  "description": "x = 0: gradient g / (2 \u00b7 sqrt(x)) = \u00b1inf (sign of g); x < 0 gives NaN.",
+  "description": "x = 0 and -0: gradient g / (2 \u00b7 sqrt(x)) = \u00b1inf; x < 0 gives NaN.",
   "mode": "inference",
   "attributes": {},
   "inputs": [
@@ -10,7 +10,7 @@
       "name": "x",
       "dtype": "f32",
       "shape": [
-        8
+        10
       ]
     }
   ],
@@ -20,7 +20,7 @@
       "port": "out",
       "dtype": "f32",
       "shape": [
-        8
+        10
       ]
     }
   ],
@@ -29,7 +29,7 @@
       "name": "out",
       "dtype": "f32",
       "shape": [
-        8
+        10
       ]
     }
   ],
@@ -39,7 +39,7 @@
       "of": "x",
       "dtype": "f32",
       "shape": [
-        8
+        10
       ]
     }
   ],
@@ -54,7 +54,7 @@
     "rtol": 0.001
   },
   "reference": "torch.autograd.grad(torch.sqrt(x), (x,), grad_out) in f64, rounded once to f32",
-  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): sqrt'(0) = g / (2 \u00b7 sqrt(0)), +inf for g > 0. x = -0 is left out: there PyTorch gives -inf for g > 0 (the formula with sqrt(-0) = -0), which graph-ir.md's \"+inf for g > 0\" doesn't cover. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): sqrt'(x) = g / (2 \u00b7 sqrt(x)): +inf at x = 0 for g > 0, and -inf at x = -0 for g > 0 (sqrt(-0) = -0, IEEE 754). Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
   "seed": 122,
   "generator": "tools/reference/gen_grads.py",
   "versions": {

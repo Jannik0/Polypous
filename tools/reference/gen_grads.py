@@ -289,8 +289,18 @@ def spec_softplus(beta: float, threshold: float) -> Callable[[Any, Any], Any]:
 
 
 def spec_sqrt(x: Any, g: Any) -> Any:
-    """`core.sqrt`: g / (2 · sqrt(x)), so +inf at x = 0 for g > 0."""
+    """`core.sqrt`: g / (2 · sqrt(x)), so +inf at x = 0 and -inf at x = -0 for g > 0 (sqrt(-0) = -0)."""
     return g / (2 * torch.sqrt(x))
+
+
+def spec_log(x: Any, g: Any) -> Any:
+    """`core.log`: g / x, so +inf at x = 0 and -inf at x = -0 for g > 0."""
+    return g / x
+
+
+def spec_rsqrt(x: Any, g: Any) -> Any:
+    """`core.rsqrt`: -g · rsqrt(x)³ / 2, so -inf at x = 0 and +inf at x = -0 for g > 0 (rsqrt(-0) = -inf)."""
+    return -g * torch.rsqrt(x) ** 3 / 2
 
 
 def spec_pow(d: dict[str, Any], up: dict[str, Any]) -> dict[str, Any]:
@@ -504,19 +514,22 @@ def elementwise_cases() -> list[GradCase]:
         unary("core.abs", "zero_f32", 92, "x = 0 and -0 among other values: gradient 0 there.",
               vals([0.0, -0.0, 1.5, -2.0, 0.0, -0.25, -0.0, 0.5]), torch.abs, "torch.abs(x)",
               spec=spec_unary(spec_abs), notes=SPEC_NOTES + "abs'(0) = abs'(-0) = 0."),
-        unary("core.log", "zero_f32", 112, "x = 0 (log'(0) = +inf · g) and x < 0 (forward NaN, gradient g / x).",
-              vals([0.0, 1.0, 0.0, 2.0, -1.0, -0.5]), torch.log, "torch.log(x)",
-              notes="Finite inputs: PyTorch's gradient is the reference also where it is ±inf (graph-ir.md §3.1.11). "
-              "x = -0 is left out: graph-ir.md doesn't say which sign its infinite gradient has."),
-        unary("core.sqrt", "zero_f32", 122, "x = 0: gradient g / (2 · sqrt(x)) = ±inf (sign of g); x < 0 gives NaN.",
-              vals([0.0, 1.0, 0.0, 4.0, 0.0, 0.25, -1.0, 2.0]), torch.sqrt, "torch.sqrt(x)",
+        unary("core.log", "zero_f32", 112, "x = 0 and -0 (log'(0) = +inf · g, log'(-0) = -inf · g) and x < 0 "
+              "(forward NaN, gradient g / x).",
+              vals([0.0, 1.0, -0.0, 2.0, -1.0, -0.5, 0.0, -0.0]), torch.log, "torch.log(x)",
+              spec=spec_unary(spec_log),
+              notes=SPEC_NOTES + "finite inputs give PyTorch's gradient, also ±inf: g / x, whose sign at x = -0 "
+              "follows 1 / (-0) = -inf (IEEE 754)."),
+        unary("core.sqrt", "zero_f32", 122, "x = 0 and -0: gradient g / (2 · sqrt(x)) = ±inf; x < 0 gives NaN.",
+              vals([0.0, 1.0, 0.0, 4.0, -0.0, 0.25, -1.0, 2.0, -0.0, 0.0]), torch.sqrt, "torch.sqrt(x)",
               spec=spec_unary(spec_sqrt),
-              notes=SPEC_NOTES + "sqrt'(0) = g / (2 · sqrt(0)), +inf for g > 0. x = -0 is left out: there PyTorch "
-              "gives -inf for g > 0 (the formula with sqrt(-0) = -0), which graph-ir.md's \"+inf for g > 0\" doesn't cover."),
-        unary("core.rsqrt", "zero_f32", 132, "x = 0: rsqrt'(0) = -inf · g.",
-              vals([0.0, 1.0, 0.0, 4.0, 0.25, 2.0]), torch.rsqrt, "torch.rsqrt(x)",
-              notes="Finite inputs: PyTorch's gradient is the reference also where it is ±inf (graph-ir.md §3.1.11). "
-              "x = -0 is left out: graph-ir.md doesn't say which sign its infinite gradient has."),
+              notes=SPEC_NOTES + "sqrt'(x) = g / (2 · sqrt(x)): +inf at x = 0 for g > 0, and -inf at x = -0 for g > 0 "
+              "(sqrt(-0) = -0, IEEE 754)."),
+        unary("core.rsqrt", "zero_f32", 132, "x = 0 and -0: rsqrt'(0) = -inf · g, rsqrt'(-0) = +inf · g.",
+              vals([0.0, 1.0, -0.0, 4.0, 0.25, 2.0, 0.0, -0.0]), torch.rsqrt, "torch.rsqrt(x)",
+              spec=spec_unary(spec_rsqrt),
+              notes=SPEC_NOTES + "rsqrt'(x) = -g · rsqrt(x)³ / 2: -inf at x = 0 for g > 0, and +inf at x = -0 for g > 0 "
+              "(rsqrt(-0) = 1 / sqrt(-0) = -inf, IEEE 754)."),
         unary("core.tanh", "saturated_f32", 162, "|x| up to 10: the gradient 1 - tanh² nearly vanishes.",
               vals([-10.0, -6.0, -4.0, 4.0, 6.0, 10.0]), torch.tanh, "torch.tanh(x)"),
         unary("core.exp", "permuted_f32", 103, "a permuted view.", view("permuted", [2, 3, 4]), torch.exp, "torch.exp(x)",
