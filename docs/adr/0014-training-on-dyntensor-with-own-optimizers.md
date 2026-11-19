@@ -92,8 +92,10 @@ The spike (#71, Burn 0.22.1, CPU `flex` and Vulkan on lavapipe; no CUDA) found:
   tests, and are checked against PyTorch with 3-step fixtures (#79). Expected differences are a few
   ulp (FMA in PyTorch's `add(alpha=…)`, `lerp`, `addcmul`, `addcdiv`), so the optimizer fixtures
   need a stated tolerance of a few ulp, not bit-exactness (#73).
-- Optimizer steps run as several small elementwise ops per param; at MNIST size the AdamW update
-  is a small part of a step (spike, question 5). A fused update is a later optimization.
+- Optimizer steps run as several small elementwise ops per param. For the MNIST CNN of the spike
+  (1.2 M params, batch 64, 4 vCPU), the AdamW update takes 22–29 ms of a 185–200 ms step on the CPU
+  (`flex`) and 48 of 411 ms on lavapipe (spike, question 5). A fused update is a later
+  optimization if profiles ask for it.
 - Burn does not retain the graph (`retain_graph`): one backward per forward. The trainer combines
   losses before backward.
 - Specs and docs to update (#73): training.md §1 (replace the `DynamicModel` paragraph),
