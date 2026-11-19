@@ -21,7 +21,8 @@ This document describes the planned structure of Polypous. Detailed behavior liv
 ├──────────────────────────────────┬────────────────────────────────────────┤
 │ polypous-backend                 │ polypous-quant                         │
 │ DynTensor, backend enum, device  │ Quantized tensor types, CubeCL GPU     │
-│ discovery, op implementations    │ kernels, SIMD CPU kernels              │
+│ discovery, op implementations,   │ kernels, SIMD CPU kernels              │
+│ autodiff                         │                                        │
 │ ── the ONLY crate using Burn ──  │                                        │
 ├──────────────────────────────────┴────────────────────────────────────────┤
 │ polypous-polyp      .polyp parsing, validation, expressions, weight maps  │
@@ -45,10 +46,10 @@ Planned Cargo workspace under `crates/`:
 | `polypous-ir` | Graph IR data model, op catalog (opset), validation, symbolic shape inference, JSON (de)serialization, versioning/migration | — |
 | `polypous-formats` | Memory-mapped safetensors (single + sharded) and GGUF readers; tensor metadata; lazy tensor views; GGUF metadata KV access | — |
 | `polypous-polyp` | `.polyp` schema, parsing, validation, hyperparameter expression evaluation, match rules, weight-name mapping | `ir`, `formats` |
-| `polypous-backend` | Burn integration on `burn::Tensor` + `burn::Device` (Burn's runtime dispatch, ADR-0011): `BackendKind` value type, device discovery/probing, `DynTensor` (dynamic rank + dtype), implementations of every IR op as `DynTensor` functions with plain Rust arguments and no `polypous-ir` types (`polypous-runtime` maps IR nodes onto them), cross-device transfer, autodiff | `burn` |
+| `polypous-backend` | Burn integration on `burn::Tensor` + `burn::Device` (Burn's runtime dispatch, ADR-0011): `BackendKind` value type, device discovery/probing, `DynTensor` (dynamic rank + dtype), implementations of every IR op as `DynTensor` functions with plain Rust arguments and no `polypous-ir` types (`polypous-runtime` maps IR nodes onto them), cross-device transfer, autodiff (Burn's, behind a small Polypous API with no Burn types, [ADR-0014](adr/0014-training-on-dyntensor-with-own-optimizers.md)) | `burn` |
 | `polypous-quant` | Quantized tensor representation, GGUF block formats, dequantization, quantized matmul/matvec kernels (CubeCL for GPUs, SIMD Rust for CPU) | `backend`, `cubecl` |
 | `polypous-runtime` | Graph interpreter ([spec](specs/runtime.md)), executable plan compilation, placement planner, weight residency (resident / streamed), prefetching, KV/state management | `ir`, `backend`, `quant`, `formats` |
-| `polypous-train` | Training config, training loop, optimizers/schedulers via Burn, metrics, checkpoints, events | `runtime`, `backend` |
+| `polypous-train` | Training ([spec](specs/training.md)): config and its validation, the param store, initial values, datasets, losses, metrics, optimizers, schedules and gradient clipping (own code on `DynTensor` ops, no Burn, ADR-0014), the training loop, checkpoints, events | `ir`, `formats`, `runtime`, `backend` |
 | `polypous-pipelines` | Task pipelines and their built-in components (tokenizers, chat templates, samplers, mel spectrogram, diffusion schedulers, image codecs) | `runtime`, `polyp` |
 | `polypous` | Public facade: `Engine`, `Model`, `Session`, `Pipeline`, `Trainer`, events, errors | all of the above |
 | `polypous-cli` | `polyp` developer CLI: inspect files, validate `.polyp`, probe devices, plan placement, run pipelines, benchmark | `polypous` |
@@ -111,13 +112,18 @@ polypous-pipelines: run the task loop; runtime runs blocks in order, transfers a
 ```
 app/builder ─► Graph JSON ─► polypous-ir: validate + infer shapes (errors carry node ids)
                                    │
-training config JSON ─► polypous-train: build DynamicModel (parameters initialized per IR init specs)
-                                   │       on autodiff backend chosen by device discovery
+training config JSON ─► polypous-train: validate config against graph and data; read datasets (host)
+                                   │       param store: initial values from IR init specs (host RNG)
+                                   │       or a weight file, uploaded to one device (auto: primary GPU, else CPU)
                                    ▼
-                       loop: data batch → forward (interpreter) → loss → backward → optimizer step
+                       loop per step: batch → mark params as autodiff leaves (polypous-backend)
+                                   → forward in training mode (polypous-runtime, params from the store)
+                                   → write back batch_norm running stats → loss → backward
+                                   → read gradients → clip → own optimizer step on DynTensor
                                    │
                                    ▼
-                       events (epoch, step, loss, metrics) · checkpoints (graph JSON + safetensors)
+                       events (step, epoch, metrics) · checkpoints (graph JSON + safetensors + state)
+                       · export (graph JSON + safetensors, loadable by Engine::load_graph)
 ```
 
 ## 6. Key design decisions
@@ -132,6 +138,7 @@ training config JSON ─► polypous-train: build DynamicModel (parameters initi
 | `.polyp` files contain data only | [0006](adr/0006-polyp-files-are-data-only.md) |
 | Rust API designed for wrapping, C ABI later | [0008](adr/0008-wrapper-friendly-api.md) |
 | Testing against reference implementations | [0009](adr/0009-reference-based-testing.md) |
+| Training on `DynTensor`: Polypous param store, Burn's autodiff, own optimizers | [0014](adr/0014-training-on-dyntensor-with-own-optimizers.md) |
 | MIT license; MPL-2.0 only for unmodified dependencies, per crate | [0010](adr/0010-mit-license.md), [0012](adr/0012-mpl-for-unmodified-dependencies.md) |
 
 ## 7. Cross-cutting concerns

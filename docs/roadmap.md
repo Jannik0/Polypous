@@ -53,11 +53,16 @@ small CNN defined as JSON give the same outputs as identical PyTorch models with
 
 Scope: [Training spec](specs/training.md).
 
-- `DynamicModel` implementing Burn `Module`; parameter init from IR specs.
+- Params in a Polypous param store, gradients through Burn's autodiff on `DynTensor`, and own
+  optimizers that follow PyTorch ([ADR-0014](adr/0014-training-on-dyntensor-with-own-optimizers.md));
+  parameter init from IR specs with a Polypous host random generator; the training modes of
+  `batch_norm` and `dropout`; gradients of every differentiable op.
 - Declarative training config; SGD, Adam, AdamW; constant / step / cosine / warmup schedules;
-  MSE, cross-entropy, BCE losses; accuracy/loss metrics.
-- Built-in datasets: in-memory tensors, CSV, image folder.
-- Events, cancellation, checkpoints, resume.
+  gradient clipping; MSE, cross-entropy, BCE losses; accuracy/loss metrics.
+- Built-in datasets: in-memory tensors, safetensors, CSV, image folder (PNG), validation split.
+- Events, cancellation, checkpoints, resume, export; `polyp train`.
+- `f32` only: `f16`/`bf16` training is mixed-precision training, under "Later". Graph `functions`/`call`
+  stay unsupported in M2 ([graph-ir.md §2.7](specs/graph-ir.md#27-subgraphs-functions)).
 
 **Exit:** MNIST-sized CNN trains to the expected accuracy from a JSON graph + JSON config on CPU and
 CUDA. Gradients of every differentiable op match PyTorch. Training resumes correctly from a checkpoint.
@@ -119,6 +124,7 @@ with correct output; the estimate is within ±25% of the measured peak memory.
 
 ## Later (unscheduled)
 
-OpenAI-compatible HTTP server crate · quantizing models when loading · LoRA fine-tuning · more
+OpenAI-compatible HTTP server crate · quantizing models when loading · LoRA fine-tuning ·
+mixed-precision training (f16/bf16 with f32 master weights and loss scaling) · more
 architectures (MoE such as Mixtral/Qwen-MoE, multimodal) · splitting a model across multiple GPUs ·
 ONNX import for the builder · speculative decoding.
