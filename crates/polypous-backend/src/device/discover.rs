@@ -370,6 +370,9 @@ pub(crate) fn device_id_of(device: &Device) -> Option<DeviceId> {
         DispatchDevice::Flex(_) => Some(DeviceId::Cpu),
         #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
         DispatchDevice::Cube(cube) => gpu::device_id_of(cube),
+        // Autodiff doesn't change the hardware: a tracked tensor keeps its device's id.
+        #[cfg(feature = "autodiff")]
+        DispatchDevice::Autodiff(inner) => device_id_of(&Device::new((**inner).clone())),
         #[allow(unreachable_patterns)]
         _ => None,
     }

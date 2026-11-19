@@ -27,6 +27,10 @@ metal = ["burn/metal", "dep:cubecl", "cubecl/metal"]
 # dev-dependencies (polypous-cli's tests), never in a release build. See placement.md §1,
 # "Testing the prober".
 test-fault-injection = []
+# Burn's autodiff (`burn-dispatch/autodiff`, `Device::autodiff`). Off by default: the autodiff spike
+# (#71, `src/tensor/autodiff.rs` and its experiments) uses it; #75 decides how it is enabled for
+# training. Adds only Burn's own `burn-autodiff` crate (MIT OR Apache-2.0).
+autodiff = ["burn/autodiff"]
 
 [dependencies]
 burn = { workspace = true, features = ["std"] }

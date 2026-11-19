@@ -18,7 +18,7 @@ on the project over time.
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-build-on-burn.md) | Build on Burn | Accepted |
-| [0002](0002-runtime-graph-ir-interpreter.md) | Runtime graph IR executed by an interpreter | Accepted |
+| [0002](0002-runtime-graph-ir-interpreter.md) | Runtime graph IR executed by an interpreter | Accepted, superseded in part by 0014 |
 | [0003](0003-runtime-backend-selection.md) | Runtime backend selection via enum dispatch | Accepted, superseded in part by 0011 |
 | [0004](0004-tiered-placement.md) | Tiered GPU → CPU → disk placement | Accepted |
 | [0005](0005-native-quantized-kernels.md) | Native kernels for GGUF quantization formats | Accepted |
@@ -30,3 +30,4 @@ on the project over time.
 | [0011](0011-use-burn-dispatch-for-backend-selection.md) | Use Burn's runtime `Dispatch` backend for backend selection | Accepted |
 | [0012](0012-mpl-for-unmodified-dependencies.md) | MPL-2.0 allowed for unmodified dependencies, per crate | Accepted |
 | [0013](0013-crash-safe-device-probing.md) | Crash-safe device probing in a separate prober process | Accepted |
+| [0014](0014-training-on-dyntensor-with-own-optimizers.md) | Training on `DynTensor` with a Polypous param store and own optimizers | Accepted |
