@@ -1,0 +1,85 @@
+{
+  "schema_version": 2,
+  "op": "core.maximum",
+  "case": "ties_broadcast_f32",
+  "description": "ties with b broadcast: grad_b sums g, g / 2 and 0.",
+  "mode": "inference",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_a",
+      "of": "a",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    },
+    {
+      "name": "grad_b",
+      "of": "b",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.maximum(a, b), (a, b), grad_out) in f64, rounded once to f32",
+  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): at a = b, g / 2 to a and g / 2 to b. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 64,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

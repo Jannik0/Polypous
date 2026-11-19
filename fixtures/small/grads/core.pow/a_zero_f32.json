@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "op": "core.pow",
+  "case": "a_zero_f32",
+  "description": "a = 0 (and -0) with b \u2265 0: \u2202/\u2202b = 0; \u2202/\u2202a = g \u00b7 b \u00b7 0^(b-1): +inf for 0 < b < 1, g at b = 1, 0 above.",
+  "mode": "inference",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "a",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "b",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_a",
+      "of": "a",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "grad_b",
+      "of": "b",
+      "dtype": "f32",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.pow(a, b), (a, b), grad_out) in f64, rounded once to f32",
+  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): a = 0 with b \u2265 0 gives \u2202/\u2202b = 0; \u2202/\u2202a is the formula, \u00b1inf for 0 < b < 1. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 56,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

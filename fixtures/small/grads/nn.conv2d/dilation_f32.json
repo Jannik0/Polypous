@@ -1,0 +1,121 @@
+{
+  "schema_version": 2,
+  "op": "nn.conv2d",
+  "case": "dilation_f32",
+  "description": "dilation [2, 2].",
+  "mode": "inference",
+  "attributes": {
+    "dilation": [
+      2,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        7,
+        7
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f32",
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        2,
+        7,
+        7
+      ]
+    },
+    {
+      "name": "grad_weight",
+      "of": "weight",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "grad_bias",
+      "of": "bias",
+      "dtype": "f32",
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(F.conv2d(x, weight, bias, stride, padding, dilation, groups), (x, weight, bias), grad_out) in f64, rounded once to f32",
+  "notes": "Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 633,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

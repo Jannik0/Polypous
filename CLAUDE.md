@@ -64,6 +64,7 @@ fault injection.
 
 Reference fixtures (Python environment: [docs/dev-environment.md](docs/dev-environment.md#python-reference-environment)):
 `python tools/reference/gen_ops.py --check` (op fixtures match the generator),
+`python tools/reference/gen_grads.py --check` (gradient fixtures match theirs),
 `python tools/ci/check_fixtures.py` (size budget, sidecars, no subnormals) and
 `python tools/reference/fetch_fixtures.py` (large fixtures, hash-verified).
 

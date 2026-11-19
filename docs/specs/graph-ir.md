@@ -657,9 +657,11 @@ value: a value read by several nodes, a param used by several nodes or by every 
 
 **Finite inputs.** Where every input of the op and its upstream gradient `g` are finite, the
 gradient is PyTorch's, also where that is `±inf` or NaN: for example `sqrt'(0) = +inf`,
-`rsqrt'(0) = -inf`, `log'(0) = +inf`, and the gradients of `div` at `b = 0`. Where the derivative is
-not unique (ties and kinks), PyTorch's choice is binding, as follows (checked against PyTorch
-2.15.0, #72):
+`rsqrt'(0) = -inf`, `log'(0) = +inf`, and the gradients of `div` at `b = 0`. At `x = -0` the sign
+follows the formulas `g / (2 · sqrt(x))`, `-g · rsqrt(x)³ / 2` and `g / x` with `sqrt(-0) = -0`
+(IEEE 754), as in PyTorch: `sqrt'(-0) = -inf`, `rsqrt'(-0) = +inf` and `log'(-0) = -inf` for
+`g > 0`. Where the derivative is not unique (ties and kinks), PyTorch's choice is binding, as
+follows (checked against PyTorch 2.15.0, #72):
 
 | Op | Where | Gradient |
 |---|---|---|

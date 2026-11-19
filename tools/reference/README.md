@@ -15,6 +15,7 @@ Setup: [docs/dev-environment.md](../../docs/dev-environment.md#python-reference-
 | File | Purpose |
 |---|---|
 | `gen_ops.py` | Op fixtures in `fixtures/small/ops/<op>/<case>.{safetensors,json}`, from PyTorch |
+| `gen_grads.py` | Gradient fixtures in `fixtures/small/grads/<op>/<case>.{safetensors,json}` (op sidecar schema 2), from PyTorch autograd |
 | `gen_models.py` | End-to-end model fixtures in `fixtures/small/models/<model>/` (graph, weights, cases), from PyTorch modules |
 | `fetch_fixtures.py` | Downloads `fixtures/manifest.json` entries into `fixtures/cache/` (size limit, SHA-256) |
 | `fixturelib.py` | Shared, standard library only: sidecar format, safetensors header check, `--check` comparison, size budget |
@@ -25,6 +26,8 @@ Setup: [docs/dev-environment.md](../../docs/dev-environment.md#python-reference-
 ```bash
 python tools/reference/gen_ops.py            # rewrites fixtures/small/ops/ (removes cases that no longer exist)
 python tools/reference/gen_ops.py --check    # regenerates into a temp dir, fails on changed/missing/extra files
+python tools/reference/gen_grads.py          # rewrites fixtures/small/grads/
+python tools/reference/gen_grads.py --check
 python tools/reference/gen_models.py         # rewrites fixtures/small/models/
 python tools/reference/gen_models.py --check
 python tools/reference/gen_models.py --report  # the measured errors behind the model tolerances
@@ -76,6 +79,30 @@ Commit the regenerated files together with the generator change. Never edit a fi
 3. Add the op to a Rust reference test (`crates/polypous-backend/tests/reference_*.rs`), which
    loads every case of the op directory.
 4. Keep fixtures small: each case under 1 MiB, `fixtures/small/` under 50 MiB. A few KB per case is enough.
+
+## Add a gradient case
+
+Layout, sidecar (schema version 2) and tolerances: [testing-strategy.md §3.6 and §2](../../docs/testing-strategy.md#36-gradient-fixtures-op-sidecar-schema-version-2);
+conventions: [graph-ir.md §3.1.11](../../docs/specs/graph-ir.md#3111-gradients).
+
+1. Add a `GradCase` to the op's family function in `gen_grads.py` (`elementwise_cases`, `shape_cases`,
+   `reduction_cases`, `layer_cases`, `pool_cases`, `norm_cases`, `activation_cases`), usually through
+   `case`, `unary`, `x_case` or a family helper:
+   - `tensors`: the op's inputs in order, then its present params in catalog order (`params=`), then
+     `mask` for `nn.dropout` in training mode, each from a builder (`rnd`, `signed`, `vals`, `choice`,
+     `ints`, `bools`, `view`, `copy_of`, `keep_mask`). All floats are f32. Names as in graph-ir.md §3.
+   - `fn`: the forward call on a dict of the tensors, returning one tensor (port `out`) or a dict by
+     port; `call`: its PyTorch text. The generator derives the upstream gradients (one per float port,
+     `upstream_values` unless `upstream=` gives them), the differentiable tensors (every float input,
+     every param but `batch_norm`'s running statistics) and the `reference` string.
+   - `seed`: a new fixed number, not shared with another case (the generator refuses duplicates).
+   - Tie, kink and special-value cases use exactly representable values and set `spec=` to graph-ir.md
+     §3.1.11's formula (`spec_maximum`, `spec_clamp`, …); the generator stops if PyTorch disagrees.
+   - No NaN or ±inf in inputs or upstream gradients (unspecified there; the generator refuses them).
+   - `mode="training"` only for `nn.batch_norm` and `nn.dropout`.
+   - Tolerances: `op_tolerance(op)` for outputs and `GRADIENT` for gradients (§2); a stricter one
+     needs a note, a looser one an explanation in the PR.
+2. Run the generator, then `--check`, the unit tests and `tools/ci/check_fixtures.py`.
 
 ## Add a model or a model case
 

@@ -1,0 +1,114 @@
+{
+  "schema_version": 2,
+  "op": "core.concat",
+  "case": "three_last_dim_f32",
+  "description": "three inputs along dim -1.",
+  "mode": "inference",
+  "attributes": {
+    "dim": -1
+  },
+  "inputs": [
+    {
+      "name": "xs0",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        1
+      ]
+    },
+    {
+      "name": "xs1",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        2
+      ]
+    },
+    {
+      "name": "xs2",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        6
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_xs0",
+      "of": "xs0",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        1
+      ]
+    },
+    {
+      "name": "grad_xs1",
+      "of": "xs1",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        2
+      ]
+    },
+    {
+      "name": "grad_xs2",
+      "of": "xs2",
+      "dtype": "f32",
+      "shape": [
+        2,
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.cat(xs, dim), (xs0, xs1, xs2), grad_out) in f64, rounded once to f32",
+  "notes": "Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 272,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

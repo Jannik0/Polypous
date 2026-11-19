@@ -165,6 +165,8 @@ Then, from the repository root:
 ```bash
 python tools/reference/gen_ops.py            # regenerate fixtures/small/ops/
 python tools/reference/gen_ops.py --check    # compare with the committed fixtures
+python tools/reference/gen_grads.py          # regenerate fixtures/small/grads/ (gradient cases)
+python tools/reference/gen_grads.py --check
 python -m unittest discover -s tools/reference -v
 ```
 
