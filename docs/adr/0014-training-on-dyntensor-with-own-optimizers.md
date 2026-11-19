@@ -1,8 +1,8 @@
 # ADR-0014: Training on `DynTensor` with a Polypous param store and own optimizers
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Date:** 2026-11-19
-- **Deciders:** project owner (+ authoring agent: the autodiff spike, issue #71)
+- **Deciders:** project owner (+ authoring agent)
 - **Supersedes / Superseded by:** supersedes, in part, [ADR-0002](0002-runtime-graph-ir-interpreter.md):
   the clause "`DynamicModel`, which implements Burn's `Module` trait by hand so Burn optimizers and
   autodiff work unchanged". The rest of ADR-0002 (Graph IR, interpreter, `DynTensor`) stands.
@@ -73,7 +73,8 @@ The spike (#71, Burn 0.22.1, CPU `flex` and Vulkan on lavapipe; no CUDA) found:
 ## Alternatives considered
 
 - **(a) Hand-written Burn `Module` with Burn's optimizers, wrapped inside `polypous-backend`**
-  (ADR-0002 as written): works (spike, `design_a` in `src/tensor/autodiff_spike_tests.rs`), but
+  (ADR-0002 as written): works (spike, #71; its experiment code was removed after this decision,
+  the numbers are in finding 3 and PR #86), but
   doesn't match PyTorch's Adam/AdamW exactly (finding 3), needs Burn's `optim` feature and module
   types behind a wrapper, keeps optimizer state in Burn's record format, and puts optimizer
   behavior under Burn's release cycle. Matching PyTorch would mean patching or re-implementing

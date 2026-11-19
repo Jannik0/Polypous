@@ -780,8 +780,9 @@ fn spike_q2_op_gradients() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Q3: optimizers. (b) own optimizers on DynTensor ops; (a) Burn's optimizers on a hand-built
-// Module. Both against PyTorch (spike/out/q3_torch.json from compare_torch.py).
+// Q3: optimizers of design (b), own optimizers on DynTensor ops (ADR-0014), against PyTorch
+// (spike/out/q3_torch.json from compare_torch.py). Design (a), Burn's optimizers on a hand-built
+// Module, was removed after ADR-0014 was accepted; its numbers are in PR #86.
 // ---------------------------------------------------------------------------------------------
 
 /// The optimizer configs of the comparison (the same in compare_torch.py).
@@ -1055,7 +1056,6 @@ fn spike_q3_optimizers_design_b() {
     }
 }
 
-#[cfg(feature = "spike-burn-optim")]
 /// Optimizer math only: PyTorch's gradients of every step go into the optimizer, so the
 /// comparison doesn't include the gradient's own rounding (as #79's optimizer fixtures will).
 #[test]
@@ -1086,159 +1086,6 @@ fn spike_q3_optimizer_only_design_b() {
                 "(b, torch grads) {dev} {name:<24} steps 1-3: {}",
                 line.join(", ")
             );
-        }
-    }
-}
-
-#[cfg(feature = "spike-burn-optim")]
-mod design_a {
-    //! Design (a): a Burn `Module` over a runtime list of params, Burn's optimizers unchanged.
-    //! Params are grouped by rank (`Vec<Param<Tensor<D>>>` per rank, so `#[derive(Module)]`
-    //! works); a name → (rank, slot) map would sit next to it.
-
-    use super::*;
-    use crate::tensor::{Inner, Ranked};
-    use burn::module::{Module, Param};
-    use burn::optim::{
-        AdamConfig, AdamWConfig, GradientsParams, SgdConfig, decay::WeightDecayConfig,
-        momentum::MomentumConfig,
-    };
-    use burn::tensor::Tensor;
-
-    #[derive(Module, Debug)]
-    pub(super) struct DynModule {
-        r1: Vec<Param<Tensor<1>>>,
-        r2: Vec<Param<Tensor<2>>>,
-    }
-
-    fn to_dyn1(t: Tensor<1>, dev: DeviceId) -> DynTensor {
-        DynTensor::from_parts(Inner::R1(Ranked::Float(t)), DType::F32, dev)
-    }
-    fn to_dyn2(t: Tensor<2>, dev: DeviceId) -> DynTensor {
-        DynTensor::from_parts(Inner::R2(Ranked::Float(t)), DType::F32, dev)
-    }
-    fn burn1(t: DynTensor) -> Tensor<1> {
-        match t.into_parts().0 {
-            Inner::R1(Ranked::Float(t)) => t,
-            _ => unreachable!("rank 1 float"),
-        }
-    }
-    fn burn2(t: DynTensor) -> Tensor<2> {
-        match t.into_parts().0 {
-            Inner::R2(Ranked::Float(t)) => t,
-            _ => unreachable!("rank 2 float"),
-        }
-    }
-
-    #[test]
-    #[ignore = "spike"]
-    fn spike_q3_optimizers_design_a() {
-        run_design_a(false);
-    }
-
-    #[test]
-    #[ignore = "spike"]
-    fn spike_q3_optimizer_only_design_a() {
-        run_design_a(true);
-    }
-
-    fn run_design_a(torch_grads: bool) {
-        let Some(torch) = load_torch_q3() else {
-            eprintln!("spike/out/q3_torch.json missing: run spike/compare_torch.py q3 first");
-            return;
-        };
-        for dev in devices() {
-            let x = ft(&torch.x, &[2, 4], dev);
-            let y = ft(&torch.y, &[2, 3], dev);
-            for (name, opt) in q3_configs() {
-                let mut optim = match opt {
-                    Opt::Sgd {
-                        momentum,
-                        dampening,
-                        nesterov,
-                        weight_decay,
-                        ..
-                    } => SgdConfig::new()
-                        .with_momentum(Some(MomentumConfig {
-                            momentum,
-                            dampening,
-                            nesterov,
-                        }))
-                        .with_weight_decay(
-                            (weight_decay != 0.0)
-                                .then(|| WeightDecayConfig::new(weight_decay as f32)),
-                        )
-                        .init(),
-                    Opt::Adam {
-                        beta1,
-                        beta2,
-                        eps,
-                        weight_decay,
-                        decoupled: false,
-                        ..
-                    } => AdamConfig::new()
-                        .with_beta_1(beta1 as f32)
-                        .with_beta_2(beta2 as f32)
-                        .with_epsilon(eps as f32)
-                        .with_weight_decay(Some(WeightDecayConfig::new(weight_decay as f32)))
-                        .init(),
-                    Opt::Adam {
-                        beta1,
-                        beta2,
-                        eps,
-                        weight_decay,
-                        decoupled: true,
-                        ..
-                    } => AdamWConfig::new()
-                        .with_beta_1(beta1 as f32)
-                        .with_beta_2(beta2 as f32)
-                        .with_epsilon(eps as f32)
-                        .with_weight_decay(weight_decay as f32)
-                        .init(),
-                };
-                let lr = match opt {
-                    Opt::Sgd { lr, .. } | Opt::Adam { lr, .. } => lr,
-                };
-                let w0 = burn2(ft(&torch.w0, &[3, 4], dev)).autodiff().require_grad();
-                let b0 = burn1(ft(&torch.b0, &[3], dev)).autodiff().require_grad();
-                let mut module = DynModule {
-                    r1: vec![Param::from_tensor(b0)],
-                    r2: vec![Param::from_tensor(w0)],
-                };
-                for (step, want) in torch.steps[name].iter().enumerate() {
-                    let wl = to_dyn2(module.r2[0].val(), dev);
-                    let bl = to_dyn1(module.r1[0].val(), dev);
-                    let loss = mse_linear(&x, &wl, &bl, &y).unwrap();
-                    let grads = loss.backward().unwrap();
-                    let gw = wl.grad(&grads).unwrap();
-                    let cgw = compare("grad_w", &read(&gw), &want[2]);
-                    let grads = if torch_grads {
-                        let mut g = GradientsParams::new();
-                        g.register(module.r2[0].id, burn2(ft(&want[2], &[3, 4], dev)));
-                        g.register(module.r1[0].id, burn1(ft(&want[3], &[3], dev)));
-                        g
-                    } else {
-                        GradientsParams::from_grads(grads.0, &module)
-                    };
-                    module = optim.step(lr, module, grads);
-                    let w = to_dyn2(module.r2[0].val(), dev);
-                    let b = to_dyn1(module.r1[0].val(), dev);
-                    let cw = compare("w", &read(&w), &want[0]);
-                    let cb = compare("b", &read(&b), &want[1]);
-                    eprintln!(
-                        "(a{}) {dev} {name:<24} step {}: grad_w max ulp {}, params max abs {:.3e}/{:.3e} max rel {:.3e}/{:.3e} max ulp {}/{}",
-                        if torch_grads { ", torch grads" } else { "" },
-                        step + 1,
-                        cgw.2,
-                        cw.0,
-                        cb.0,
-                        cw.1,
-                        cb.1,
-                        cw.2,
-                        cb.2
-                    );
-                }
-            }
         }
     }
 }

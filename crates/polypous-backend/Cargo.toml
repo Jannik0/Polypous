@@ -31,9 +31,6 @@ test-fault-injection = []
 # (#71, `src/tensor/autodiff.rs` and its experiments) uses it; #75 decides how it is enabled for
 # training. Adds only Burn's own `burn-autodiff` crate (MIT OR Apache-2.0).
 autodiff = ["burn/autodiff"]
-# SPIKE ONLY (#71, design (a) of question 3): Burn's optimizers (`burn-optim`, MIT OR Apache-2.0,
-# already in the lock file). Not for production code.
-spike-burn-optim = ["autodiff", "burn/optim"]
 
 [dependencies]
 burn = { workspace = true, features = ["std"] }

@@ -1,6 +1,6 @@
 # ADR-0002: Runtime graph IR executed by an interpreter
 
-- **Status:** Accepted
+- **Status:** Accepted, superseded in part by [ADR-0014](0014-training-on-dyntensor-with-own-optimizers.md) (params in a Polypous param store and own optimizers replace the hand-written `DynamicModel: Module` and Burn's optimizers; the rest below still applies)
 - **Date:** 2026-11-02
 
 ## Context
