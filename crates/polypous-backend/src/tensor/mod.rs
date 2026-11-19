@@ -50,6 +50,10 @@
 //!
 //! [`DeviceId`]: crate::device::DeviceId
 
+// Crate-internal until #75 settles the public API (ADR-0014, Proposed); only the spike uses it.
+#[cfg(feature = "autodiff")]
+#[allow(dead_code)]
+mod autodiff;
 mod data;
 mod dtype;
 mod dyn_tensor;

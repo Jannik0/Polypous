@@ -285,6 +285,13 @@ impl DynTensor {
         }
     }
 
+    /// The rank/kind enum, borrowed.
+    #[cfg(feature = "autodiff")]
+    #[allow(dead_code)]
+    pub(crate) fn inner_ref(&self) -> &Inner {
+        &self.inner
+    }
+
     /// The rank/kind enum, the dtype and the device id.
     pub(crate) fn into_parts(self) -> (Inner, DType, DeviceId) {
         (self.inner, self.dtype, self.device)

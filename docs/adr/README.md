@@ -30,3 +30,4 @@ on the project over time.
 | [0011](0011-use-burn-dispatch-for-backend-selection.md) | Use Burn's runtime `Dispatch` backend for backend selection | Accepted |
 | [0012](0012-mpl-for-unmodified-dependencies.md) | MPL-2.0 allowed for unmodified dependencies, per crate | Accepted |
 | [0013](0013-crash-safe-device-probing.md) | Crash-safe device probing in a separate prober process | Accepted |
+| [0014](0014-training-on-dyntensor-with-own-optimizers.md) | Training on `DynTensor` with a Polypous param store and own optimizers | Proposed (supersedes part of 0002) |
