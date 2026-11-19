@@ -1,6 +1,6 @@
 # Spec: Public API and Embedding Rules
 
-**Status:** Draft. The facade grows from M1, the C ABI comes in M7. **Crates:** `polypous`, `polypous-capi`
+**Status:** Draft. The facade grows from M1, the C ABI comes in M7. Binding: §1.1–§1.3 and §2 (implemented), §1.4 (M2). **Crates:** `polypous`, `polypous-capi`
 **Decision:** [ADR-0008](../adr/0008-wrapper-friendly-api.md)
 
 Primary users are app developers, often building Electron apps through a Node.js native addon they
@@ -47,9 +47,9 @@ Builder/training side:
 ```rust
 let graph = polypous::Graph::from_json(&json)?;               // or build programmatically
 let report = graph.validate();                                 // all errors with node ids
-let trainer = engine.trainer(&graph, TrainingConfig::from_json(&cfg)?)?;
-let outcome = trainer.run(&cancel, |event| { /* Step, EpochFinished, ... */ })?;
-outcome.export("model.graph.json", "model.safetensors")?;
+let trainer = engine.trainer(&graph, TrainingConfig::from_json(&cfg)?, TrainerOptions::default(), &cancel)?;
+let outcome = trainer.run(&cancel, |event| { /* started, step, epoch_finished, ... */ })?;
+trainer.export("model.graph.json", "model.safetensors")?;     // §1.4
 ```
 
 ## 2. Wrapper-friendliness rules (binding for all public items)
@@ -214,7 +214,7 @@ omitted when absent:
 | `operation` | The facade call that failed, for example `engine_new`, `engine_load_graph`, `model_run` |
 | `details` | The underlying error or panic message (for an invalid graph: every diagnostic, one per line) |
 | `node` | The node: a graph node id from a validation diagnostic, or the runtime's node path (`fc1`, `layers[3]/attn`, runtime.md §5) |
-| `pointer` | JSON pointer (RFC 6901) into the graph document, from a validation diagnostic (`""` is the whole document) |
+| `pointer` | JSON pointer (RFC 6901) into the graph document, from a validation diagnostic, or into a training config or checkpoint `state.json` (§1.4) (`""` is the whole document) |
 | `tensor` | A weight (param), input, output or state entry name, or a tensor of a tensor file |
 | `file` | The file concerned (graph, weight file or shard, tensor file), as given |
 | `device` | The device, in its id syntax (`cpu`, `cuda:0`, `vulkan:discrete_gpu:0`, §1.3) |
@@ -432,6 +432,123 @@ a valid graph), `1` an error (`polypous::Error`: message and context on stderr, 
 
 C ABI (M7): `pp_graph_from_json`, `pp_graph_validate_json`, `pp_engine_load_graph`,
 `pp_model_info_json`, `pp_model_run`, `pp_model_save`.
+
+### 1.4 Training (M2)
+
+Train a graph from a training config ([training.md](training.md)), with events, cancellation,
+checkpoints, resume and export. The facade is a thin layer over `polypous-train`; behavior,
+config, events and checkpoints are specified in training.md, and this section gives the Rust and
+JSON surface.
+
+```rust
+use polypous::{CancellationToken, Engine, EngineConfig, Graph, ResumeOptions, TrainerOptions, TrainingConfig};
+
+let engine = Engine::new(EngineConfig::default())?;
+let graph = Graph::from_file("cnn.graph.json")?;
+let config = TrainingConfig::from_file("train.json")?;           // InvalidInput with a JSON pointer
+let mut options = TrainerOptions::default();
+options.base_dir = Some(".".into());                             // relative paths in the config
+options.weights = Some("pretrained.safetensors".into());        // optional; other params use their init
+let cancel = CancellationToken::new();
+let trainer = engine.trainer(&graph, config, options, &cancel)?; // validates, reads the data, initializes
+
+let outcome = trainer.run(&cancel, |event| println!("{}", event.to_json()))?;  // started, step, …, finished
+println!("{:?} after {} steps", outcome.stop_reason, outcome.step);
+trainer.export("model.graph.json", "model.safetensors")?;       // loads with Engine::load_graph
+
+// Later, or in another process: continue from the newest checkpoint of the run directory.
+let trainer = engine.resume_trainer("runs/mnist", ResumeOptions::default(), &cancel)?;
+let outcome = trainer.run(&cancel, |_| {})?;
+```
+
+**Items.**
+
+| Item | Behavior |
+|---|---|
+| `TrainingConfig` | The training config (training.md §2). `from_json(&str)`, `from_file(path)` (at most 1 MiB, `Io` if it can't be read), `to_json()` (canonical: every field, defaults filled in). Errors are `InvalidInput` with `context.pointer` (`precision` `f16`/`bf16`: `UnsupportedOperation`). Plain data; its fields are public |
+| `TrainerOptions` | What a training run needs besides the config: `weights`, `base_dir`, `datasets` (below). `Default`, `from_json`/`to_json` |
+| `InMemoryDataset` | `{ name: String, fields: Vec<NamedTensor> }`: a `tensors` dataset (training.md §3.5.1) |
+| `Engine::trainer(&Graph, TrainingConfig, TrainerOptions, &CancellationToken) -> Result<Trainer, Error>` | Checks the config against the graph and the data, reads the datasets, loads the initial weights, computes the initial values and uploads the params, in the order of training.md §2.10. Blocking. Nothing trains yet |
+| `Engine::resume_trainer(path, ResumeOptions, &CancellationToken) -> Result<Trainer, Error>` | A trainer restored from a checkpoint directory, or from the newest checkpoint of a run directory (training.md §5.4). Blocking |
+| `ResumeOptions` | `device` (device id string or null: overrides the config's `device`), `base_dir` (path or null: overrides the checkpoint's), `datasets` (as in `TrainerOptions`), `discard_newer` (bool, `false`). `Default`, `from_json`/`to_json` |
+| `Trainer` | A training run. `Arc` handle: `Clone + Send + Sync + 'static`, no generics or lifetimes. Holds the param store, the optimizer state and the datasets |
+| `trainer.info() -> TrainerInfo` | Plain data: the `started` event's fields (training.md §4.1) with `step` the steps completed so far, `finished` (bool), and `trainable` (the trainable params as `{"name", "shape"}`, in declaration order). `to_json()` |
+| `trainer.run(&CancellationToken, on_event: impl FnMut(TrainingEvent)) -> Result<TrainingOutcome, Error>` | Trains from the trainer's current step to the end, or until cancelled (training.md §1.2, §4). Blocking. Returns `Ok` also when cancelled (`stop_reason: "cancelled"`); calling `run` again continues. `InvalidInput` if the trainer is running (another clone, or its own callback), has finished, or has failed |
+| `trainer.export(graph_path, weights_path) -> Result<(), Error>` | Writes the current model, loadable by `Engine::load_graph` (training.md §5.5). `InvalidInput` while running or after a failed run |
+| `trainer.close()` | Frees the device memory and the datasets now (§2 rule 2). A running `run` finishes first. Later `run` and `export` calls on any clone are `InvalidInput`; `info` still works. Idempotent |
+| `TrainingEvent` | The events of training.md §4.1, a `#[non_exhaustive]` enum. `to_json()`; JSON `{"event": "started", …}` |
+| `TrainingOutcome` | Plain data (below), the value `run` returns and the `finished` event carries. `to_json()` |
+
+Paths are `impl AsRef<Path>` (§2 rule 10). `TrainingConfig`, `TrainerOptions`, `ResumeOptions`,
+`TrainingEvent`, `TrainingOutcome` and `TrainerInfo` are serde types whose JSON is the documented
+form; every function that takes one is equivalent to taking its JSON (§2 rule 3).
+
+**`TrainerOptions` JSON.** An object, every field optional, unknown fields rejected:
+
+| Field | Type, default | Meaning |
+|---|---|---|
+| `weights` | path string or null, null | Initial weights: a safetensors file or a sharded checkpoint's index (formats.md §1.5). It may hold a subset of the params; the others use their `init` (training.md §2.10 step 7). Null: every param uses its `init` |
+| `base_dir` | path string or null, null | The directory relative paths in the config are resolved against. Null: the process's current directory |
+| `datasets` | array, `[]` | `InMemoryDataset`s, `{"name": "…", "fields": [NamedTensor JSON, …]}` (§1.3), at most 64, names unique. Wrappers should pass tensors natively, not as JSON |
+
+**`TrainingOutcome` JSON.**
+
+```jsonc
+{
+  "stop_reason": "completed",            // or "cancelled"
+  "step": 4220,                          // optimizer steps completed
+  "epochs_completed": 5,
+  "final_metrics": {"train.loss": 0.021, "train.accuracy": 0.993, "val.loss": 0.031, "val.accuracy": 0.990},
+                                         // the last finished epoch's metrics; {} if none finished
+  "best": {"metric": "val.accuracy", "value": 0.9912, "epoch": 3, "step": 3376,
+           "checkpoint": "runs/mnist/step-000000003376"},   // null without checkpoint.keep_best
+  "history": [ {"epoch": 0, "step": 844, "metrics": {…}}, … ],   // every finished epoch (training.md §5.2)
+  "last_checkpoint": "runs/mnist/step-000000004220",          // or null
+  "elapsed_seconds": 812.5               // wall-clock time of every run of this training (informative)
+}
+```
+
+Numbers follow training.md §4.1 (non-finite values as `"nan"`, `"inf"`, `"-inf"`). Readers must
+accept new fields.
+
+**Errors** are those of training.md §6, with `message` `Could not create the trainer: …`,
+`Could not resume training: …`, `Training failed: …` or `Could not export the model: …` followed by
+the description, and `context.operation` `engine_trainer`, `engine_resume_trainer`, `trainer_run`
+or `trainer_export`.
+
+**Threading.** `run` blocks the calling thread and runs the steps on Polypous's threads; the
+callback runs on the calling thread or a worker thread (§4). One `run` at a time per trainer.
+Several trainers, and models, may run at the same time on one engine; they don't share state (§2
+rule 9), only the device.
+
+**CLI.** `polyp train`:
+
+```text
+polyp train <graph> --config <file> [--weights FILE] [--device ID] [--json]
+            [--export-graph FILE --export-weights FILE]
+polyp train --resume <dir> [--device ID] [--discard-newer] [--json]
+            [--export-graph FILE --export-weights FILE]
+```
+
+- A new run loads `<graph>` (`Graph::from_file`) and `--config` (`TrainingConfig::from_file`), with
+  `TrainerOptions::base_dir` the config file's directory and `weights` from `--weights`. `--device`
+  replaces the config's `device`.
+- `--resume` takes a checkpoint or run directory (`Engine::resume_trainer`; `--device` and
+  `--discard-newer` set `ResumeOptions`). `<graph>`, `--config` and `--weights` with `--resume` are a
+  usage error. A config with a `tensors` dataset can't be used from the CLI (`InvalidInput`).
+- Output: one line per event on stdout (epoch, step, loss, learning rate, metrics, checkpoint
+  paths). With `--json`, each event's JSON on its own line (JSON Lines), the `finished` event last.
+- `--export-graph` and `--export-weights` (both or neither) call `Trainer::export` after the run,
+  also after a cancelled one.
+- The first Ctrl-C (SIGINT; Ctrl-C or Ctrl-Break on Windows) cancels the run (training.md §4.3:
+  the current step finishes, and a checkpoint is written if configured); a second one ends the
+  process at once.
+- Exit codes: `0` training completed, `1` an error (message and context on stderr, the error JSON
+  with `--json`), `2` a usage error, `4` cancelled (the outcome was still printed and the export
+  written).
+
+C ABI (M7): `pp_engine_trainer`, `pp_engine_resume_trainer`, `pp_trainer_run`,
+`pp_trainer_export`, `pp_trainer_info_json`, `pp_trainer_free`.
 
 ## 4. Events and threading
 

@@ -123,7 +123,8 @@ Fix an item when its area is touched, or file an issue first.
 
 ## 5. Where M2 starts
 
-[roadmap.md, M2](roadmap.md#m2--training-toolkit): `DynamicModel` implementing Burn's `Module`,
+[roadmap.md, M2](roadmap.md#m2--training-toolkit): training on `DynTensor` with Burn's autodiff, a
+Polypous param store and own optimizers ([ADR-0014](adr/0014-training-on-dyntensor-with-own-optimizers.md)),
 parameter init from the IR (`init`, graph-ir.md §2.4), the declarative training config,
 optimizers, schedules, losses, metrics, datasets, events, checkpoints and resume. Exit: an
 MNIST-sized CNN trains to the expected accuracy from a JSON graph and a JSON config on CPU and CUDA,

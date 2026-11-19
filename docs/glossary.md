@@ -6,13 +6,13 @@
 | **Block** (placement block) | The unit the placement planner assigns to a tier. Usually one iteration of a `repeat` (one transformer layer). Also embeddings, the output head, etc. |
 | **Compute dtype** | The float dtype (`f32`, `f16` or `bf16`) a loaded model computes in. `float` params are cast to it when loaded, and graph inputs, state and some op attributes may declare `float` to mean it. See [graph-ir.md §2.2](specs/graph-ir.md#22-dtypes). |
 | **DynTensor** | Polypous' runtime-typed tensor wrapper over Burn's compile-time typed `Tensor<B, D, K>`: dynamic rank and dtype. |
-| **DynamicModel** | A `Module` implementation whose parameters come from a graph at runtime, so Burn optimizers can train it. |
 | **Engine** | Top-level public object: owns device discovery, the backend instances and loaded models. |
 | **Estimate** | The planner's pre-load prediction of memory per tier and expected speed. |
 | **Graph / Graph IR** | Polypous' serializable, runtime-defined network description. See [spec](specs/graph-ir.md). |
 | **Hyperparameter binding** | In a `.polyp`, a rule mapping a model-file metadata key (for example GGUF `llama.block_count`) to a named hyperparameter. |
 | **KV cache** | Keys/values of previous tokens kept between transformer forward passes. Modeled as explicit graph *state*. |
 | **Opset** | The versioned catalog of operations the IR may use (`core`, `nn`, `transformer`, …). |
+| **Param store** | The trainer's params: every declared param of a graph as an `f32` `DynTensor` on the training device, keyed by param name. Gradients and optimizer state are kept per param next to it; there is no Burn `Module` ([ADR-0014](adr/0014-training-on-dyntensor-with-own-optimizers.md), [training.md §1](specs/training.md#1-how-it-works)). |
 | **Pipeline** | Task-level orchestration around graphs (text generation, ASR, image generation). See [spec](specs/pipelines.md). |
 | **Pipeline component** | A built-in, named, code-implemented building block a pipeline references (tokenizer, sampler, scheduler, mel spectrogram). `.polyp` files configure components but never contain code. |
 | **`.polyp`** | A data-only architecture-family definition. See [spec](specs/polyp-format.md). |
