@@ -405,7 +405,7 @@ converted to safetensors and fetched through the manifest (§3.4; owner decision
   error of a loss grows with the number of steps before it. Measured with this CNN (batch 64, AdamW
   `lr = 1e-3`, PyTorch 2.15.0, CPU) on synthetic 28×28 images in `[0, 1]` (10 class templates plus
   noise, not MNIST itself; #73): over the first 10 losses, PyTorch
-  f32 differs from f64 by at most `2.0e-6` relative, and two f32 implementations (oneDNN and PyTorch's
+  f32 differs from f64 by at most `5.3e-7` relative, and two f32 implementations (oneDNN and PyTorch's
   native convolutions) differ by at most `1.6e-5`; after 20 steps the latter reaches `3.6e-4`, after 50
   steps `1e-3`. SGD with momentum 0.9 diverges faster (`1e-4` after 10 steps, `1e-2` after 20). The
   first 10 steps already exercise the forward, backward, optimizer and running-statistics paths, and
