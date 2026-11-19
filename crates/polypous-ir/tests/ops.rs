@@ -1387,6 +1387,23 @@ fn normalization() {
         .param("running_var", json!([8]))
         .attrs(json!({ "eps": 0 }))
         .err("invalid_attr");
+    // `momentum` (training mode, graph-ir.md §3.3): default 0.1, range [0, 1].
+    let bn_attrs = |attrs: Value| {
+        case("nn.batch_norm")
+            .x("f32", json!([2, 8]))
+            .param("running_mean", json!([8]))
+            .param("running_var", json!([8]))
+            .attrs(attrs)
+    };
+    assert_eq!(
+        bn_attrs(json!({})).info().attrs.float("momentum"),
+        Some(0.1)
+    );
+    assert_eq!(bn_attrs(json!({ "momentum": 0 })).ok(), "f32 [2, 8]");
+    assert_eq!(bn_attrs(json!({ "momentum": 1 })).ok(), "f32 [2, 8]");
+    bn_attrs(json!({ "momentum": 1.5 })).err("invalid_attr");
+    bn_attrs(json!({ "momentum": -0.1 })).err("invalid_attr");
+    bn_attrs(json!({ "momentum": "nan" })).err("invalid_attr");
 
     let ln = |x: Value, attrs: Value| case("nn.layer_norm").x("f32", x).attrs(attrs);
     assert_eq!(
