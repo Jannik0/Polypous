@@ -1,0 +1,91 @@
+{
+  "schema_version": 2,
+  "op": "nn.max_pool2d",
+  "case": "padded_ties_f32",
+  "description": "[1, 1, 3, 3] all equal, kernel [2, 2], stride [1, 1], padding [1, 1].",
+  "mode": "inference",
+  "attributes": {
+    "kernel_size": [
+      2,
+      2
+    ],
+    "stride": [
+      1,
+      1
+    ],
+    "padding": [
+      1,
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        1,
+        3,
+        3
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        1,
+        4,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        1,
+        1,
+        4,
+        4
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        1,
+        1,
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(F.max_pool2d(x, kernel_size, stride, padding, dilation), (x,), grad_out) in f64, rounded once to f32",
+  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): all of g to the first maximum of a window in row-major order (kh, then kw); overlapping windows add up. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 706,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

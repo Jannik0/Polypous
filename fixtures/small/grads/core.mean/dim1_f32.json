@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "op": "core.mean",
+  "case": "dim1_f32",
+  "description": "[3, 4, 2], dim [1].",
+  "mode": "inference",
+  "attributes": {
+    "dim": [
+      1
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4,
+        2
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        2
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.mean(x, dim, keepdim), (x,), grad_out) in f64, rounded once to f32",
+  "notes": "Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 412,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

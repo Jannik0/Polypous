@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "op": "core.cast",
+  "case": "f32_to_f32",
+  "description": "[3, 4] cast to its own dtype: the identity.",
+  "mode": "inference",
+  "attributes": {
+    "dtype": "f32"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(x.to(dtype), (x,), grad_out) in f64, rounded once to f32",
+  "notes": "Casts that change the dtype involve f16/bf16 (or integers, which get no gradient); M2's gradient fixtures are f32 only (graph-ir.md \u00a73.1.11). Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 331,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

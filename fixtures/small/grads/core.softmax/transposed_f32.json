@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "op": "core.softmax",
+  "case": "transposed_f32",
+  "description": "a transposed view [3, 4], dim 1.",
+  "mode": "inference",
+  "attributes": {
+    "dim": 1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.softmax(x, dim), (x,), grad_out) in f64, rounded once to f32",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 473,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

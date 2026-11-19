@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "op": "core.top_k",
+  "case": "smallest_f32",
+  "description": "[3, 6], k 3, largest false.",
+  "mode": "inference",
+  "attributes": {
+    "k": 3,
+    "largest": false
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        6
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_values",
+      "port": "values",
+      "dtype": "f32",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        3,
+        3
+      ]
+    },
+    {
+      "name": "indices",
+      "dtype": "i64",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.sort(x, dim, descending=largest, stable=True) cut to the first k, (x,), grad_values) in f64, rounded once to f32",
+  "notes": "The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): the gradient of values goes to the elements at the returned indices, which among equal values are the lowest (graph-ir.md \u00a73.1.8). torch.topk leaves the order of ties open, so the forward reference is the stable sort it otherwise equals (graph-ir.md \u00a73.2). Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 502,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

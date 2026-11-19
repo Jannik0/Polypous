@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "op": "core.split",
+  "case": "even_f32",
+  "description": "[6, 2] into [2, 2, 2] along dim 0: an upstream gradient per port.",
+  "mode": "inference",
+  "attributes": {
+    "dim": 0,
+    "sizes": [
+      2,
+      2,
+      2
+    ]
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        6,
+        2
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_0",
+      "port": "0",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "grad_1",
+      "port": "1",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "grad_2",
+      "port": "2",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out0",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "out1",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "out2",
+      "dtype": "f32",
+      "shape": [
+        2,
+        2
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        6,
+        2
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.split(x, sizes, dim), (x,), (grad_0, grad_1, grad_2)) in f64, rounded once to f32",
+  "notes": "Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 281,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

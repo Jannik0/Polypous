@@ -1,0 +1,66 @@
+{
+  "schema_version": 2,
+  "op": "nn.gelu",
+  "case": "tails_f32",
+  "description": "|x| from 3 to 10: the gradient vanishes below and tends to g above.",
+  "mode": "inference",
+  "attributes": {},
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        11
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        11
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        11
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        11
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.0001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(F.gelu(x), (x,), grad_out) in f64, rounded once to f32",
+  "notes": "PyTorch's f32 gradient loses relative accuracy below x = -5 (1 + erf cancels), so these values use the default tolerances. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 945,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

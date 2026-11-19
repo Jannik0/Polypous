@@ -5,6 +5,9 @@
   under fixtures/small/ under 50 MiB.
 - Every sidecar under fixtures/small/ops/ follows the schema and matches its safetensors header
   (names, dtypes, shapes, data offsets), and every `.safetensors` file has a sidecar.
+- Every gradient sidecar under fixtures/small/grads/<op>/ follows op sidecar schema version 2
+  (§3.6: keys and their order, `mask` and `running_stats` only where allowed, upstream and gradient
+  names, dtypes and shapes) and matches its safetensors header.
 - Every model under fixtures/small/models/<model>/ (§3.1, §3.5): `model.safetensors` holds exactly
   the params of `model.graph.json` (F32, declared shapes), and every case sidecar follows the model
   schema, names the graph's inputs and outputs in order and matches its safetensors header.
@@ -41,6 +44,11 @@ def check(root: str) -> list[str]:
             continue
         if ext == ".json" and rel.startswith("ops/"):
             problems += fixturelib.validate_case(os.path.join(root, rel))
+        elif ext == ".json" and rel.startswith("grads/"):
+            if rel.count("/") != 2:
+                problems.append(f"{rel}: not in grads/<op>/")
+            else:
+                problems += fixturelib.validate_grad_case(os.path.join(root, rel))
         elif ext == ".safetensors" and stem + ".json" not in present:
             problems.append(f"{rel}: no JSON sidecar")
     return problems

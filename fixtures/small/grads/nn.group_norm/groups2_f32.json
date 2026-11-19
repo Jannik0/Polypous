@@ -1,0 +1,112 @@
+{
+  "schema_version": 2,
+  "op": "nn.group_norm",
+  "case": "groups2_f32",
+  "description": "[2, 4, 3, 3], 2 groups.",
+  "mode": "inference",
+  "attributes": {
+    "num_groups": 2
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3,
+        3
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "weight",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        2,
+        4,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "grad_weight",
+      "of": "weight",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "grad_bias",
+      "of": "bias",
+      "dtype": "f32",
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(F.group_norm(x, num_groups, weight, bias, eps), (x, weight, bias), grad_out) in f64, rounded once to f32",
+  "notes": "Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 831,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

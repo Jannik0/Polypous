@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "op": "core.index_select",
+  "case": "transposed_f32",
+  "description": "a transposed view x [3, 5], index [4, 0, 4] along dim -1.",
+  "mode": "inference",
+  "attributes": {
+    "dim": -1
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        5
+      ]
+    },
+    {
+      "name": "index",
+      "dtype": "i64",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad_out",
+      "port": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "f32",
+      "shape": [
+        3,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad_x",
+      "of": "x",
+      "dtype": "f32",
+      "shape": [
+        3,
+        5
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0.0,
+    "rtol": 0.0
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(torch.index_select(x, dim, index), (x,), grad_out) in f64, rounded once to f32",
+  "notes": "x is fed as a transposed view: uploaded with its last two dims swapped, then transposed back. The gradients follow graph-ir.md \u00a73.1.11's convention here (checked by the generator): repeated indices receive the sum of their gradients. Expected values are PyTorch's (autograd) in f64 on the f32 tensors, rounded once to f32; PyTorch's own f32 result meets tolerance and gradient_tolerance (checked by the generator).",
+  "seed": 323,
+  "generator": "tools/reference/gen_grads.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

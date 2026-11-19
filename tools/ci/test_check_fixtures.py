@@ -22,6 +22,7 @@ import fixturelib  # noqa: E402  (put on sys.path by check_fixtures)
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE = os.path.join(REPO, "fixtures", "small", "ops", "core.add", "same_shape_f32")
 MODEL_SAMPLE = os.path.join(REPO, "fixtures", "small", "models", "cnn")
+GRADS = os.path.join(REPO, "fixtures", "small", "grads")
 
 
 def write(path: str, data: bytes) -> None:
@@ -291,6 +292,156 @@ class ModelValidationTest(unittest.TestCase):
         problems = self.problems()
         self.assertTrue(any("notes.txt: unexpected file in a model directory" in p for p in problems), problems)
         self.assertIn("models/stray.json: a file directly in models/ (expected models/<model>/)", problems)
+
+
+@unittest.skipUnless(os.path.isdir(GRADS), "committed gradient fixtures not present")
+class GradSidecarValidationTest(unittest.TestCase):
+    """Copies committed gradient fixtures (schema version 2, testing-strategy.md §3.6) and breaks them."""
+
+    CASES = {
+        "linear": ("nn.linear", "2d_f32"),
+        "dropout": ("nn.dropout", "train_p05_f32"),
+        "bn": ("nn.batch_norm", "train_rank2_f32"),
+        "split": ("core.split", "even_f32"),
+        "gather": ("core.gather", "repeated_dim0_f32"),
+    }
+
+    def setUp(self) -> None:
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        for op, name in self.CASES.values():
+            os.makedirs(os.path.join(self.root, "grads", op), exist_ok=True)
+            for ext in (".json", ".safetensors"):
+                shutil.copy(os.path.join(GRADS, op, name + ext), os.path.join(self.root, "grads", op, name + ext))
+
+    def path(self, key: str, ext: str = ".json") -> str:
+        op, name = self.CASES[key]
+        return os.path.join(self.root, "grads", op, name + ext)
+
+    def edit(self, key: str, change) -> None:
+        with open(self.path(key), encoding="utf-8") as f:
+            sidecar = json.load(f)
+        change(sidecar)
+        with open(self.path(key), "w", encoding="utf-8", newline="\n") as f:
+            f.write(fixturelib.canonical_json(sidecar))
+
+    def assert_problem(self, text: str) -> None:
+        problems = check_fixtures.check(self.root)
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def test_copy_is_clean(self) -> None:
+        self.assertEqual(check_fixtures.check(self.root), [])
+
+    def test_schema_version_must_be_2(self) -> None:
+        self.edit("linear", lambda s: s.update(schema_version=1))
+        self.assert_problem("schema_version 1 is not 2")
+
+    def test_a_schema_1_sidecar_is_refused_under_grads(self) -> None:
+        op_dir = os.path.join(self.root, "grads", "core.add")
+        os.makedirs(op_dir)
+        for ext in (".json", ".safetensors"):
+            shutil.copy(SAMPLE + ext, os.path.join(op_dir, "same_shape_f32" + ext))
+        self.assert_problem("differ from schema 2")
+
+    def test_keys_in_order(self) -> None:
+        def swap(s: dict) -> None:
+            items = list(s.items())
+            i = [k for k, _ in items].index("upstream")
+            items[i], items[i + 1] = items[i + 1], items[i]
+            s.clear()
+            s.update(items)
+
+        self.edit("linear", swap)
+        self.assert_problem("differ from schema 2")
+
+    def test_mask_only_for_dropout_in_training_mode(self) -> None:
+        self.edit("dropout", lambda s: s.update(mode="inference"))
+        self.assert_problem("differ from schema 2")
+
+    def test_running_stats_only_for_batch_norm_in_training_mode(self) -> None:
+        self.edit("bn", lambda s: s.update(mode="inference"))
+        self.assert_problem("differ from schema 2")
+
+    def test_training_mode_only_for_dropout_and_batch_norm(self) -> None:
+        self.edit("linear", lambda s: s.update(mode="training"))
+        self.assert_problem("have training-mode cases")
+
+    def test_unknown_mode(self) -> None:
+        self.edit("linear", lambda s: s.update(mode="eval"))
+        self.assert_problem("mode 'eval' is not one of")
+
+    def test_mask_must_have_x_shape(self) -> None:
+        self.edit("dropout", lambda s: s["mask"].update(shape=[4, 3]))
+        self.assert_problem("mask must be named mask and have x's shape")
+
+    def test_upstream_for_every_float_port(self) -> None:
+        self.edit("split", lambda s: s["upstream"].pop())
+        self.assert_problem("upstream ports ['0', '1'] differ from the float output ports ['0', '1', '2']")
+
+    def test_upstream_name_follows_the_port(self) -> None:
+        self.edit("linear", lambda s: s["upstream"][0].update(name="grad_y"))
+        self.assert_problem("must be grad_out")
+
+    def test_no_gradient_for_running_stats(self) -> None:
+        self.edit("bn", lambda s: s["gradients"].append(
+            {"name": "grad_running_mean", "of": "running_mean", "dtype": "f32", "shape": [3]}))
+        self.assert_problem("every param but the running statistics")
+
+    def test_gradient_of_every_float_input_and_param(self) -> None:
+        self.edit("linear", lambda s: s["gradients"].pop())
+        self.assert_problem("gradients are of ['x', 'weight']")
+
+    def test_integer_inputs_get_no_gradient(self) -> None:
+        self.edit("gather", lambda s: s["gradients"].append(
+            {"name": "grad_index", "of": "index", "dtype": "f32", "shape": [4, 4]}))
+        self.assert_problem("gradients are of ['x', 'index']")
+
+    def test_gradient_shape(self) -> None:
+        self.edit("linear", lambda s: s["gradients"][0].update(shape=[6, 3]))
+        self.assert_problem("must be grad_x with x's shape")
+
+    def test_running_stats_names(self) -> None:
+        self.edit("bn", lambda s: s["running_stats"].reverse())
+        self.assert_problem("running_stats must be new_running_mean, new_running_var")
+
+    def test_gradients_are_f32(self) -> None:
+        self.edit("linear", lambda s: s["gradients"][0].update(dtype="f16"))
+        self.assert_problem("gradients tensor 'grad_x' is f16, not f32")
+
+    def test_case_name_ends_in_f32(self) -> None:
+        for ext in (".json", ".safetensors"):
+            os.rename(self.path("linear", ext), self.path("linear", ext).replace("2d_f32", "2d"))
+        with open(self.path("linear").replace("2d_f32", "2d"), encoding="utf-8") as f:
+            sidecar = json.load(f)
+        sidecar["case"] = "2d"
+        with open(self.path("linear").replace("2d_f32", "2d"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(fixturelib.canonical_json(sidecar))
+        self.assert_problem("gradient case names end in _f32")
+
+    def test_bad_gradient_tolerance(self) -> None:
+        self.edit("linear", lambda s: s.update(gradient_tolerance={"exact": False, "atol": -1.0, "rtol": 0.0}))
+        self.assert_problem("bad tolerance")
+
+    def test_sidecar_against_the_file(self) -> None:
+        self.edit("linear", lambda s: s["outputs"][0].update(shape=[3, 5]))
+        self.assert_problem("outputs tensor 'out' is f32 [3, 5] in the sidecar, F32 [3, 4] in the file")
+
+    def test_undeclared_tensor(self) -> None:
+        self.edit("bn", lambda s: s.update(running_stats=s["running_stats"][:1]))
+        self.assert_problem("undeclared tensors ['new_running_var']")
+
+    def test_subnormal_gradient(self) -> None:
+        header = fixturelib.read_safetensors_header(self.path("linear", ".safetensors"))
+        start = header["grad_x"]["data_offsets"][0]
+        with open(self.path("linear", ".safetensors"), "r+b") as f:
+            (n,) = struct.unpack("<Q", f.read(8))
+            f.seek(8 + n + start)
+            f.write(struct.pack("<I", 1))
+        self.assert_problem("tensor 'grad_x' has subnormal values at flat indices [0]")
+
+    def test_file_directly_in_grads(self) -> None:
+        write(os.path.join(self.root, "grads", "stray.json"), b"{}")
+        self.assert_problem("grads/stray.json: not in grads/<op>/")
 
 
 class CommittedFixturesTest(unittest.TestCase):

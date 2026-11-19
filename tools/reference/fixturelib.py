@@ -445,3 +445,155 @@ def check_sizes(
     if total >= max_total:
         problems.append(f"{root}: {total} bytes in total, budget is {max_total}")
     return problems
+
+
+# ---------------------------------------------------------------------------------------------
+# Gradient fixtures: op sidecar schema version 2 (docs/testing-strategy.md §3.6), in
+# `fixtures/small/grads/<op>/<case>.{json,safetensors}`.
+
+GRAD_SCHEMA_VERSION = 2
+GRAD_MODES = ("inference", "training")
+# The only ops with training-mode cases, and the key each of them adds in training mode.
+GRAD_TRAINING_KEYS = {"nn.dropout": "mask", "nn.batch_norm": "running_stats"}
+# batch_norm's running statistics: params that never get a gradient (graph-ir.md §3.1.11).
+RUNNING_STATS = ("running_mean", "running_var")
+
+
+def grad_sidecar_keys(op: Any, mode: Any, with_params: bool) -> tuple[str, ...]:
+    """The keys of a schema-2 sidecar, in order: §3.2's keys plus `mode`, `mask` (dropout in training
+    mode), `upstream`, `running_stats` (batch_norm in training mode), `gradients` and
+    `gradient_tolerance`."""
+    extra = GRAD_TRAINING_KEYS.get(op) if mode == "training" else None
+    keys = ["schema_version", "op", "case", "description", "mode", "attributes", "inputs"]
+    keys += ["params"] if with_params else []
+    keys += ["mask"] if extra == "mask" else []
+    keys += ["upstream", "outputs"]
+    keys += ["running_stats"] if extra == "running_stats" else []
+    keys += ["gradients", "tolerance", "gradient_tolerance", "reference", "notes", "seed", "generator", "versions"]
+    return tuple(keys)
+
+
+def _named_entries(entries: Any, extra: tuple[str, ...] = ()) -> list[dict[str, Any]] | None:
+    """`entries` if it is a list of `{"name", *extra, "dtype", "shape"}` objects (keys in that order)
+    with a string name, a known dtype and a shape of non-negative integers; otherwise None."""
+    keys = ["name", *extra, "dtype", "shape"]
+    if not isinstance(entries, list):
+        return None
+    for e in entries:
+        if not (
+            isinstance(e, dict)
+            and list(e) == keys
+            and all(isinstance(e[k], str) for k in ("name", *extra))
+            and e["dtype"] in DTYPES
+            and isinstance(e["shape"], list)
+            and all(isinstance(d, int) and not isinstance(d, bool) and d >= 0 for d in e["shape"])
+        ):
+            return None
+    return entries
+
+
+def output_port_name(output: str) -> str:
+    """The port of an output tensor (§3.2 names): `out` -> `out`, `out0` -> `0` (core.split), `values`."""
+    return output[3:] if output.startswith("out") and output[3:].isdigit() else output
+
+
+def validate_grad_case(json_path: str) -> list[str]:
+    """Checks a gradient sidecar (schema version 2, docs/testing-strategy.md §3.6) against the schema
+    and its safetensors file. Returns problems."""
+    sidecar, text = read_sidecar(json_path)
+    if sidecar is None:
+        return [text or f"{json_path}: cannot read"]
+    if not isinstance(sidecar, dict):
+        return [f"{json_path}: sidecar is not a JSON object"]
+    op, mode = sidecar.get("op"), sidecar.get("mode")
+    want = grad_sidecar_keys(op, mode, "params" in sidecar)
+    if tuple(sidecar.keys()) != want:
+        return [f"{json_path}: keys {list(sidecar.keys())} differ from schema 2 for this op and mode {list(want)} "
+                "(`mask` only for nn.dropout and `running_stats` only for nn.batch_norm, in training mode)"]
+    problems: list[str] = []
+    if sidecar["schema_version"] != GRAD_SCHEMA_VERSION:
+        problems.append(f"{json_path}: schema_version {sidecar['schema_version']!r} is not {GRAD_SCHEMA_VERSION}")
+    if text != canonical_json(sidecar):
+        problems.append(f"{json_path}: not in canonical form (rerun the generator)")
+    stem = os.path.splitext(os.path.basename(json_path))[0]
+    if sidecar["case"] != stem:
+        problems.append(f"{json_path}: case {sidecar['case']!r} does not match the file name")
+    if not stem.endswith("_f32"):
+        problems.append(f"{json_path}: gradient case names end in _f32 (gradients are f32 only in M2)")
+    if op != os.path.basename(os.path.dirname(json_path)):
+        problems.append(f"{json_path}: op {op!r} does not match the directory name")
+    if mode not in GRAD_MODES:
+        problems.append(f"{json_path}: mode {mode!r} is not one of {list(GRAD_MODES)}")
+    elif mode == "training" and op not in GRAD_TRAINING_KEYS:
+        problems.append(f"{json_path}: only {sorted(GRAD_TRAINING_KEYS)} have training-mode cases")
+    problems += tolerance_problems(json_path, sidecar["tolerance"])
+    problems += tolerance_problems(json_path, sidecar["gradient_tolerance"])
+
+    inputs = _named_entries(sidecar["inputs"])
+    params = _named_entries(sidecar.get("params", []))
+    outputs = _named_entries(sidecar["outputs"])
+    upstream = _named_entries(sidecar["upstream"], ("port",))
+    gradients = _named_entries(sidecar["gradients"], ("of",))
+    running = _named_entries(sidecar.get("running_stats", []), ("param",))
+    mask = _named_entries([sidecar["mask"]]) if "mask" in sidecar else []
+    lists = {"inputs": inputs, "params": params, "outputs": outputs, "upstream": upstream, "gradients": gradients,
+             "running_stats": running, "mask": mask}
+    bad = [k for k, v in lists.items() if v is None]
+    if bad:
+        return problems + [f"{json_path}: malformed {', '.join(bad)} (entries are {{\"name\", …, \"dtype\", \"shape\"}})"]
+    assert inputs is not None and params is not None and outputs is not None and upstream is not None
+    assert gradients is not None and running is not None and mask is not None  # checked just above
+    if not outputs:
+        problems.append(f"{json_path}: outputs must not be empty")
+    floats = ("f32",)
+    for role, entries in (("inputs", inputs), ("params", params), ("outputs", outputs)):
+        for e in entries:
+            if e["dtype"] in ("f16", "bf16"):
+                problems.append(f"{json_path}: {role} tensor {e['name']!r} is {e['dtype']}; gradient fixtures are f32")
+    for role, entries in (("upstream", upstream), ("gradients", gradients), ("running_stats", running), ("mask", mask)):
+        for e in entries:
+            if e["dtype"] not in floats:
+                problems.append(f"{json_path}: {role} tensor {e['name']!r} is {e['dtype']}, not f32")
+
+    by_name = {e["name"]: e for e in inputs + params}
+    x = by_name.get("x")
+    if mask and (mask[0]["name"] != "mask" or x is None or mask[0]["shape"] != x["shape"]):
+        problems.append(f"{json_path}: mask must be named mask and have x's shape")
+    # Upstream: one per float output port, in port order, named grad_<port>, with the output's shape.
+    float_outputs = [e for e in outputs if e["dtype"] in floats]
+    ports = [output_port_name(e["name"]) for e in float_outputs]
+    if [u["port"] for u in upstream] != ports:
+        problems.append(f"{json_path}: upstream ports {[u['port'] for u in upstream]} differ from the float output "
+                        f"ports {ports} (one per float output, in order)")
+    for u, o in zip(upstream, float_outputs):
+        if u["name"] != "grad_" + u["port"] or u["shape"] != o["shape"]:
+            problems.append(f"{json_path}: upstream {u['name']!r} must be grad_{u['port']} with {o['name']}'s shape")
+    # Running statistics: new values of running_mean, then running_var, with the params' shapes.
+    if running:
+        if [(r["name"], r["param"]) for r in running] != [("new_" + p, p) for p in RUNNING_STATS]:
+            problems.append(f"{json_path}: running_stats must be new_running_mean, new_running_var of those params")
+        for r in running:
+            p = by_name.get(r["param"])
+            if p is None or p not in params or r["shape"] != p["shape"]:
+                problems.append(f"{json_path}: running statistic {r['name']!r} has no param {r['param']!r} of its shape")
+    # Gradients: every float input in order, then every param but the running statistics.
+    want_of = [e["name"] for e in inputs if e["dtype"] in floats]
+    want_of += [e["name"] for e in params if e["name"] not in RUNNING_STATS]
+    if [g["of"] for g in gradients] != want_of:
+        problems.append(f"{json_path}: gradients are of {[g['of'] for g in gradients]}, expected {want_of} "
+                        "(every float input in order, then every param but the running statistics)")
+    for g in gradients:
+        target = by_name.get(g["of"])
+        if g["name"] != "grad_" + g["of"] or target is None or g["shape"] != target["shape"]:
+            problems.append(f"{json_path}: gradient {g['name']!r} must be grad_{g['of']} with {g['of']}'s shape")
+
+    st_path = os.path.splitext(json_path)[0] + ".safetensors"
+    try:
+        header = read_safetensors_header(st_path)
+    except (OSError, FixtureError) as e:
+        return problems + [str(e)]
+    plain = {role: [{"name": e["name"], "dtype": e["dtype"], "shape": e["shape"]} for e in entries]
+             for role, entries in lists.items()}
+    problems += entry_problems(json_path, st_path, plain, header,
+                               ("inputs", "params", "mask", "upstream", "outputs", "running_stats", "gradients"))
+    return problems + subnormal_problems(st_path, header)
