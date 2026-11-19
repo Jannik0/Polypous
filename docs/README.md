@@ -37,6 +37,7 @@ See the [ADR index](adr/README.md).
 | [../CLAUDE.md](../CLAUDE.md) | AI agents (and humans): rules, commands, conventions |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Humans: quick start and PR checklist |
 | [development-workflow.md](development-workflow.md) | Tasks, lifecycle, definition of done, parallel agents, lead and worker agents |
+| [agent-prompts.md](agent-prompts.md) | Worker prompt templates: cloud worker, local verification, local fix |
 | [testing-strategy.md](testing-strategy.md) | Test levels, tolerances, fixtures, backends in CI |
 | [dev-environment.md](dev-environment.md) | Setting up Windows/Debian, CUDA, Vulkan, Python |
 | [hardware-targets.md](hardware-targets.md) | Target machines, memory budgets, expected placements |
