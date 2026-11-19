@@ -1,7 +1,10 @@
 # Spec: Graph IR
 
 **Status:** Binding for M1: §2 (all), §3.1–§3.3 (general rules and the M1 op catalog), §4, §5 and §6.
-Draft: §3.4 (planned ops) and §7. The `transformer` opset is refined in M3. **Crate:** `polypous-ir`
+Binding for M2 (training): initial values and `trainable` (§2.4, §2.4.1), training mode (§3.1.10),
+gradients (§3.1.11), random values (§3.1.12), the training mode of `nn.batch_norm` and `nn.dropout`
+(§3.3) and `invalid_init` (§4.2). Draft: §3.4 (planned ops) and §7. The `transformer` opset is
+refined in M3. **Crate:** `polypous-ir`
 
 The Graph IR is Polypous' serializable description of a neural network. Visual builders write it,
 `.polyp` files generate it, the trainer trains it, and the runtime executes it. It is **pure data**
@@ -266,15 +269,91 @@ Dim expressions come from untrusted documents:
 
 - In M1, `dtype` must be `float` and `shape` must be literals (rank 1–6). Other dtypes are reserved
   (`unsupported_in_version`).
-- A param may be used by several nodes (weight tying). An unused param is not an error.
+- A param may be used by several nodes (weight tying). An unused param is not an error, unless its
+  `init` is fan-based (§2.4.1).
 - `init` kinds (v1): `zeros`, `ones`, `constant{value}`, `uniform{low,high}`, `normal{mean,std}`,
-  `xavier_uniform`, `xavier_normal`, `kaiming_uniform{a}`, `kaiming_normal`. Fan-in and fan-out are
-  derived from the op that uses the parameter. Pretrained models ignore `init`: weights come from
-  files. M1 parses and validates `init` but doesn't apply it; that is M2 (training).
+  `xavier_uniform`, `xavier_normal`, `kaiming_uniform{a}`, `kaiming_normal`. The values each kind
+  gives, and the fan-in and fan-out that the fan-based kinds take from the ops using the param, are
+  in §2.4.1. Pretrained models ignore `init`: weights come from files. Validation checks `init`
+  whether or not weights are loaded later; the trainer applies it to the params that get no loaded
+  weights ([training.md](training.md)).
 - `init` fields: `constant.value`, `uniform.low`/`high` and `normal.mean`/`std` are required,
   `kaiming_uniform.a` is optional (default as in `torch.nn.init.kaiming_uniform_`, `0`). All are
   JSON numbers and must be finite. Other fields are `unknown_field`. `init` itself is optional.
-- `trainable` defaults to `true`. It has no effect before M2.
+  As in `torch.nn.init`, which raises for each of these, the values must also be usable:
+  `uniform.low ≤ uniform.high`, `normal.std ≥ 0`, and `constant.value`, `uniform.low`/`high` and
+  `normal.mean`/`std` must round to a finite `f32`. A violation is `invalid_value` on the field.
+  (`low = high` and `std = 0` are allowed and give a constant.)
+- `trainable` defaults to `true`. A param with `trainable: false` gets no gradient, is never
+  updated by the optimizer and has no optimizer state; it is still initialized (from `init` or a
+  weight file) like every other param. A param used as `running_mean` or `running_var` of
+  `nn.batch_norm` is never trained, whatever `trainable` says (§3.3). `trainable` doesn't change
+  what a call computes.
+- A graph without `init` is valid. A trainable param with neither `init` nor a loaded weight is an
+  error when the trainer is created, listing those params (owner decision 8 for M2; the error is
+  specified in [training.md](training.md)).
+
+#### 2.4.1 Initial values
+
+The trainer computes initial values on the host, never on the device, from the training seed (a
+`u64`, [training.md](training.md)), the param's name and shape, and its `init`. Each param has its
+own random stream (§3.1.12), so its values don't depend on the device, on other params or on the
+order params are initialized in. Every value is computed in `f64` exactly as written below and
+rounded once to `f32` (round to nearest, ties to even). Training is `f32` only in M2 (§3.1.11), so
+initial values are `f32`.
+
+Element `i` is the element at row-major index `i` of the param. With
+`key = stream_key(seed, 0, "init:" + name)` (§3.1.12), `U(i)` and `N(i)` are the uniform and normal
+values of §3.1.12 for that key. Integers (fans) convert to `f64` with round to nearest.
+
+| Kind | Value of element `i` |
+|---|---|
+| `zeros` | `0` |
+| `ones` | `1` |
+| `constant{value}` | `value` |
+| `uniform{low, high}` | `low + (high - low) · U(i)` |
+| `normal{mean, std}` | `mean + std · N(i)` |
+| `kaiming_uniform{a}` | `uniform` with `low = -bound`, `high = bound`, where `gain = sqrt(2 / (1 + a · a))`, `std = gain / sqrt(fan_in)`, `bound = sqrt(3) · std` |
+| `kaiming_normal` | `normal` with `mean = 0`, `std = gain / sqrt(fan_in)`, `gain = sqrt(2 / (1 + 0))` |
+| `xavier_uniform` | `uniform` with `low = -bound`, `high = bound`, where `std = 1 · sqrt(2 / (fan_in + fan_out))`, `bound = sqrt(3) · std` |
+| `xavier_normal` | `normal` with `mean = 0`, `std = 1 · sqrt(2 / (fan_in + fan_out))` |
+
+- These are the formulas of `torch.nn.init` (`kaiming_uniform_`, `kaiming_normal_`,
+  `xavier_uniform_`, `xavier_normal_`) in the same order of operations. The values themselves
+  differ from PyTorch's, because the random numbers come from the Polypous generator.
+- `kaiming_*` use `fan_in` (PyTorch's `mode="fan_in"`) and the leaky-relu gain
+  (`nonlinearity="leaky_relu"`). Neither is configurable. `kaiming_normal` has no `a`: it is
+  always `0` (PyTorch's default), and a field `a` on it is `unknown_field`. Adding `a` later is
+  backward compatible. `xavier_*` use gain `1`.
+- `uniform` values lie in `[low, high]` after rounding. `normal` values are unbounded; with an
+  extreme `mean` or `std` they may round to `±inf` (IEEE 754), as in PyTorch.
+
+**Fans.** The fan-based kinds (`kaiming_*`, `xavier_*`) take `fan_in` and `fan_out` from the
+nodes that use the param, by the param's role in the op:
+
+| Op | Param | `fan_in` | `fan_out` |
+|---|---|---|---|
+| `nn.linear` | `weight` `[out, in]` | `in` | `out` |
+| `nn.embedding` | `weight` `[num, dim]` | `dim` | `num` |
+| `nn.conv1d` | `weight` `[C_out, C_in/groups, k]` | `C_in/groups · k` | `C_out · k` |
+| `nn.conv2d` | `weight` `[C_out, C_in/groups, kh, kw]` | `C_in/groups · kh · kw` | `C_out · kh · kw` |
+
+- This is PyTorch's `torch.nn.init._calculate_fan_in_and_fan_out`: `fan_in = shape[1] · rf`,
+  `fan_out = shape[0] · rf`, where `rf` is the product of the dims after the second. `groups` is
+  already in the weight shape, and `fan_out` is not divided by it, as in PyTorch.
+- `nn.embedding`'s fans are PyTorch's computation for its 2-D weight. (PyTorch's `nn.Embedding`
+  initializes with `normal(0, 1)`, which is the kind `normal` here.)
+- Every other role has no fans: biases, the params of the normalization ops (also a
+  multi-dimensional `layer_norm` weight) and `batch_norm`'s running statistics. PyTorch raises for
+  tensors with fewer than 2 dims; Polypous goes further and accepts only the roles of the table.
+- A fan-based kind is the validation error `invalid_init` (§4.2) on the param when:
+  - no node uses the param (after expanding repeats);
+  - a node uses it in a role without fans;
+  - two uses give different `(fan_in, fan_out)`. With the roles of the table the fans depend only
+    on the param's shape, so this can't happen in `nn` v1; the rule is there for later ops whose
+    fans follow another rule.
+- The kinds without fans (`zeros`, `ones`, `constant`, `uniform`, `normal`) work on every param,
+  used or not.
 
 ### 2.5 State
 
@@ -350,8 +429,9 @@ Reusable bodies can be declared once under `"functions": { "name": { inputs, out
 and used with `{ "op": "call", "function": "name", ... }`. Builders use this for user-defined
 "composite layers". There is no recursion.
 
-**Not in M1.** Functions arrive in M2 with the builder's composite layers. In M1 a `functions` field
-on the graph or a node with `op: "call"` is the validation error `unsupported_in_version`.
+**Not in M1 or M2** (owner decision 4 for M2). Functions arrive in a later milestone with the
+builder's composite layers. Until then a `functions` field on the graph or a node with `op: "call"`
+is the validation error `unsupported_in_version`.
 
 ### 2.8 `meta`
 
@@ -399,7 +479,7 @@ These rules apply to every op unless its row or note says otherwise.
   with no default.
 - `F.` is `torch.nn.functional.`.
 - **Differentiable** "yes" means: with respect to every float input and every param. Integer and
-  bool inputs are never differentiable. Gradients are M2; this column fixes which ops get them.
+  bool inputs are never differentiable. What the gradients are is §3.1.11.
 
 #### 3.1.2 Dtypes (strict)
 
@@ -540,6 +620,160 @@ this call with the node's attributes as arguments, and the result must agree wit
 of [testing-strategy.md §2](../testing-strategy.md#2-tolerances-defaults). Where PyTorch accepts
 more forms than Polypous (for example an `int` where we require `int[2]`), the call uses the form
 written here.
+
+#### 3.1.10 Training mode
+
+A call runs in **inference mode** (the default, and the behavior of M1) or in **training mode**.
+The mode belongs to the call, not to the graph: validation doesn't depend on it, and a valid graph
+can be called in both modes. [runtime.md §3.1](runtime.md#31-mode) says how a call carries the mode
+and which checks a training-mode call adds (compute dtype `f32`, one use per running statistic,
+at least 2 values per channel for `batch_norm`).
+
+- Only two ops behave differently in training mode: `nn.batch_norm` normalizes with the batch
+  statistics and returns updated running statistics, and `nn.dropout` with `p > 0` zeroes random
+  elements (§3.3). Every other op computes the same in both modes.
+- A training-mode call carries a `seed` and a `step` (both `u64`), which key the dropout masks
+  (§3.1.12).
+- The mode and gradients are independent. Gradients come from tracked params and inputs
+  ([ADR-0014](../adr/0014-training-on-dyntensor-with-own-optimizers.md)), and an inference-mode
+  call records them the same way.
+- In M2, training mode requires the compute dtype `f32` (owner decision 6 for M2, §3.1.11).
+- Training mode adds the attribute `momentum` to `nn.batch_norm` (with a default) and changes no
+  inference result, so it is not a new opset version (§5): `nn` stays at version 1.
+
+#### 3.1.11 Gradients
+
+The "Diff." column says which inputs and params of an op get gradients: "yes" means every float
+input and every param, except `batch_norm`'s running statistics, which never get one (§3.3).
+Integer and bool values never have gradients. An op marked "no" passes no gradient to its inputs.
+
+**Reference.** An op's gradient is the one PyTorch's autograd computes for the call in the PyTorch
+column (with the argument forms written there, §3.1.9), at the same inputs and upstream gradient,
+within the gradient tolerance of [testing-strategy.md §2](../testing-strategy.md#2-tolerances-defaults).
+The training-mode ops use their training-mode call (§3.3). Gradients add up over every use of a
+value: a value read by several nodes, a param used by several nodes or by every iteration of a
+`repeat` (a `params_prefix` without `{i}`), and repeated indices of `core.gather`,
+`core.index_select` and `nn.embedding` all receive the sum.
+
+**Finite inputs.** Where every input of the op and its upstream gradient `g` are finite, the
+gradient is PyTorch's, also where that is `±inf` or NaN: for example `sqrt'(0) = +inf`,
+`rsqrt'(0) = -inf`, `log'(0) = +inf`, and the gradients of `div` at `b = 0`. Where the derivative is
+not unique (ties and kinks), PyTorch's choice is binding, as follows (checked against PyTorch
+2.15.0, #72):
+
+| Op | Where | Gradient |
+|---|---|---|
+| `core.max`, `core.min` | `k` elements of a reduced slice equal the result | each gets `g / k` (`torch.amax`/`amin` split it evenly) |
+| `core.maximum`, `core.minimum` | `a = b` | `g / 2` to `a` and `g / 2` to `b` |
+| `nn.max_pool2d` | several elements of a window equal its maximum | all of `g` to the first of them, in the window's row-major order (`kh`, then `kw`); overlapping windows add up |
+| `core.top_k` | equal values | to the elements at the returned `indices` (§3.1.8 ties) |
+| `core.clamp` | `x = min` or `x = max` (also `min = max`) | `0`. `g` passes only where `min < x < max` (with one bound: `x > min`, or `x < max`) |
+| `core.where` | — | `g` to `a` where `cond` is true, to `b` elsewhere, `0` to the other |
+| `core.abs` | `x = 0` (also `-0`) | `0` |
+| `nn.relu` | `x = 0` (also `-0`) | `0` |
+| `nn.leaky_relu` | `x = 0` (also `-0`) | `negative_slope · g` |
+| `nn.softplus` | `β·x = 0` | `g / 2` (`= σ(0)`). Above the threshold (`β·x > threshold`), `g` |
+| `core.sqrt` | `x = 0` | `g / (2 · sqrt(x))`, so `+inf` for `g > 0` |
+| `core.pow` | `b = 0` | `∂/∂a = 0` (also at `a = 0`) |
+| `core.pow` | `a = 0` and `b ≥ 0` | `∂/∂b = 0` |
+| `core.pow` | elsewhere | `∂/∂a = g · b · a^(b-1)`, `∂/∂b = g · a^b · ln(a)`: NaN for `a < 0`, `±inf` at `a = 0` with `b < 0` or `0 < b < 1` |
+
+- `clamp`: this is PyTorch's form with scalar bounds, which the PyTorch column uses
+  (`torch.clamp(x, min, max)` with the attributes as Python numbers). PyTorch's form with tensor
+  bounds gives `g / 2` at a bound and is not the reference.
+- `max_pool2d`: a window that lies entirely in the padding (possible with `dilation > 1`, §3.3)
+  reads no element and passes no gradient. PyTorch 2.15.0's CPU backward corrupts its heap in that
+  case (`malloc(): invalid size`), so it has no fixture.
+
+**Non-finite inputs.** Where an input of the op or its upstream gradient is NaN or `±inf`, the
+gradient is unspecified: any value, but never a panic, and the backward pass completes. PyTorch's
+own results there are irregular and are not the reference. For example (informative): `amax` of a
+slice holding NaN gives NaN to the whole slice, `maximum(NaN, 1)` passes `g` to both inputs,
+`clamp(NaN)` gives `0` with scalar bounds and `g` with tensor bounds, `relu'(NaN) = 1`, and
+`max_pool2d` sends the gradient to a NaN in the window.
+
+**Dtypes.** Gradients are `f32` only in M2 (owner decision 6 for M2): the trainer and training mode
+require the compute dtype `f32`, and other compute dtypes are `UnsupportedOperation`
+([training.md](training.md), [runtime.md §3.1](runtime.md#31-mode)). A graph that casts values to
+`f16` or `bf16` inside gets gradients through them by the same rules, but M2's reference tests cover
+`f32` only. The `f16`/`bf16` compute paths of §3.1.8 are not part of M2's gradients.
+
+#### 3.1.12 Random values
+
+Dropout masks (§3.3) and initial values (§2.4.1) come from one Polypous generator on the host,
+never from a device RNG (owner decision 2 for M2,
+[ADR-0014](../adr/0014-training-on-dyntensor-with-own-optimizers.md)). They are therefore the same
+on every device and backend, and independent of threads and of the order in which nodes run. The
+generator is SplitMix64 (Steele, Lea and Flood, 2014) used as a counter-based hash: value `i` of a
+stream is a hash of the stream's key and `i`, so no generator state is kept or saved.
+
+All arithmetic is on `u64` and wraps (modulo 2^64); `^` is exclusive or and `>>` a logical shift.
+
+```text
+GAMMA = 0x9E3779B97F4A7C15
+
+mix(z):         z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+                z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+                return z ^ (z >> 31)
+
+fnv1a(label):   h = 0xCBF29CE484222325
+                for each byte b of label:  h = (h ^ b) * 0x00000100000001B3
+                return h
+
+stream_key(seed, step, label) = mix(mix(seed ^ GAMMA) ^ mix(step) ^ fnv1a(label))
+draw(key, i)                  = mix(key + (i + 1) * GAMMA)
+```
+
+**Streams.** Labels are ASCII strings:
+
+| Use | `seed` | `step` | `label` |
+|---|---|---|---|
+| `nn.dropout` | the call's `seed` | the call's `step` | `"dropout:"` + the node path of [runtime.md §5](runtime.md#5-errors) (`drop1`, `layers[3]/drop`, `outer[1]/inner[0]/drop`) |
+| `init` (§2.4.1) | the training seed | `0` | `"init:"` + the param name |
+
+- A node inside a `repeat` has a different path, and so a different stream, in each iteration.
+- `:` appears in neither node paths nor param names, so a dropout label never equals an init label.
+  Two different labels hash to the same `fnv1a` value with a probability of about 2^-64 per pair;
+  that would only correlate two streams.
+
+**Values from draws.** In `f64`, from `z = draw(key, i)`:
+
+- `u24(z) = (z >> 40) · 2^-24`, uniform in `[0, 1)` on a grid of 2^-24. Exact in `f32` and `f64`.
+  Dropout uses it.
+- `U(i) = (z >> 11) · 2^-53`, uniform in `[0, 1)` on a grid of 2^-53. Exact in `f64`.
+- `N(i)`, standard normal by the Box–Muller transform, one value from each pair of draws:
+  `v1 = ((draw(key, 2i) >> 11) + 1) · 2^-53` (in `(0, 1]`, so the logarithm is finite),
+  `v2 = (draw(key, 2i + 1) >> 11) · 2^-53`, and `N(i) = sqrt(-2 · ln(v1)) · cos(TAU · v2)`, with
+  `TAU` the `f64` nearest to 2π (Rust's `std::f64::consts::TAU`).
+
+Every index `i` (and `2i + 1`) of a tensor that can be allocated is far below 2^63, so the counters
+don't wrap.
+
+**Exactness.** Everything above except `ln` and `cos` is exact or correctly rounded in IEEE 754
+(integer arithmetic, multiplication by powers of two, `+`, `-`, `·`, `/`, `sqrt`). So the streams,
+`u24`, `U`, dropout masks and the initial values of `zeros`, `ones`, `constant`, `uniform`,
+`kaiming_uniform` and `xavier_uniform` are bit-identical on every platform and in every correct
+implementation. `ln` and `cos` come from the platform's math library, which IEEE 754 doesn't require
+to round correctly; the values of `normal`, `kaiming_normal` and `xavier_normal` may therefore
+differ between platforms in the last bit of the `f64` result, which after rounding to `f32` rarely
+shows and is then 1 ulp. Their reference test allows 1 ulp (`f32`); the others are bit-exact.
+
+**Known values** (for tests of an implementation):
+
+| Quantity | Value |
+|---|---|
+| `draw(0, 0)` (SplitMix64's first output for seed 0) | `0xE220A8397B1DCDAF` |
+| `fnv1a("a")` | `0xAF63DC4C8601EC8C` |
+| `stream_key(42, 7, "dropout:layers[3]/drop")` | `0x559FE2396A2BE18C` |
+| `draw` 0–3 of that key | `0xDEAFBD2049BBA567`, `0x97B9C0C7F5A35D08`, `0xC5DA3B226895E44F`, `0x09407FF20490E439` |
+| their `u24` | `0.8698690533638`, `0.5926780700683594`, `0.7728611826896667`, `0.036140382289886475` |
+| `stream_key(42, 0, "init:fc1.weight")` | `0x4A64D327A84495D0` |
+| `U(0)`, `U(1)`, `U(2)` of that key | `0.9418494217379093`, `0.952777646315502`, `0.21886262424309422` |
+| `N(0)`, `N(1)`, `N(2)` of that key (`f64`) | `0.33102468465391816`, `1.1951877566467608`, `0.2241557644014358` |
+| `kaiming_uniform` (`a = 0`) of `fc1.weight` `[128, 784]`, seed 42, elements 0–2 (`f32`) | `0.077307545`, `0.07921959`, `-0.049188793` |
+
+The generator's statistical test (uniformity of `u24`, dropout rates, moments of `N`) belongs to
+[testing-strategy.md](../testing-strategy.md).
 
 ### 3.2 `core` (v1, M1)
 
@@ -733,7 +967,7 @@ provably equal to that literal. Optional params are marked `?`.
 | `nn.max_pool2d` | `x`: `C`, `[N, C, H, W]` | — | `kernel_size: int[2]`, `stride: int[2]?` (default `kernel_size`), `padding: int[2] = [0, 0]`, `dilation: int[2] = [1, 1]` | `out`: `C` | `[N, C, H_out, W_out]` | yes | `F.max_pool2d(x, kernel_size, stride, padding, dilation)` |
 | `nn.avg_pool2d` | `x`: `C`, `[N, C, H, W]` | — | `kernel_size: int[2]`, `stride: int[2]?` (default `kernel_size`), `padding: int[2] = [0, 0]`, `count_include_pad: bool = true` | `out`: `C` | `[N, C, H_out, W_out]` | yes | `F.avg_pool2d(x, kernel_size, stride, padding, count_include_pad=count_include_pad)` |
 | `nn.adaptive_avg_pool2d` | `x`: `C`, `[N, C, H, W]` | — | `output_size: int[2]` (≥ 1) | `out`: `C` | `[N, C, oh, ow]` | yes | `F.adaptive_avg_pool2d(x, output_size)` |
-| `nn.dropout` | `x`: `C` | — | `p: float = 0.5` (`0 ≤ p < 1`) | `out`: `C` | `x.shape` | yes | `F.dropout(x, p, training=False)` |
+| `nn.dropout` | `x`: `C` | — | `p: float = 0.5` (`0 ≤ p < 1`) | `out`: `C` | `x.shape` | yes | `F.dropout(x, p, training=t)`, `t` = training mode; see note |
 
 - The input `x` of `nn` ops has dtype `C`; the tables write it as `C`, and the allowed class is `F`.
 - `linear`: `x` has rank 1–6; its last dim must be provably equal to `in`.
@@ -752,22 +986,63 @@ provably equal to that literal. Optional params are marked `?`.
   result is `-inf`, as in PyTorch.
 - `adaptive_avg_pool2d`: output cell `i` averages input rows `floor(i*H/oh)` to
   `ceil((i+1)*H/oh) - 1`, as in PyTorch.
-- `dropout`: identity in M1 (there is no training mode before M2). `p` is validated so graphs stay
-  valid for training.
+- `dropout` in inference mode is the identity (`out = x`), for every `p`. In training mode
+  (§3.1.10), as PyTorch's `F.dropout(x, p, training=True)` on the CPU, but with Polypous masks:
+  - `p = 0` is the identity and draws nothing.
+  - Otherwise element `i` of `x` (row-major index at the bound shape) is kept if
+    `u24(draw(key, i)) ≥ p`, compared in `f64`, with `key = stream_key(seed, step, "dropout:" +
+    node path)` from the call (§3.1.12), and dropped otherwise. Each element is kept with
+    probability `1 - p` (to within 2^-24).
+  - `out = x · m`, in `f32`, where `m = s` for a kept element and `0` for a dropped one, and
+    `s = 1 / (1 - p)` is computed as PyTorch's CPU kernel computes it: `1 - p` in `f64`, rounded to
+    `f32`, then the division in `f32`. Because `out` is a product, NaN or `±inf` in `x` gives NaN
+    at a dropped element, as in PyTorch.
+  - The gradient is `g · m`, with the same mask.
+  - Fixtures can't reproduce PyTorch's masks, which come from PyTorch's generator. The op's
+    reference test therefore takes the mask as an input and checks output and gradient against
+    PyTorch's `x * (mask / (1 - p))` (`mask` a float tensor of 0 and 1), which is what
+    `F.dropout` computes for that mask. The masks themselves are tested statistically and against
+    the known values of §3.1.12 (testing-strategy.md).
 - Unbatched inputs (PyTorch's conv/pool on rank 2 or 3 without `N`) are not supported; `unsqueeze`.
 
 #### Normalization
 
 | Op | Inputs | Params | Attributes | Outputs | Shape | Diff. | PyTorch |
 |---|---|---|---|---|---|---|---|
-| `nn.batch_norm` | `x`: `C`, `[N, C, …]`, rank 2–6 | `running_mean` `[C]`, `running_var` `[C]`, `weight?` `[C]`, `bias?` `[C]` | `eps: float = 1e-5` (> 0) | `out`: `C` | `x.shape` | yes (`x`, `weight`, `bias`) | `F.batch_norm(x, running_mean, running_var, weight, bias, training=False, eps=eps)` |
+| `nn.batch_norm` | `x`: `C`, `[N, C, …]`, rank 2–6 | `running_mean` `[C]`, `running_var` `[C]`, `weight?` `[C]`, `bias?` `[C]` | `eps: float = 1e-5` (> 0), `momentum: float = 0.1` (`0 ≤ momentum ≤ 1`) | `out`: `C` | `x.shape` | yes (`x`, `weight`, `bias`) | `F.batch_norm(x, running_mean, running_var, weight, bias, training=t, momentum=momentum, eps=eps)`, `t` = training mode |
 | `nn.layer_norm` | `x`: `C` | `weight?` `normalized_shape`, `bias?` `normalized_shape` | `normalized_shape: int[]?` (1…`r` entries), `eps: float = 1e-5` (> 0) | `out`: `C` | `x.shape` | yes | `F.layer_norm(x, normalized_shape, weight, bias, eps)` |
 | `nn.group_norm` | `x`: `C`, `[N, C, …]`, rank 2–6 | `weight?` `[C]`, `bias?` `[C]` | `num_groups: int` (≥ 1, divides `C`), `eps: float = 1e-5` (> 0) | `out`: `C` | `x.shape` | yes | `F.group_norm(x, num_groups, weight, bias, eps)` |
 | `nn.rms_norm` | `x`: `C` | `weight?` `normalized_shape` | `normalized_shape: int[]?` (1…`r` entries), `eps: float` (> 0) | `out`: `C` | `x.shape` | yes | `F.rms_norm(x, normalized_shape, weight, eps)` |
 
-- `batch_norm` is inference mode only in M1: it normalizes with the running statistics, which are
-  never updated. Training mode (batch statistics, `momentum`, updating the running statistics) is
-  specified with M2. `running_mean` and `running_var` are params, so they are not differentiable.
+- `batch_norm` in inference mode normalizes with the running statistics, per channel:
+  `out = (x - running_mean) / sqrt(running_var + eps) · weight + bias`. Nothing is updated, and
+  `momentum` has no effect.
+- `batch_norm` in training mode (§3.1.10) is PyTorch's `F.batch_norm(…, training=True,
+  momentum=momentum)`:
+  - `n` is the number of values per channel: `N` times the product of the dims after `C`. `n ≥ 2`
+    is required. With `n = 1` the call fails with `InvalidInput` naming the node, checked with the
+    bound shapes before any node runs ([runtime.md §3](runtime.md#3-calls)). PyTorch raises too
+    ("Expected more than 1 value per channel when training"). Validation can't check it, because
+    it doesn't know the mode.
+  - It normalizes with the batch statistics over every dim except `C`: the mean `mean_c` and the
+    biased variance `var_c = mean((x - mean_c)²)`.
+    `out = (x - mean_c) / sqrt(var_c + eps) · weight + bias`. The gradient flows through `mean_c`
+    and `var_c` to `x`, as in PyTorch.
+  - It doesn't read the running statistics. The call returns their new values
+    ([runtime.md §3.3](runtime.md#33-running-statistics)):
+    `running_mean' = (1 - momentum) · running_mean + momentum · mean_c` and
+    `running_var' = (1 - momentum) · running_var + momentum · var_c · n / (n - 1)` (the unbiased
+    variance). They are computed in `f32` from values without autodiff tracking, with `momentum`,
+    `1 - momentum` and `n / (n - 1)` computed in `f64` and rounded once to `f32`. `momentum = 0`
+    keeps the running statistics, `1` replaces them with the batch statistics.
+  - PyTorch's `momentum=None` (a cumulative average, with the `num_batches_tracked` counter) is not
+    supported. PyTorch also accepts a `momentum` outside `[0, 1]`, which extrapolates; here that is
+    `invalid_attr`.
+- `running_mean` and `running_var` are params in both modes (owner decision 7 for M2), so PyTorch's
+  `state_dict` names and the M1 weights keep working. They are never differentiable and never
+  trained, whatever `trainable` says (§2.4). In training mode the caller writes the returned values
+  back ([training.md](training.md)). A training-mode call requires each of them to have exactly one
+  use ([runtime.md §3.1](runtime.md#31-mode)).
 - `layer_norm`, `rms_norm`: `normalized_shape` lists literal dims that must be provably equal to the
   trailing dims of `x`. The params have exactly that shape. Without the attribute, it is the shape
   of `weight`; without both, `missing_attr`.
@@ -802,8 +1077,7 @@ Not in the M1 catalog. A graph that uses them fails validation with `unknown_op`
 - `core`: `pad` modes `reflect`, `replicate` and `circular`; integer division and remainder;
   reading a param as a value (for example a learned position embedding added with `core.add`);
   `any`/`all`.
-- `nn` (M2 or later, as needed): `conv_transpose2d`, `upsample_nearest`, `upsample_bilinear`;
-  training mode of `batch_norm` and `dropout`.
+- `nn` (M2 or later, as needed): `conv_transpose2d`, `upsample_nearest`, `upsample_bilinear`.
 
 #### `transformer` (M3)
 
@@ -854,7 +1128,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `unsupported_opset` | An opset in `opsets` is unknown or its version isn't supported |
 | `unknown_field` | A field that the schema doesn't define (except inside `meta`) |
 | `missing_field` | A required field is missing (for example a node's `op`, a param's `shape`) |
-| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, `min`/`max` of a dim, an empty shape, a literal dim above 2^32, an expression where §2.3 allows only literals or plain symbols, no `outputs`), or a list exceeds its §4.3 limit (`dims`, inputs, outputs, state entries, the references of a variadic input: 1–1,024) |
+| `invalid_value` | A field has a value outside its allowed set (a bad dtype name, `float` where it isn't allowed, an unknown `init` kind, an `init` value that isn't finite or usable (§2.4), `min`/`max` of a dim, an empty shape, a literal dim above 2^32, an expression where §2.3 allows only literals or plain symbols, no `outputs`), or a list exceeds its §4.3 limit (`dims`, inputs, outputs, state entries, the references of a variadic input: 1–1,024) |
 | `invalid_name` | A name or id breaks the naming rules (§2.1, §2.3.1) |
 | `duplicate_name` | Two values, params, dims, state entries or outputs share a name |
 | `unknown_reference` | A reference to an undeclared value, port, param, state entry or dim symbol (a shape entry that is a plain symbol; an undeclared symbol inside a longer expression is `invalid_dim_expr`) |
@@ -880,6 +1154,7 @@ Codes are stable `snake_case` strings. New codes may be added; existing ones kee
 | `invalid_repeat` | `count` is out of range, `carry` is empty, or a body with state has a `state_prefix` without `{i}` |
 | `too_many_nodes` | More than 1,000,000 nodes, or more than 4,000,000 param bindings, after expanding repeats |
 | `repeat_too_deep` | `repeat` nesting exceeds 8 levels |
+| `invalid_init` | A fan-based `init` kind (`kaiming_*`, `xavier_*`) on a param that no node uses, that a node uses in a role without fans, or whose uses give different fans (§2.4.1). The message says which, and names the node and role |
 | `too_many_elements` | A param's or constant's element count, or the total param element count, doesn't fit in `u64` or exceeds its limit |
 
 ### 4.3 Resource limits
@@ -923,8 +1198,8 @@ of runtime errors, with weight loading and cancellation, is [runtime.md §5](run
 
 | Kind | When |
 |---|---|
-| `InvalidInput` | A binding check of §2.3.4 fails (missing or extra input, wrong dtype or rank, inconsistent symbol, out of `min`/`max`, an inferred dim < 1, overflow), or an index is out of range (§3.1.8) |
-| `UnsupportedOperation` | The device doesn't support a dtype or (op, dtype) pair of the graph, or the compute dtype (§2.2) |
+| `InvalidInput` | A binding check of §2.3.4 fails (missing or extra input, wrong dtype or rank, inconsistent symbol, out of `min`/`max`, an inferred dim < 1, overflow), an index is out of range (§3.1.8), or a training-mode `nn.batch_norm` has one value per channel (§3.3) |
+| `UnsupportedOperation` | The device doesn't support a dtype or (op, dtype) pair of the graph, or the compute dtype (§2.2); or a training-mode call has a compute dtype other than `f32`, or a running statistic with more than one use ([runtime.md §3.1](runtime.md#31-mode)) |
 
 ## 5. Versioning and migration
 
