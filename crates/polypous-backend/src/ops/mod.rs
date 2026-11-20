@@ -228,8 +228,7 @@
 //!   but leave the float graph intact). `full_like` passes no gradient: its result is a new
 //!   untracked tensor.
 //! - **Non-finite inputs** (§3.1.11: gradient unspecified): every fix completes the backward pass
-//!   without a panic, and keeps the forward value bit for bit (unit tests in
-//!   `tensor/autodiff_tests.rs`).
+//!   without a panic, and keeps the forward value bit for bit (`tests/autodiff.rs`).
 //! - The reductions, `matmul`, `softmax`, `cumsum`, `top_k` (whose host values cut the graph) and
 //!   the `nn` ops follow in #76 and #77.
 //!

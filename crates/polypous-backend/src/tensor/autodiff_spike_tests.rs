@@ -1,23 +1,34 @@
 //! The experiments of the autodiff spike (#71) that later tasks still use: the optimizers of
 //! design (b) with their PyTorch comparison (`step_b`, Q3: kept for #79), the cost of host-side
-//! randomness (Q4) and the MNIST-sized CNN step (Q5). `#[ignore = "spike"]`, so not part of the
-//! normal test run. The spike's Q1 (API) and Q2 (op gradients) experiments were replaced by the
-//! unit tests in `autodiff_tests.rs` and the gradient reference harness (`tests/grad_reference_*`,
-//! #75).
+//! randomness (Q4) and the MNIST-sized CNN step (Q5). `#[ignore = "spike"]`, and they do nothing
+//! unless `POLYPOUS_SPIKE=1` is set, so neither the normal test run nor CI's `--include-ignored`
+//! runs them: they are measurements, not checks (Q3 needs PyTorch's results; Q4 and Q5 allocate
+//! MNIST-sized tensors and take minutes in a debug build). The spike's Q1 (API) and Q2 (op
+//! gradients) experiments were replaced by the API tests in `tests/autodiff.rs` and the gradient
+//! reference harness (`tests/grad_reference_*`, #75).
 //!
 //! ```text
-//! cargo test -p polypous-backend --lib spike -- --ignored --nocapture --test-threads 1
+//! POLYPOUS_SPIKE=1 cargo test -p polypous-backend --lib spike -- --ignored --nocapture --test-threads 1
 //! # lavapipe as well:
-//! VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json POLYPOUS_TEST_SOFTWARE_VULKAN=1 \
+//! POLYPOUS_SPIKE=1 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json POLYPOUS_TEST_SOFTWARE_VULKAN=1 \
 //!   cargo test -p polypous-backend --features vulkan --lib spike -- --ignored --nocapture --test-threads 1
 //! # Q5 timings need a release build:
-//! cargo test --release -p polypous-backend --lib spike_q5 -- --ignored --nocapture
+//! POLYPOUS_SPIKE=1 cargo test --release -p polypous-backend --lib spike_q5 -- --ignored --nocapture
 //! ```
 //!
 //! `spike_q3_*` read PyTorch's results from `spike/out/q3_torch.json`, which
 //! `spike/compare_torch.py q3` writes.
 
 use std::time::Instant;
+
+/// Whether `POLYPOUS_SPIKE=1` asks for the experiments (see the module documentation).
+fn spike_enabled() -> bool {
+    let enabled = std::env::var("POLYPOUS_SPIKE").is_ok_and(|v| v == "1");
+    if !enabled {
+        eprintln!("SKIP spike experiment: set POLYPOUS_SPIKE=1 to run it");
+    }
+    enabled
+}
 
 use crate::device::DeviceId;
 use crate::ops::Scalar;
@@ -313,6 +324,9 @@ fn mse_linear(x: &DynTensor, w: &DynTensor, b: &DynTensor, y: &DynTensor) -> Res
 #[test]
 #[ignore = "spike"]
 fn spike_q3_optimizers_design_b() {
+    if !spike_enabled() {
+        return;
+    }
     let Some(torch) = load_torch_q3() else {
         eprintln!("spike/out/q3_torch.json missing: run spike/compare_torch.py q3 first");
         return;
@@ -360,6 +374,9 @@ fn spike_q3_optimizers_design_b() {
 #[test]
 #[ignore = "spike"]
 fn spike_q3_optimizer_only_design_b() {
+    if !spike_enabled() {
+        return;
+    }
     let Some(torch) = load_torch_q3() else {
         return;
     };
@@ -428,6 +445,9 @@ fn dropout_mask(key: u64, n: usize, p: f32) -> Vec<f32> {
 #[test]
 #[ignore = "spike"]
 fn spike_q4_host_rng_cost() {
+    if !spike_enabled() {
+        return;
+    }
     // Statistics of the generator: mean of 1M uniforms and the dropout rate.
     let key = stream_key(42, 7, "block1/dropout");
     let n = 1_000_000u64;
@@ -476,6 +496,9 @@ fn spike_q4_host_rng_cost() {
 #[test]
 #[ignore = "spike"]
 fn spike_q5_mnist_cnn_step() {
+    if !spike_enabled() {
+        return;
+    }
     let batch: usize = std::env::var("SPIKE_BATCH")
         .ok()
         .and_then(|v| v.parse().ok())

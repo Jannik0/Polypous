@@ -118,6 +118,19 @@ Fix an item when its area is touched, or file an issue first.
     `-0` on `flex`, NaN at `±0` on lavapipe.
   - Burn's "graph tape has already been consumed" panic (a second backward) leaves the graph usable:
     `DynTensor::backward` catches it and returns an error; fresh forwards from the same leaves work.
+  - **Lavapipe crashes (SIGSEGV) in autodiff work, not worked around.** A standalone reproduction
+    with Burn's API only (`lavapipe_where_select_backward_crash` in
+    `polypous-backend/src/tensor/autodiff_tests.rs`, opt-in with `POLYPOUS_REPRO_LVP_CRASH=1`)
+    crashes 3 of 3 runs on lavapipe (Ubuntu's Mesa, cloud VM): after some backward passes on the
+    device, a tracked `x` through `greater(...).bool_and(is_nan(x).bool_or(is_nan(z)).bool_not())`,
+    `mask_where` and `select`, back-propagated, crashes inside lavapipe's compiled kernel code when
+    the gradient is read. Dropping the earlier work, the `bool_or`, or using `gather` instead of
+    `select` makes it pass. The API test `autodiff_gpu` (`tests/autodiff.rs`) crashed the same way
+    in about 1 of 3 runs, and in parallel with the backend's other GPU unit tests most of the time;
+    it therefore skips lavapipe unless `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1`. Lavapipe buffers live in
+    host memory, so this looks like an out-of-bounds read in a CubeCL kernel that only faults with
+    some heap layouts. The gradient reference tests (30 of 30 runs) and the forward tests with
+    tracked inputs pass on lavapipe. Not checked on hardware GPUs yet (#75's reference-machine run).
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work.

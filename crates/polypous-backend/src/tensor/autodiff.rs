@@ -222,9 +222,10 @@ impl DynTensor {
         DynTensor::from_parts(inner, dtype, device)
     }
 
-    /// Whether the tensor carries an autodiff context (tracked or not).
-    #[cfg(test)]
-    pub(crate) fn has_autodiff(&self) -> bool {
+    /// Whether the tensor carries an autodiff context, tracked or not (a leaf, a result of tracked
+    /// ops, a [`DynTensor::detach`]ed copy, or a non-float result of ops on tracked tensors).
+    /// Gradients and [`DynTensor::without_autodiff`] results carry none.
+    pub fn has_autodiff(&self) -> bool {
         with_rank!(self.inner_ref(), t => match t {
             Ranked::Float(t) => t.is_autodiff(),
             Ranked::Int(t) => t.is_autodiff(),

@@ -10,10 +10,10 @@ All notable changes to Polypous are documented here. The format follows
 - Autodiff on `DynTensor` in `polypous-backend` (#75, ADR-0014): `DynTensor::require_grad` marks a
   float tensor as a param leaf, `backward` back-propagates from a one-element loss into an opaque
   `Gradients`, and `Gradients::get`/`take` return a leaf's gradient as a plain `DynTensor` (leaf
-  dtype, shape and device). `detach`, `without_autodiff`, `is_tracked` and `is_grad_leaf` complete
-  the API; no Burn type is public. Misuse (backward of an untracked, non-float or many-element
-  tensor, a second backward through the same graph, the gradient of a non-leaf) is a
-  `TensorError`. Burn's autodiff is now always compiled in (the off-by-default `autodiff` feature is
+  dtype, shape and device). `detach`, `without_autodiff`, `is_tracked`, `is_grad_leaf` and
+  `has_autodiff` complete the API; no Burn type is public. Misuse (backward of an untracked,
+  non-float or many-element tensor, a second backward through the same graph, the gradient of a
+  non-leaf) is a `TensorError`. Burn's autodiff is now always compiled in (the off-by-default `autodiff` feature is
   gone): the release `polyp` grows from 13.2 to 16.2 MB; inference tensors carry no autodiff
   context. Gradients of the `core` elementwise ops, `cast`, the shape ops, `gather` and
   `index_select` follow graph-ir.md §3.1.11 on every device, including the tie and kink rules
