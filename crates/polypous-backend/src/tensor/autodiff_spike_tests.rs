@@ -1,19 +1,34 @@
-//! Experiments of the autodiff spike (#71). Not part of the normal test run: they need the
-//! `autodiff` feature and are `#[ignore = "spike"]`.
+//! The experiments of the autodiff spike (#71) that later tasks still use: the optimizers of
+//! design (b) with their PyTorch comparison (`step_b`, Q3: kept for #79), the cost of host-side
+//! randomness (Q4) and the MNIST-sized CNN step (Q5). `#[ignore = "spike"]`, and they do nothing
+//! unless `POLYPOUS_SPIKE=1` is set, so neither the normal test run nor CI's `--include-ignored`
+//! runs them: they are measurements, not checks (Q3 needs PyTorch's results; Q4 and Q5 allocate
+//! MNIST-sized tensors and take minutes in a debug build). The spike's Q1 (API) and Q2 (op
+//! gradients) experiments were replaced by the API tests in `tests/autodiff.rs` and the gradient
+//! reference harness (`tests/grad_reference_*`, #75).
 //!
 //! ```text
-//! cargo test -p polypous-backend --features autodiff --lib spike -- --ignored --nocapture --test-threads 1
+//! POLYPOUS_SPIKE=1 cargo test -p polypous-backend --lib spike -- --ignored --nocapture --test-threads 1
 //! # lavapipe as well:
-//! VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json POLYPOUS_TEST_SOFTWARE_VULKAN=1 \
-//!   cargo test -p polypous-backend --features autodiff,vulkan --lib spike -- --ignored --nocapture --test-threads 1
+//! POLYPOUS_SPIKE=1 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json POLYPOUS_TEST_SOFTWARE_VULKAN=1 \
+//!   cargo test -p polypous-backend --features vulkan --lib spike -- --ignored --nocapture --test-threads 1
 //! # Q5 timings need a release build:
-//! cargo test --release -p polypous-backend --features autodiff --lib spike_q5 -- --ignored --nocapture
+//! POLYPOUS_SPIKE=1 cargo test --release -p polypous-backend --lib spike_q5 -- --ignored --nocapture
 //! ```
 //!
-//! `spike_q2_*` and `spike_q3_*` write JSON next to this crate (`spike/out/`); the PyTorch side
-//! is `spike/compare_torch.py`.
+//! `spike_q3_*` read PyTorch's results from `spike/out/q3_torch.json`, which
+//! `spike/compare_torch.py q3` writes.
 
 use std::time::Instant;
+
+/// Whether `POLYPOUS_SPIKE=1` asks for the experiments (see the module documentation).
+fn spike_enabled() -> bool {
+    let enabled = std::env::var("POLYPOUS_SPIKE").is_ok_and(|v| v == "1");
+    if !enabled {
+        eprintln!("SKIP spike experiment: set POLYPOUS_SPIKE=1 to run it");
+    }
+    enabled
+}
 
 use crate::device::DeviceId;
 use crate::ops::Scalar;
@@ -68,715 +83,10 @@ fn read(t: &DynTensor) -> Vec<f32> {
     chunks.iter().map(|&b| f32::from_le_bytes(b)).collect()
 }
 
-fn scalar_like(v: f64, like: &DynTensor) -> DynTensor {
-    DynTensor::full(&[1], Scalar::Float(v), like.dtype(), like.device()).unwrap()
-}
-
-/// Sum to one element (keepdim, then flattened to `[1]`).
-fn total(t: DynTensor) -> Result<DynTensor> {
-    t.sum(None, true)?.reshape(&[1])
-}
-
-fn json_f32(values: &[f32]) -> serde_json::Value {
-    serde_json::Value::Array(
-        values
-            .iter()
-            .map(|&v| {
-                if v.is_finite() {
-                    serde_json::json!(v)
-                } else {
-                    serde_json::json!(v.to_string())
-                }
-            })
-            .collect(),
-    )
-}
-
 fn out_dir() -> std::path::PathBuf {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("spike/out");
     std::fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-fn device_tag(dev: DeviceId) -> String {
-    dev.to_string().replace(':', "_")
-}
-
-fn catch<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> std::result::Result<T, String> {
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let r = std::panic::catch_unwind(f).map_err(|e| {
-        e.downcast_ref::<String>()
-            .cloned()
-            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_else(|| "panic".into())
-    });
-    std::panic::set_hook(hook);
-    r
-}
-
-// ---------------------------------------------------------------------------------------------
-// Q1: autodiff device, ranks, dtypes, API, to_device, bool/int
-// ---------------------------------------------------------------------------------------------
-
-#[test]
-#[ignore = "spike"]
-fn spike_q1_ranks_dtypes_api() {
-    for dev in devices() {
-        eprintln!("== Q1 on {dev}");
-        for dtype in [DType::F32, DType::F16, DType::BF16] {
-            if !DynTensor::device_supports(dev, dtype).unwrap() {
-                eprintln!("  {dtype}: not supported on {dev}, skipped");
-                continue;
-            }
-            let mut ok = Vec::new();
-            for rank in 1..=6 {
-                let shape = &[2usize, 3, 1, 2, 1, 2][..rank];
-                let n: usize = shape.iter().product();
-                let values: Vec<f32> = (0..n).map(|i| i as f32 * 0.5 - 1.0).collect();
-                let x = ft(&values, shape, dev)
-                    .cast(dtype)
-                    .unwrap()
-                    .require_grad()
-                    .unwrap();
-                assert!(x.is_tracked() && x.is_autodiff());
-                assert_eq!(x.device(), dev, "device id survives require_grad");
-                // loss = sum(x * x + 3 * x); d/dx = 2x + 3. Uses mul, add, a broadcast scalar
-                // (an untracked tensor of the plain device), sum and reshape.
-                let three = scalar_like(3.0, &x);
-                assert!(!three.is_autodiff());
-                let y = x.clone().mul(x.clone()).unwrap();
-                let y = y.add(x.clone().mul(three).unwrap()).unwrap();
-                let loss = total(y).unwrap();
-                assert!(loss.is_tracked());
-                let grads = loss.backward().unwrap();
-                let g = x.grad(&grads).expect("gradient of the leaf");
-                assert_eq!(g.dtype(), dtype);
-                assert_eq!(g.shape(), shape);
-                assert_eq!(g.device(), dev);
-                assert!(!g.is_tracked());
-                let expected: Vec<f32> = values.iter().map(|v| 2.0 * v + 3.0).collect();
-                assert_eq!(read(&g), expected, "{dev} {dtype} rank {rank}");
-                ok.push(rank);
-            }
-            eprintln!("  {dtype}: ranks {ok:?} record and backprop, grad = 2x + 3 exactly");
-        }
-
-        // detach: cuts the graph, keeps the autodiff context.
-        let x = ft(&[1.0, 2.0], &[2], dev).require_grad().unwrap();
-        let d = x.clone().mul(x.clone()).unwrap().detach();
-        assert!(d.is_autodiff() && !d.is_tracked());
-        let loss = total(d.mul(x.clone()).unwrap()).unwrap();
-        let grads = loss.backward().unwrap();
-        assert_eq!(read(&x.grad(&grads).unwrap()), vec![1.0, 4.0]);
-        eprintln!("  detach: d(sum(detach(x*x) * x))/dx = x*x: ok");
-
-        // A leaf that is not part of the loss has no gradient.
-        let unused = ft(&[1.0], &[1], dev).require_grad().unwrap();
-        assert!(unused.grad(&grads).is_none());
-        eprintln!("  grad of a leaf outside the loss: None");
-
-        // Errors instead of Burn panics.
-        assert!(it(&[1, 2], &[2], dev).require_grad().is_err());
-        assert!(ft(&[1.0], &[1], dev).backward().is_err());
-        let x = ft(&[1.0, 2.0], &[2], dev).require_grad().unwrap();
-        assert!(x.clone().mul(x.clone()).unwrap().backward().is_err());
-        eprintln!("  require_grad(int), backward(untracked), backward(2 elements): errors");
-
-        // Backward twice on the same graph: Burn panics (no retain_graph).
-        let x = ft(&[1.0, 2.0], &[2], dev).require_grad().unwrap();
-        let loss = total(x.clone().mul(x.clone()).unwrap()).unwrap();
-        let _ = loss.backward().unwrap();
-        let second = catch(std::panic::AssertUnwindSafe(|| loss.backward().is_ok()));
-        eprintln!("  second backward on a consumed graph: {second:?}");
-
-        // A fresh forward from the same leaf after a backward works (training loop shape).
-        let loss = total(x.clone().mul(x.clone()).unwrap()).unwrap();
-        let g = x.grad(&loss.backward().unwrap()).unwrap();
-        assert_eq!(read(&g), vec![2.0, 4.0]);
-        eprintln!("  second forward + backward from the same leaf: ok");
-
-        // without_autodiff: ops are not recorded (optimizer updates).
-        let p = x.clone().without_autodiff();
-        assert!(!p.is_autodiff() && !p.is_tracked());
-        let updated = p.sub(g.clone()).unwrap();
-        assert!(!updated.is_autodiff());
-        let x2 = updated.require_grad().unwrap();
-        assert!(x2.is_tracked());
-        eprintln!("  without_autodiff → update → require_grad: ok");
-
-        // Bool and int tensors on an autodiff tensor's device.
-        let x = ft(&[-1.0, 2.0, 0.5, -3.0], &[4], dev)
-            .require_grad()
-            .unwrap();
-        let zeros = DynTensor::zeros(&[4], DType::F32, dev).unwrap();
-        let mask = x.clone().greater(zeros.clone()).unwrap();
-        eprintln!(
-            "  mask = x > 0: dtype {}, autodiff {}, values {:?}",
-            mask.dtype(),
-            mask.is_autodiff(),
-            mask.to_data().unwrap().bytes
-        );
-        let y = DynTensor::where_(mask.clone(), x.clone(), zeros.clone()).unwrap();
-        let g = x.grad(&total(y).unwrap().backward().unwrap()).unwrap();
-        assert_eq!(read(&g), vec![0.0, 1.0, 1.0, 0.0]);
-        let not_mask = mask.logical_not().unwrap();
-        eprintln!(
-            "  where(x > 0, x, 0) grad ok; not(mask) autodiff {}",
-            not_mask.is_autodiff()
-        );
-        let idx = x.clone().argmax(0, true, DType::I64).unwrap();
-        eprintln!(
-            "  argmax(x): dtype {}, autodiff {}",
-            idx.dtype(),
-            idx.is_autodiff()
-        );
-        let picked = x.clone().gather(0, idx).unwrap();
-        let g = x.grad(&total(picked).unwrap().backward().unwrap()).unwrap();
-        assert_eq!(read(&g), vec![0.0, 1.0, 0.0, 0.0]);
-        eprintln!("  gather(x, argmax(x)) grad ok");
-        let as_int = x.clone().cast(DType::I64).unwrap();
-        eprintln!(
-            "  cast(x, i64): autodiff {} tracked {}",
-            as_int.is_autodiff(),
-            as_int.is_tracked()
-        );
-
-        // to_device of a tracked tensor.
-        for target in devices() {
-            let x = ft(&[1.0, 2.0, 3.0], &[3], dev).require_grad().unwrap();
-            let moved = x.clone().mul(x.clone()).unwrap().to_device(target);
-            match moved {
-                Ok(m) => {
-                    let tracked = m.is_tracked();
-                    let autodiff = m.is_autodiff();
-                    let r = if tracked {
-                        let w = ft(&[1.0, 1.0, 1.0], &[3], target);
-                        catch(std::panic::AssertUnwindSafe(|| {
-                            let loss = total(m.mul(w).unwrap()).unwrap();
-                            x.grad(&loss.backward().unwrap()).map(|g| read(&g))
-                        }))
-                    } else {
-                        Ok(None)
-                    };
-                    eprintln!(
-                        "  to_device({dev} → {target}) of x*x: autodiff {autodiff}, tracked {tracked}, grad of x = {r:?}"
-                    );
-                }
-                Err(e) => eprintln!("  to_device({dev} → {target}): error {e}"),
-            }
-            // Bool across backends goes through the host (M1 workaround).
-            let b = ft(&[1.0, -1.0], &[2], dev)
-                .require_grad()
-                .unwrap()
-                .greater(DynTensor::zeros(&[2], DType::F32, dev).unwrap())
-                .unwrap();
-            let moved = b
-                .to_device(target)
-                .map(|m| (m.is_autodiff(), m.to_data().unwrap().bytes));
-            eprintln!("  bool to_device({dev} → {target}): {moved:?}");
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Q2: gradients through every differentiable op (compared to PyTorch by spike/compare_torch.py)
-// ---------------------------------------------------------------------------------------------
-
-type Forward = fn(&[DynTensor], DeviceId) -> Result<DynTensor>;
-
-struct Case {
-    name: &'static str,
-    inputs: Vec<(Vec<usize>, Vec<f32>)>,
-    forward: Forward,
-    /// Uses no float constants of its own, so it also runs with f16/bf16 inputs.
-    half: bool,
-}
-
-fn case(name: &'static str, inputs: Vec<(Vec<usize>, Vec<f32>)>, forward: Forward) -> Case {
-    Case {
-        name,
-        inputs,
-        forward,
-        half: false,
-    }
-}
-
-fn half(mut c: Case) -> Case {
-    c.half = true;
-    c
-}
-
-/// Deterministic, non-symmetric values in about [-2, 2].
-fn wave(n: usize, phase: f32) -> Vec<f32> {
-    (0..n)
-        .map(|i| {
-            let v = ((i as f32 * 1.7 + phase).sin() * 2.0 * 64.0).round() / 64.0;
-            if v == 0.0 { 0.25 } else { v }
-        })
-        .collect()
-}
-
-fn s(x: f64) -> Option<Scalar> {
-    Some(Scalar::Float(x))
-}
-
-#[allow(clippy::too_many_lines)]
-fn q2_cases() -> Vec<Case> {
-    let x4 = || vec![(vec![4], vec![-1.5, 0.0, 0.5, 2.0])];
-    vec![
-        // Elementwise
-        half(case(
-            "add_broadcast",
-            vec![(vec![2, 3], wave(6, 0.0)), (vec![3], wave(3, 1.0))],
-            |x, _| x[0].clone().add(x[1].clone()),
-        )),
-        half(case(
-            "sub",
-            vec![(vec![4], wave(4, 0.0)), (vec![4], wave(4, 2.0))],
-            |x, _| x[0].clone().sub(x[1].clone()),
-        )),
-        half(case(
-            "mul_broadcast",
-            vec![(vec![2, 3], wave(6, 0.0)), (vec![2, 1], wave(2, 1.0))],
-            |x, _| x[0].clone().mul(x[1].clone()),
-        )),
-        half(case(
-            "div",
-            vec![
-                (vec![4], wave(4, 0.0)),
-                (vec![4], vec![2.0, -1.0, 0.5, 1.5]),
-            ],
-            |x, _| x[0].clone().div(x[1].clone()),
-        )),
-        half(case(
-            "pow",
-            vec![
-                (vec![4], vec![0.5, 1.5, 2.0, 3.0]),
-                (vec![4], vec![2.0, -1.0, 0.5, 1.5]),
-            ],
-            |x, _| x[0].clone().pow(x[1].clone()),
-        )),
-        case(
-            "pow_special",
-            vec![
-                (vec![5], vec![0.0, 0.0, 2.0, -2.0, 1.0]),
-                (vec![5], vec![2.0, 0.5, 0.0, 2.0, 3.0]),
-            ],
-            |x, _| x[0].clone().pow(x[1].clone()),
-        ),
-        case(
-            "maximum_ties",
-            vec![
-                (vec![4], vec![1.0, 2.0, 3.0, 3.0]),
-                (vec![4], vec![1.0, 3.0, 2.0, 3.0]),
-            ],
-            |x, _| x[0].clone().maximum(x[1].clone()),
-        ),
-        case(
-            "minimum_ties",
-            vec![
-                (vec![4], vec![1.0, 2.0, 3.0, 3.0]),
-                (vec![4], vec![1.0, 3.0, 2.0, 3.0]),
-            ],
-            |x, _| x[0].clone().minimum(x[1].clone()),
-        ),
-        case(
-            "maximum_nan",
-            vec![
-                (vec![3], vec![f32::NAN, 1.0, 2.0]),
-                (vec![3], vec![0.0, f32::NAN, 1.0]),
-            ],
-            |x, _| x[0].clone().maximum(x[1].clone()),
-        ),
-        half(case("neg", x4(), |x, _| x[0].clone().neg())),
-        half(case("abs", x4(), |x, _| x[0].clone().abs())),
-        half(case("exp", x4(), |x, _| x[0].clone().exp())),
-        half(case("log", vec![(vec![3], vec![0.5, 1.0, 2.0])], |x, _| {
-            x[0].clone().log()
-        })),
-        half(case(
-            "sqrt",
-            vec![(vec![3], vec![0.0, 0.25, 4.0])],
-            |x, _| x[0].clone().sqrt(),
-        )),
-        half(case("rsqrt", vec![(vec![2], vec![0.25, 4.0])], |x, _| {
-            x[0].clone().rsqrt()
-        })),
-        half(case("sin", x4(), |x, _| x[0].clone().sin())),
-        half(case("cos", x4(), |x, _| x[0].clone().cos())),
-        half(case("tanh", x4(), |x, _| x[0].clone().tanh())),
-        case(
-            "clamp_bounds",
-            vec![(vec![5], vec![-2.0, -1.0, 0.0, 1.0, 2.0])],
-            |x, _| x[0].clone().clamp(s(-1.0), s(1.0)),
-        ),
-        case(
-            "clamp_min_nan",
-            vec![(vec![4], vec![-1.0, 0.0, 1.0, f32::NAN])],
-            |x, _| x[0].clone().clamp(s(0.0), None),
-        ),
-        case(
-            "where",
-            vec![(vec![4], wave(4, 0.0)), (vec![4], wave(4, 3.0))],
-            |x, dev| {
-                let cond = x[0]
-                    .clone()
-                    .greater(DynTensor::zeros(&[4], DType::F32, dev)?)?;
-                DynTensor::where_(cond, x[0].clone(), x[1].clone())
-            },
-        ),
-        // Shape
-        half(case("reshape", vec![(vec![2, 3], wave(6, 0.0))], |x, _| {
-            x[0].clone().reshape(&[3, 2])
-        })),
-        half(case(
-            "flatten",
-            vec![(vec![2, 3, 2], wave(12, 0.0))],
-            |x, _| x[0].clone().flatten(1, 2),
-        )),
-        half(case(
-            "permute",
-            vec![(vec![2, 3, 2], wave(12, 0.0))],
-            |x, _| x[0].clone().permute(&[2, 0, 1]),
-        )),
-        half(case(
-            "transpose",
-            vec![(vec![2, 3], wave(6, 0.0))],
-            |x, _| x[0].clone().transpose(0, 1),
-        )),
-        half(case(
-            "squeeze",
-            vec![(vec![2, 1, 3], wave(6, 0.0))],
-            |x, _| x[0].clone().squeeze(&[1]),
-        )),
-        half(case(
-            "unsqueeze",
-            vec![(vec![2, 3], wave(6, 0.0))],
-            |x, _| x[0].clone().unsqueeze(1),
-        )),
-        half(case("expand", vec![(vec![2, 1], wave(2, 0.0))], |x, _| {
-            x[0].clone().expand(&[2, 3])
-        })),
-        half(case(
-            "concat",
-            vec![(vec![2, 2], wave(4, 0.0)), (vec![2, 1], wave(2, 1.0))],
-            |x, _| DynTensor::concat(&[x[0].clone(), x[1].clone()], 1),
-        )),
-        half(case(
-            "split_second",
-            vec![(vec![2, 5], wave(10, 0.0))],
-            |x, _| Ok(x[0].clone().split(1, &[2, 3])?.remove(1)),
-        )),
-        half(case(
-            "slice_step",
-            vec![(vec![2, 6], wave(12, 0.0))],
-            |x, _| x[0].clone().slice(1, 1, 6, 2),
-        )),
-        case("pad", vec![(vec![2, 3], wave(6, 0.0))], |x, _| {
-            x[0].clone().pad(&[1, 2, 0, 1], Scalar::Float(0.5))
-        }),
-        // Indexing and creation
-        case("gather", vec![(vec![2, 3], wave(6, 0.0))], |x, dev| {
-            x[0].clone()
-                .gather(1, it(&[2, 0, 2, 1, 1, 0], &[2, 3], dev))
-        }),
-        case(
-            "index_select",
-            vec![(vec![3, 2], wave(6, 0.0))],
-            |x, dev| x[0].clone().index_select(0, it(&[2, 0, 2], &[3], dev)),
-        ),
-        case("full_like_mul", vec![(vec![3], wave(3, 0.0))], |x, _| {
-            let c = x[0].full_like(Scalar::Float(2.5), None)?;
-            x[0].clone().mul(c)
-        }),
-        case(
-            "cast_f16_roundtrip",
-            vec![(vec![3], wave(3, 0.0))],
-            |x, _| x[0].clone().cast(DType::F16)?.cast(DType::F32),
-        ),
-        // Reductions
-        half(case("sum_dim", vec![(vec![2, 3], wave(6, 0.0))], |x, _| {
-            x[0].clone().sum(Some(&[1]), false)
-        })),
-        half(case(
-            "mean_dim",
-            vec![(vec![2, 3], wave(6, 0.0))],
-            |x, _| x[0].clone().mean(Some(&[0]), true),
-        )),
-        case(
-            "max_all_ties",
-            vec![(vec![4], vec![1.0, 3.0, 3.0, 2.0])],
-            |x, _| x[0].clone().max(None, false),
-        ),
-        case(
-            "max_dim_ties",
-            vec![(vec![2, 3], vec![1.0, 3.0, 3.0, 2.0, 2.0, 1.0])],
-            |x, _| x[0].clone().max(Some(&[1]), false),
-        ),
-        case(
-            "min_dim_ties",
-            vec![(vec![2, 3], vec![1.0, 3.0, 1.0, 2.0, 0.5, 0.5])],
-            |x, _| x[0].clone().min(Some(&[1]), false),
-        ),
-        case(
-            "max_dim_nan",
-            vec![(vec![2, 3], vec![1.0, f32::NAN, 3.0, 2.0, 5.0, 1.0])],
-            |x, _| x[0].clone().max(Some(&[1]), false),
-        ),
-        half(case("cumsum", vec![(vec![2, 3], wave(6, 0.0))], |x, _| {
-            x[0].clone().cumsum(1)
-        })),
-        half(case(
-            "matmul_broadcast",
-            vec![(vec![2, 2, 3], wave(12, 0.0)), (vec![3, 2], wave(6, 1.0))],
-            |x, _| x[0].clone().matmul(x[1].clone()),
-        )),
-        half(case("softmax", vec![(vec![2, 3], wave(6, 0.0))], |x, _| {
-            x[0].clone().softmax(1)
-        })),
-        half(case(
-            "log_softmax",
-            vec![(vec![2, 3], wave(6, 0.0))],
-            |x, _| x[0].clone().log_softmax(1),
-        )),
-        case(
-            "top_k",
-            vec![(vec![2, 4], vec![1.0, 5.0, 3.0, 4.0, 2.0, 2.0, 0.5, 1.0])],
-            |x, _| Ok(x[0].clone().top_k(2, 1, true, DType::I64)?.0),
-        ),
-        // nn
-        half(case(
-            "linear",
-            vec![
-                (vec![2, 3], wave(6, 0.0)),
-                (vec![2, 3], wave(6, 1.0)),
-                (vec![2], wave(2, 2.0)),
-            ],
-            |x, _| x[0].clone().linear(x[1].clone(), Some(x[2].clone())),
-        )),
-        case("embedding", vec![(vec![4, 2], wave(8, 0.0))], |x, dev| {
-            it(&[1, 3, 1], &[3], dev).embedding(x[0].clone())
-        }),
-        half(case(
-            "conv1d_groups_stride",
-            vec![
-                (vec![1, 2, 6], wave(12, 0.0)),
-                (vec![2, 1, 3], wave(6, 1.0)),
-                (vec![2], wave(2, 2.0)),
-            ],
-            |x, _| {
-                x[0].clone()
-                    .conv1d(x[1].clone(), Some(x[2].clone()), 2, 1, 1, 2)
-            },
-        )),
-        half(case(
-            "conv2d_groups_dilation",
-            vec![
-                (vec![1, 2, 5, 5], wave(50, 0.0)),
-                (vec![4, 1, 2, 2], wave(16, 1.0)),
-                (vec![4], wave(4, 2.0)),
-            ],
-            |x, _| {
-                x[0].clone()
-                    .conv2d(x[1].clone(), Some(x[2].clone()), [1, 2], [1, 0], [2, 1], 2)
-            },
-        )),
-        case(
-            "max_pool2d_ties",
-            vec![(
-                vec![1, 1, 4, 4],
-                vec![
-                    1.0, 3.0, 2.0, 2.0, //
-                    3.0, 0.0, 2.0, 2.0, //
-                    0.5, 0.5, 1.0, 4.0, //
-                    0.5, 0.5, 4.0, 1.0,
-                ],
-            )],
-            |x, _| x[0].clone().max_pool2d([2, 2], [2, 2], [0, 0], [1, 1]),
-        ),
-        case(
-            "max_pool2d_overlap_pad",
-            vec![(vec![1, 1, 4, 4], wave(16, 0.0))],
-            |x, _| x[0].clone().max_pool2d([3, 3], [2, 2], [1, 1], [1, 1]),
-        ),
-        half(case(
-            "avg_pool2d_include_pad",
-            vec![(vec![1, 1, 4, 4], wave(16, 0.0))],
-            |x, _| x[0].clone().avg_pool2d([3, 3], [2, 2], [1, 1], true),
-        )),
-        half(case(
-            "avg_pool2d_exclude_pad",
-            vec![(vec![1, 1, 4, 4], wave(16, 0.0))],
-            |x, _| x[0].clone().avg_pool2d([3, 3], [2, 2], [1, 1], false),
-        )),
-        half(case(
-            "adaptive_avg_pool2d",
-            vec![(vec![1, 1, 5, 5], wave(25, 0.0))],
-            |x, _| x[0].clone().adaptive_avg_pool2d([3, 3]),
-        )),
-        half(case(
-            "dropout_inference",
-            vec![(vec![4], wave(4, 0.0))],
-            |x, _| x[0].clone().dropout(0.5),
-        )),
-        case(
-            "batch_norm_inference",
-            vec![
-                (vec![2, 3, 2], wave(12, 0.0)),
-                (vec![3], wave(3, 1.0)),
-                (vec![3], wave(3, 2.0)),
-            ],
-            |x, dev| {
-                let rm = ft(&[0.1, -0.2, 0.3], &[3], dev);
-                let rv = ft(&[0.5, 1.5, 2.0], &[3], dev);
-                x[0].clone()
-                    .batch_norm(rm, rv, Some(x[1].clone()), Some(x[2].clone()), 1e-5)
-            },
-        ),
-        half(case(
-            "layer_norm",
-            vec![
-                (vec![2, 4], wave(8, 0.0)),
-                (vec![4], wave(4, 1.0)),
-                (vec![4], wave(4, 2.0)),
-            ],
-            |x, _| {
-                x[0].clone()
-                    .layer_norm(&[4], Some(x[1].clone()), Some(x[2].clone()), 1e-5)
-            },
-        )),
-        half(case(
-            "group_norm",
-            vec![
-                (vec![2, 4, 2], wave(16, 0.0)),
-                (vec![4], wave(4, 1.0)),
-                (vec![4], wave(4, 2.0)),
-            ],
-            |x, _| {
-                x[0].clone()
-                    .group_norm(2, Some(x[1].clone()), Some(x[2].clone()), 1e-5)
-            },
-        )),
-        half(case(
-            "rms_norm",
-            vec![(vec![2, 4], wave(8, 0.0)), (vec![4], wave(4, 1.0))],
-            |x, _| x[0].clone().rms_norm(&[4], Some(x[1].clone()), 1e-6),
-        )),
-        // Activations
-        half(case("relu", x4(), |x, _| x[0].clone().relu())),
-        half(case("leaky_relu", x4(), |x, _| {
-            x[0].clone().leaky_relu(0.1)
-        })),
-        half(case(
-            "gelu",
-            vec![(vec![5], vec![-3.0, -0.5, 0.0, 0.5, 3.0])],
-            |x, _| x[0].clone().gelu(),
-        )),
-        half(case(
-            "gelu_tanh",
-            vec![(vec![5], vec![-3.0, -0.5, 0.0, 0.5, 3.0])],
-            |x, _| x[0].clone().gelu_tanh(),
-        )),
-        half(case("silu", x4(), |x, _| x[0].clone().silu())),
-        half(case("sigmoid", x4(), |x, _| x[0].clone().sigmoid())),
-        half(case(
-            "softplus",
-            vec![(vec![8], vec![-20.0, -1.0, 0.0, 1.0, 19.5, 20.0, 20.5, 30.0])],
-            |x, _| x[0].clone().softplus(1.0, 20.0),
-        )),
-        half(case(
-            "softplus_beta2",
-            vec![(vec![5], vec![-30.0, -1.0, 2.5, 3.0, 4.0])],
-            |x, _| x[0].clone().softplus(2.0, 6.0),
-        )),
-        half(case(
-            "mish",
-            vec![(vec![6], vec![-20.0, -1.0, 0.0, 1e-4, 1.0, 30.0])],
-            |x, _| x[0].clone().mish(),
-        )),
-    ]
-}
-
-fn run_case(c: &Case, dev: DeviceId, dtype: DType) -> serde_json::Value {
-    let leaves: Vec<DynTensor> = c
-        .inputs
-        .iter()
-        .map(|(shape, values)| {
-            ft(values, shape, dev)
-                .cast(dtype)
-                .unwrap()
-                .require_grad()
-                .unwrap()
-        })
-        .collect();
-    let out = match (c.forward)(&leaves, dev) {
-        Ok(out) => out,
-        Err(e) => return serde_json::json!({ "name": c.name, "error": e.to_string() }),
-    };
-    let n: usize = out.shape().iter().product();
-    let upstream_values: Vec<f32> = (0..n).map(|i| 1.0 + 0.125 * (i % 8) as f32).collect();
-    let upstream = ft(&upstream_values, &out.shape(), dev).cast(dtype).unwrap();
-    let out_values = read(&out);
-    let out_shape = out.shape();
-    let tracked = out.is_tracked();
-    let grads: Vec<serde_json::Value> = if tracked {
-        let loss = total(out.mul(upstream).unwrap()).unwrap();
-        let grads = loss.backward().unwrap();
-        leaves
-            .iter()
-            .map(|l| match l.grad(&grads) {
-                Some(g) => json_f32(&read(&g)),
-                None => serde_json::Value::Null,
-            })
-            .collect()
-    } else {
-        leaves.iter().map(|_| serde_json::Value::Null).collect()
-    };
-    serde_json::json!({
-        "name": c.name,
-        "dtype": dtype.name(),
-        "inputs": c.inputs.iter().map(|(s, v)| serde_json::json!({"shape": s, "values": json_f32(v)})).collect::<Vec<_>>(),
-        "upstream": json_f32(&upstream_values),
-        "out_shape": out_shape,
-        "out": json_f32(&out_values),
-        "out_tracked": tracked,
-        "grads": grads,
-    })
-}
-
-#[test]
-#[ignore = "spike"]
-fn spike_q2_op_gradients() {
-    for dev in devices() {
-        for dtype in [DType::F32, DType::F16] {
-            if !DynTensor::device_supports(dev, dtype).unwrap() {
-                continue;
-            }
-            let mut results = Vec::new();
-            for c in q2_cases() {
-                if dtype != DType::F32 && !c.half {
-                    continue;
-                }
-                let r = catch(std::panic::AssertUnwindSafe(|| run_case(&c, dev, dtype)))
-                    .unwrap_or_else(|p| serde_json::json!({ "name": c.name, "panic": p }));
-                let status = if r.get("panic").is_some() {
-                    "PANIC".to_string()
-                } else if let Some(e) = r.get("error") {
-                    format!("error {e}")
-                } else if r["grads"].as_array().unwrap().iter().all(|g| g.is_null()) {
-                    "no gradient (cut)".into()
-                } else {
-                    "gradient".into()
-                };
-                eprintln!("{dev} {dtype} {:<26} {status}", c.name);
-                results.push(r);
-            }
-            let path = out_dir().join(format!("q2_{}_{}.json", device_tag(dev), dtype.name()));
-            std::fs::write(&path, serde_json::to_string_pretty(&results).unwrap()).unwrap();
-            eprintln!("wrote {}", path.display());
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1014,6 +324,9 @@ fn mse_linear(x: &DynTensor, w: &DynTensor, b: &DynTensor, y: &DynTensor) -> Res
 #[test]
 #[ignore = "spike"]
 fn spike_q3_optimizers_design_b() {
+    if !spike_enabled() {
+        return;
+    }
     let Some(torch) = load_torch_q3() else {
         eprintln!("spike/out/q3_torch.json missing: run spike/compare_torch.py q3 first");
         return;
@@ -1030,13 +343,13 @@ fn spike_q3_optimizers_design_b() {
                 let bl = b.clone().require_grad().unwrap();
                 let loss = mse_linear(&x, &wl, &bl, &y).unwrap();
                 let grads = loss.backward().unwrap();
-                let gw = wl.grad(&grads).unwrap();
-                let gb = bl.grad(&grads).unwrap();
+                let gw = grads.get(&wl).unwrap().unwrap();
+                let gb = grads.get(&bl).unwrap().unwrap();
                 let cgw = compare("grad_w", &read(&gw), &want[2]);
                 let cgb = compare("grad_b", &read(&gb), &want[3]);
                 w = step_b(opt, wl, gw, &mut sw).unwrap();
                 b = step_b(opt, bl, gb, &mut sb).unwrap();
-                assert!(!w.is_autodiff());
+                assert!(!w.has_autodiff());
                 let cw = compare("w", &read(&w), &want[0]);
                 let cb = compare("b", &read(&b), &want[1]);
                 eprintln!(
@@ -1061,6 +374,9 @@ fn spike_q3_optimizers_design_b() {
 #[test]
 #[ignore = "spike"]
 fn spike_q3_optimizer_only_design_b() {
+    if !spike_enabled() {
+        return;
+    }
     let Some(torch) = load_torch_q3() else {
         return;
     };
@@ -1129,6 +445,9 @@ fn dropout_mask(key: u64, n: usize, p: f32) -> Vec<f32> {
 #[test]
 #[ignore = "spike"]
 fn spike_q4_host_rng_cost() {
+    if !spike_enabled() {
+        return;
+    }
     // Statistics of the generator: mean of 1M uniforms and the dropout rate.
     let key = stream_key(42, 7, "block1/dropout");
     let n = 1_000_000u64;
@@ -1177,6 +496,9 @@ fn spike_q4_host_rng_cost() {
 #[test]
 #[ignore = "spike"]
 fn spike_q5_mnist_cnn_step() {
+    if !spike_enabled() {
+        return;
+    }
     let batch: usize = std::env::var("SPIKE_BATCH")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -1299,7 +621,10 @@ fn spike_q5_mnist_cnn_step() {
             let loss_value = read(&loss)[0];
             let t2 = Instant::now();
             let grads = loss.backward().unwrap();
-            let gs: Vec<DynTensor> = leaves.iter().map(|l| l.grad(&grads).unwrap()).collect();
+            let gs: Vec<DynTensor> = leaves
+                .iter()
+                .map(|l| grads.get(l).unwrap().unwrap())
+                .collect();
             // Sync so that the backward time isn't hidden in the update.
             for g in &gs {
                 let _ = read(&g.clone().sum(None, false).unwrap());

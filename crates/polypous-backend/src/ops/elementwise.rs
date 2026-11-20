@@ -3,6 +3,7 @@
 
 use burn::tensor::{DType as BurnDType, FloatDType, Int, Tensor};
 
+use super::gradient::{any_tracked, constant, with_gradient};
 use super::{
     DTypeClass, Scalar, backend_error, broadcast_shapes, check_same_device, prepare_binary,
 };
@@ -479,6 +480,131 @@ fn keep_nan<const D: usize>(result: Tensor<D>, x: Tensor<D>) -> Tensor<D> {
     result.mask_where(nan, x)
 }
 
+/// `maximum` or `minimum`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Extremum {
+    Max,
+    Min,
+}
+
+/// `maximum`/`minimum` of floats: the backend's `max_pair`/`min_pair` with NaN propagated.
+///
+/// Tracked: the same forward value, with PyTorch's gradient (graph-ir.md §3.1.11): `g` to the
+/// larger (smaller) operand, `g / 2` to each at a tie. Burn's `max_pair` is
+/// `mask_where(a < b, b)`, which gives all of `g` to `a` at a tie.
+fn extremum<const D: usize>(a: Tensor<D>, b: Tensor<D>, which: Extremum) -> Tensor<D> {
+    let forward = |a: Tensor<D>, b: Tensor<D>| {
+        let out = match which {
+            Extremum::Max => a.clone().max_pair(b.clone()),
+            Extremum::Min => a.clone().min_pair(b.clone()),
+        };
+        keep_nan(keep_nan(out, a), b)
+    };
+    if !any_tracked(&[&a, &b]) {
+        return forward(a, b);
+    }
+    let (ad, bd) = (constant(a.clone()), constant(b.clone()));
+    let out = forward(ad.clone(), bd.clone());
+    let tie = ad.clone().equal(bd.clone());
+    let (a_wins, b_wins) = match which {
+        Extremum::Max => (ad.clone().greater(bd.clone()), bd.greater(ad)),
+        Extremum::Min => (ad.clone().lower(bd.clone()), bd.lower(ad)),
+    };
+    let da = out
+        .zeros_like()
+        .mask_fill(a_wins, 1.0)
+        .mask_fill(tie.clone(), 0.5);
+    let db = out.zeros_like().mask_fill(b_wins, 1.0).mask_fill(tie, 0.5);
+    with_gradient(out, [(a, da), (b, db)])
+}
+
+/// Float `clamp`: the backend's `clamp` with NaN propagated; a NaN bound makes every element NaN.
+///
+/// Tracked: the same forward value, with PyTorch's gradient for scalar bounds (graph-ir.md
+/// §3.1.11): `g` where `min < x < max` (one bound: `x > min` or `x < max`), `0` elsewhere,
+/// also at the bounds. Burn's `clamp` is two `mask_fill`s on strict comparisons, which pass `g`
+/// at `x = min` and `x = max`.
+fn clamp_float<const D: usize>(x: Tensor<D>, min: Option<f64>, max: Option<f64>) -> Tensor<D> {
+    let forward = |x: Tensor<D>| {
+        if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
+            return x.full_like(f64::NAN);
+        }
+        let out = match (min, max) {
+            (Some(lo), Some(hi)) => x.clone().clamp(lo, hi),
+            (Some(lo), None) => x.clone().clamp_min(lo),
+            (None, Some(hi)) => x.clone().clamp_max(hi),
+            (None, None) => x.clone(),
+        };
+        keep_nan(out, x)
+    };
+    if !x.is_tracked() {
+        return forward(x);
+    }
+    let xd = constant(x.clone());
+    let out = forward(xd.clone());
+    let inside = match (min, max) {
+        (Some(lo), Some(hi)) => xd
+            .clone()
+            .greater_elem(lo)
+            .bool_and(xd.clone().lower_elem(hi)),
+        (Some(lo), None) => xd.clone().greater_elem(lo),
+        (None, Some(hi)) => xd.clone().lower_elem(hi),
+        (None, None) => xd.clone().equal(xd.clone()),
+    };
+    let d = xd.zeros_like().mask_fill(inside, 1.0);
+    with_gradient(out, [(x, d)])
+}
+
+/// `sqrt`. Tracked: gradient `g · 1 / (2 · sqrt(x))` (PyTorch: `g / (2 · result)`), so `+inf`
+/// at `x = 0` and `-inf` at `x = -0` (graph-ir.md §3.1.11). Burn's backward is
+/// `g · x^-0.5 / 2` through the backend's `powf`: CubeCL's `pow(0, -0.5)` is `0`, so the
+/// gradient at `0` was `0` on lavapipe, and `flex`'s `(-0)^-0.5 = +inf` gave `+inf · g` at `-0`.
+fn sqrt<const D: usize>(x: Tensor<D>) -> Tensor<D> {
+    if !x.is_tracked() {
+        return x.sqrt();
+    }
+    let out = constant(x.clone()).sqrt();
+    let d = out.clone().mul_scalar(2.0).recip();
+    with_gradient(out, [(x, d)])
+}
+
+/// `rsqrt` as `1 / sqrt(x)` (Burn has no fused `rsqrt`). Tracked: gradient
+/// `g · -rsqrt(x)³ / 2` (PyTorch: `-0.5 · g · result³`), so `-inf` at `x = 0` and `+inf` at
+/// `x = -0` (graph-ir.md §3.1.11). Burn's backward goes through its `sqrt` backward (see
+/// [`sqrt`]): NaN at `±0` on lavapipe (`-inf · 0`) and the wrong sign at `-0` on `flex`.
+fn rsqrt<const D: usize>(x: Tensor<D>) -> Tensor<D> {
+    if !x.is_tracked() {
+        return x.sqrt().recip();
+    }
+    let out = constant(x.clone()).sqrt().recip();
+    let d = (out.clone() * out.clone() * out.clone()).mul_scalar(-0.5);
+    with_gradient(out, [(x, d)])
+}
+
+/// `pow` on a tracked operand: [`pow_ieee`]'s forward value, with PyTorch's gradients
+/// (graph-ir.md §3.1.11; `pow_backward_self`, `pow_backward_exponent`):
+///
+/// - `∂/∂a = g · b · a^(b-1)`, and `0` where `b = 0` (also at `a = 0`);
+/// - `∂/∂b = g · a^b · ln(a)`, and `0` where `a = 0` and `b ≥ 0`.
+///
+/// `a^(b-1)` is [`pow_ieee`] too, so the special values follow C99 like `torch.pow`: NaN for
+/// `a < 0` with a non-integer exponent (and in `∂/∂b`, through `ln(a)`, for every `a < 0`),
+/// `±inf` at `a = 0` with `b < 1`. Burn's own backward differentiates through [`pow_ieee`]'s
+/// masks, which are constants: `∂/∂a` was `0` at `a = 1`, `∂/∂b` was `0` at `b = 0` and NaN at
+/// `a = 0` (`0 · ln 0`), and `∂/∂a` at `(0, 0.5)` was NaN on `flex` and `0` on lavapipe.
+fn pow_tracked<const D: usize>(a: Tensor<D>, b: Tensor<D>) -> Tensor<D> {
+    let (ad, bd) = (constant(a.clone()), constant(b.clone()));
+    let out = pow_ieee(ad.clone(), bd.clone());
+    let b_zero = bd.clone().equal_elem(0.0);
+    let da = (bd.clone() * pow_ieee(ad.clone(), bd.clone().sub_scalar(1.0))).mask_fill(b_zero, 0.0);
+    let a_zero_b_nonneg = ad
+        .clone()
+        .equal_elem(0.0)
+        .bool_and(bd.greater_equal_elem(0.0));
+    let db = (out.clone() * ad.log()).mask_fill(a_zero_b_nonneg, 0.0);
+    with_gradient(out, [(a, da), (b, db)])
+}
+
 impl<const D: usize> Ranked<D> {
     /// The caller checked dtypes, class, devices and broadcast both operands to the same shape.
     fn binary(self, other: Self, op: BinaryOp, host: Option<fn(i64, i64) -> i64>) -> Result<Self> {
@@ -490,16 +616,14 @@ impl<const D: usize> Ranked<D> {
                 BinaryOp::Div => a.div(b),
                 BinaryOp::Pow => in_f32(a, |a| {
                     let b = b.cast(FloatDType::F32);
-                    pow_ieee(a, b)
+                    if any_tracked(&[&a, &b]) {
+                        pow_tracked(a, b)
+                    } else {
+                        pow_ieee(a, b)
+                    }
                 }),
-                BinaryOp::Maximum => {
-                    let out = a.clone().max_pair(b.clone());
-                    keep_nan(keep_nan(out, a), b)
-                }
-                BinaryOp::Minimum => {
-                    let out = a.clone().min_pair(b.clone());
-                    keep_nan(keep_nan(out, a), b)
-                }
+                BinaryOp::Maximum => extremum(a, b, Extremum::Max),
+                BinaryOp::Minimum => extremum(a, b, Extremum::Min),
             })),
             (Ranked::Int(a), Ranked::Int(b)) => {
                 if let Some(f) = host {
@@ -528,8 +652,8 @@ impl<const D: usize> Ranked<D> {
                 UnaryOp::Abs => x.abs(),
                 UnaryOp::Exp => in_f32(x, Tensor::exp),
                 UnaryOp::Log => in_f32(x, Tensor::log),
-                UnaryOp::Sqrt => in_f32(x, Tensor::sqrt),
-                UnaryOp::Rsqrt => in_f32(x, |x| x.sqrt().recip()),
+                UnaryOp::Sqrt => in_f32(x, sqrt),
+                UnaryOp::Rsqrt => in_f32(x, rsqrt),
                 UnaryOp::Sin => in_f32(x, Tensor::sin),
                 UnaryOp::Cos => in_f32(x, Tensor::cos),
                 UnaryOp::Tanh => in_f32(x, Tensor::tanh),
@@ -547,16 +671,7 @@ impl<const D: usize> Ranked<D> {
     fn clamp(self, bounds: ClampBounds) -> Result<Self> {
         match (self, bounds) {
             (Ranked::Float(x), ClampBounds::Float(min, max)) => {
-                if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
-                    return Ok(Ranked::Float(x.full_like(f64::NAN)));
-                }
-                let out = match (min, max) {
-                    (Some(lo), Some(hi)) => x.clone().clamp(lo, hi),
-                    (Some(lo), None) => x.clone().clamp_min(lo),
-                    (None, Some(hi)) => x.clone().clamp_max(hi),
-                    (None, None) => x.clone(),
-                };
-                Ok(Ranked::Float(keep_nan(out, x)))
+                Ok(Ranked::Float(clamp_float(x, min, max)))
             }
             (Ranked::Int(x), ClampBounds::Int(min, max)) => Ok(Ranked::Int(match (min, max) {
                 (Some(lo), Some(hi)) => x.clamp(lo, hi),

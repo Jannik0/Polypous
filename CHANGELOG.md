@@ -7,6 +7,21 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Autodiff on `DynTensor` in `polypous-backend` (#75, ADR-0014): `DynTensor::require_grad` marks a
+  float tensor as a param leaf, `backward` back-propagates from a one-element loss into an opaque
+  `Gradients`, and `Gradients::get`/`take` return a leaf's gradient as a plain `DynTensor` (leaf
+  dtype, shape and device). `detach`, `without_autodiff`, `is_tracked`, `is_grad_leaf` and
+  `has_autodiff` complete the API; no Burn type is public. Misuse (backward of an untracked,
+  non-float or many-element tensor, a second backward through the same graph, the gradient of a
+  non-leaf) is a `TensorError`. Burn's autodiff is now always compiled in (the off-by-default `autodiff` feature is
+  gone): the release `polyp` grows from 13.2 to 16.2 MB; inference tensors carry no autodiff
+  context. Gradients of the `core` elementwise ops, `cast`, the shape ops, `gather` and
+  `index_select` follow graph-ir.md §3.1.11 on every device, including the tie and kink rules
+  where Burn differs (`maximum`/`minimum` ties, `clamp` at its bounds, `pow`'s special values,
+  `sqrt`/`rsqrt` at `±0`). A gradient reference harness (`tests/grad_reference_*.rs`) checks the
+  107 gradient fixtures of these ops, and the forward reference tests rerun every case with
+  tracked inputs and require identical outputs (bit for bit, except NaN payloads, which aren't
+  part of op semantics).
 - End-to-end model reference tests (#46, M1 exit): `tools/reference/gen_models.py` writes an MLP
   (784 → 128 → 10, logits and `log_softmax`) and a small CNN (conv2d, relu, max_pool2d, conv2d,
   batch_norm with non-trivial running statistics, relu, adaptive_avg_pool2d, flatten, linear) as

@@ -27,13 +27,13 @@ metal = ["burn/metal", "dep:cubecl", "cubecl/metal"]
 # dev-dependencies (polypous-cli's tests), never in a release build. See placement.md §1,
 # "Testing the prober".
 test-fault-injection = []
-# Burn's autodiff (`burn-dispatch/autodiff`, `Device::autodiff`). Off by default: the autodiff spike
-# (#71, `src/tensor/autodiff.rs` and its experiments) uses it; #75 decides how it is enabled for
-# training. Adds only Burn's own `burn-autodiff` crate (MIT OR Apache-2.0).
-autodiff = ["burn/autodiff"]
 
 [dependencies]
-burn = { workspace = true, features = ["std"] }
+# `autodiff`: Burn's autodiff (`burn-dispatch/autodiff`), always on (ADR-0014, #75): training and
+# inference share one build, so there are no feature combinations to test. It adds only Burn's own
+# `burn-autodiff` crate (MIT OR Apache-2.0, already in the lock file). Tensors carry no autodiff
+# context unless they are tracked (`DynTensor::track_grad`), so inference pays no autodiff dispatch.
+burn = { workspace = true, features = ["std", "autodiff"] }
 # The exact CubeCL pin (ADR-0007), the same CubeCL Burn uses. Device discovery reads memory, identity
 # and capabilities from a device's CubeCL client (src/device); `polypous-quant` uses it for kernels.
 # The runtime features above are the ones Burn already enables, so they add no crates.

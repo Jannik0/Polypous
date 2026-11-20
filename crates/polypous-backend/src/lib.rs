@@ -12,4 +12,4 @@ pub mod probe;
 pub mod tensor;
 
 pub use ops::Scalar;
-pub use tensor::{DType, DynTensor, TensorData, TensorError};
+pub use tensor::{DType, DynTensor, Gradients, TensorData, TensorError};

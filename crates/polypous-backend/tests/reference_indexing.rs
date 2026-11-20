@@ -13,23 +13,12 @@
 #[path = "reference/common.rs"]
 mod common;
 
-use common::Case;
+#[path = "reference/run_indexing.rs"]
+mod runner;
+
 use polypous_backend::device::DeviceId;
 use polypous_backend::{DType, DynTensor, TensorData, TensorError};
-
-fn run(case: &Case, inputs: Vec<DynTensor>) -> Result<Vec<DynTensor>, TensorError> {
-    let inputs = common::feed_layout(case, inputs)?;
-    let [x, index]: [DynTensor; 2] = inputs.try_into().expect("x and index");
-    let rank = x.rank() as i64;
-    let dim = case.int("dim").expect("dim");
-    let dim = if dim < 0 { dim + rank } else { dim } as usize;
-    let out = match case.op.as_str() {
-        "core.gather" => x.gather(dim, index)?,
-        "core.index_select" => x.index_select(dim, index)?,
-        other => panic!("no runner for {other}"),
-    };
-    Ok(vec![out])
-}
+use runner::run;
 
 macro_rules! reference_tests {
     ($($test:ident => $op:literal),* $(,)?) => {
