@@ -400,8 +400,9 @@ fn fixed_ops_survive_non_finite_inputs_cpu() {
 /// this test crashed the process with SIGSEGV inside lavapipe's kernel code in about 1 of 3 runs
 /// after the CPU tests of this file (each part alone passed 10 of 10), a Burn 0.22.1 / CubeCL
 /// finding with a standalone reproduction (`lavapipe_where_select_backward_crash` in
-/// `src/tensor/autodiff_tests.rs`, docs/status.md §4). The gradient reference tests still run on
-/// lavapipe.
+/// `src/tensor/autodiff_tests.rs`, docs/status.md §4). The skip stays, as a documented
+/// limitation, until #92 (the cause of the crash) is resolved (owner decision, 2026-11-20). The
+/// gradient reference tests still run on lavapipe.
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
 #[test]
 #[ignore = "gpu"]
@@ -422,7 +423,8 @@ fn autodiff_gpu() {
         if hardware_only.skips(id) && !flag("POLYPOUS_TEST_LAVAPIPE_AUTODIFF") {
             eprintln!(
                 "SKIP autodiff_gpu on {id}: software rasterizer; the test crashes lavapipe \
-                 intermittently (docs/status.md §4). Set POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1 to run it"
+                 intermittently (#92, docs/status.md §4). Set POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1 \
+                 to run it"
             );
             continue;
         }

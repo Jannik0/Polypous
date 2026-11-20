@@ -127,10 +127,13 @@ Fix an item when its area is touched, or file an issue first.
     the gradient is read. Dropping the earlier work, the `bool_or`, or using `gather` instead of
     `select` makes it pass. The API test `autodiff_gpu` (`tests/autodiff.rs`) crashed the same way
     in about 1 of 3 runs, and in parallel with the backend's other GPU unit tests most of the time;
-    it therefore skips lavapipe unless `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1`. Lavapipe buffers live in
+    it therefore skips lavapipe unless `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1`. The skip stays until
+    [#92](https://github.com/Jannik0/Polypous/issues/92) (find the cause) is resolved (owner
+    decision, 2026-11-20). Lavapipe buffers live in
     host memory, so this looks like an out-of-bounds read in a CubeCL kernel that only faults with
     some heap layouts. The gradient reference tests (30 of 30 runs) and the forward tests with
-    tracked inputs pass on lavapipe. Not checked on hardware GPUs yet (#75's reference-machine run).
+    tracked inputs pass on lavapipe. On the reference machine (Windows) the reproduction passed
+    5 of 5 runs with correct values on `cuda:0` and both Vulkan GPUs (#75, PR 91).
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work.
