@@ -1,5 +1,5 @@
-//! Tests of [`with_gradient`] on the CPU (`flex`): the forward value stays bit for bit, and the
-//! gradient is `g · d` for finite, infinite and NaN `d`.
+//! Tests of [`with_gradient`] on the CPU (`flex`): the forward value stays bit for bit except NaN
+//! payloads, and the gradient is `g · d` for finite, infinite and NaN `d`.
 #![cfg(feature = "cpu")]
 
 use burn::tensor::{Device, Tensor, TensorData};
@@ -23,8 +23,15 @@ fn read(t: Tensor<1>) -> Vec<f32> {
         .unwrap()
 }
 
-fn bits(values: &[f32]) -> Vec<u32> {
-    values.iter().map(|v| v.to_bits()).collect()
+/// Whether two f32 slices hold the same values by testing-strategy.md §3.2's exact rule: every
+/// element bit for bit (`-0` and `+0` differ), except that any NaN matches any NaN (NaN payloads
+/// aren't part of op semantics; the GPUs return their canonical NaN `0x7FFFFFFF`).
+fn same_values(expected: &[f32], actual: &[f32]) -> bool {
+    expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual)
+            .all(|(e, a)| e.to_bits() == a.to_bits() || (e.is_nan() && a.is_nan()))
 }
 
 /// `∂/∂x` of `sum(with_gradient(out, x, d) · g)`.
@@ -72,13 +79,12 @@ fn the_forward_value_is_kept_bit_for_bit() {
         -1e-30,
     ];
     let (forward, _) = gradient(&out, &x, &d, &[1.0; 9]);
-    // NaN keeps its payload here too, so bits compare exactly.
-    assert_eq!(bits(&forward), bits(&out));
+    assert!(same_values(&out, &forward), "{forward:?}");
     // Two terms (the binary ops) keep it too.
     let a = t(&x).autodiff().require_grad();
     let b = t(&x).autodiff().require_grad();
     let y = with_gradient(t(&out).autodiff(), [(a, t(&d)), (b, t(&d))]);
-    assert_eq!(bits(&read(y)), bits(&out));
+    assert!(same_values(&out, &read(y)));
 }
 
 #[test]
@@ -111,7 +117,7 @@ fn non_finite_inputs_get_no_nan_in_the_forward_pass() {
     // x = ±inf or NaN: `x - x` would be NaN; the forward value stays, the gradient is 0.
     let x = [f32::INFINITY, f32::NEG_INFINITY, f32::NAN];
     let (forward, grad) = gradient(&[1.0, -0.0, 3.0], &x, &[2.0, 2.0, 2.0], &[1.0; 3]);
-    assert_eq!(bits(&forward), bits(&[1.0, -0.0, 3.0]));
+    assert!(same_values(&[1.0, -0.0, 3.0], &forward), "{forward:?}");
     assert_eq!(grad, vec![0.0; 3]);
 }
 
@@ -122,6 +128,26 @@ fn untracked_inputs_are_skipped() {
     let y = with_gradient(t(&[3.0, 4.0]), [(plain, t(&[1.0, 1.0]))]);
     assert!(!y.is_tracked());
     assert_eq!(read(y), vec![3.0, 4.0]);
+}
+
+#[test]
+fn same_values_ignores_only_nan_payloads() {
+    let quiet = f32::from_bits(0x7FC0_0000);
+    let canonical_gpu = f32::from_bits(0x7FFF_FFFF);
+    assert!(same_values(
+        &[quiet, 0.0, -0.0],
+        &[canonical_gpu, 0.0, -0.0]
+    ));
+    assert!(same_values(&[quiet], &[-quiet]));
+    // Negative checks: signed zeros, one ulp, and NaN against a number all differ.
+    assert!(!same_values(&[0.0], &[-0.0]));
+    assert!(!same_values(
+        &[1.5],
+        &[f32::from_bits(1.5f32.to_bits() + 1)]
+    ));
+    assert!(!same_values(&[quiet], &[1.0]));
+    assert!(!same_values(&[1.0], &[quiet]));
+    assert!(!same_values(&[1.0, 2.0], &[1.0]));
 }
 
 #[test]

@@ -11,6 +11,10 @@
 #![cfg(feature = "cpu")]
 #![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a test failure.
 
+#[path = "reference/common.rs"]
+mod common;
+
+use common::same_values;
 use polypous_backend::device::DeviceId;
 use polypous_backend::tensor::Result;
 use polypous_backend::{DType, DynTensor, Scalar, TensorData, TensorError};
@@ -44,8 +48,10 @@ fn read(t: &DynTensor) -> Vec<f32> {
     chunks.iter().map(|&b| f32::from_le_bytes(b)).collect()
 }
 
-fn bits(t: &DynTensor) -> Vec<u32> {
-    read(t).iter().map(|v| v.to_bits()).collect()
+/// `Err` unless `actual` holds the same values as `expected` by [`same_values`] (bit for bit,
+/// any NaN matching any NaN).
+fn same(expected: &DynTensor, actual: &DynTensor) -> std::result::Result<(), String> {
+    same_values(&expected.to_data().unwrap(), &actual.to_data().unwrap())
 }
 
 /// `sum(t)` as a `[1]` tensor.
@@ -165,12 +171,12 @@ fn detach_and_gradient_flow(device: DeviceId) {
     let grad = loss.backward().unwrap().get(&leaf).unwrap().unwrap();
     assert_eq!(read(&grad), vec![1.0, -2.0, 3.0]);
     // detach of untracked and non-float tensors: unchanged.
-    assert_eq!(bits(&x.clone().detach()), bits(&x));
+    same(&x, &x.clone().detach()).unwrap();
     assert!(!leaf.clone().detach().is_tracked());
     assert!(leaf.clone().detach().has_autodiff());
     let plain = leaf.clone().without_autodiff();
     assert!(!plain.is_tracked() && !plain.has_autodiff());
-    assert_eq!(bits(&plain), bits(&x));
+    same(&x, &plain).unwrap();
     // without_autodiff on int and bool tensors of a tracked graph.
     let ints = leaf.clone().cast(DType::I64).unwrap();
     assert!(!ints.is_tracked() && ints.has_autodiff());
@@ -243,11 +249,19 @@ fn mixing_and_index_checks(device: DeviceId, other: DeviceId) {
 
 /// The ops that fix Burn's gradients complete a backward pass with NaN, `±inf` and `±0` inputs
 /// (their gradients are unspecified there, graph-ir.md §3.1.11), and keep their forward value bit
-/// for bit.
-fn fixed_ops_survive_non_finite_inputs(device: DeviceId) {
+/// for bit, except NaN payloads ([`same_values`]: the GPUs return their canonical NaN from the
+/// tracked path's addition). Returns every failure, `"<op> on <device>: …"`, so that one failing
+/// op doesn't hide the others.
+fn fixed_ops_survive_non_finite_inputs(device: DeviceId) -> Vec<String> {
     let (inf, nan) = (f32::INFINITY, f32::NAN);
     let a = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.5, nan, inf, 2.0];
     let b = [1.0, inf, inf, -0.0, 0.0, nan, -inf, nan, -inf, 0.5];
+    let mut failures = Vec::new();
+    let mut check = |name: &str, result: std::result::Result<(), String>| {
+        if let Err(message) = result {
+            failures.push(format!("{name} on {device}: {message}"));
+        }
+    };
     type Binary = fn(DynTensor, DynTensor) -> Result<DynTensor>;
     let binary: [(&str, Binary); 3] = [
         ("maximum", DynTensor::maximum),
@@ -255,14 +269,21 @@ fn fixed_ops_survive_non_finite_inputs(device: DeviceId) {
         ("pow", DynTensor::pow),
     ];
     for (name, op) in binary {
-        let (x, y) = (f32s(&a, &[10], device), f32s(&b, &[10], device));
-        let plain = op(x.clone(), y.clone()).unwrap();
-        let (lx, ly) = (x.require_grad().unwrap(), y.require_grad().unwrap());
-        let out = op(lx.clone(), ly.clone()).unwrap();
-        assert_eq!(bits(&out), bits(&plain), "{name} on {device}");
-        let grads = total(out).backward().unwrap();
-        assert!(grads.get(&lx).unwrap().is_some(), "{name}");
-        assert!(grads.get(&ly).unwrap().is_some(), "{name}");
+        let run = || -> std::result::Result<(), String> {
+            let (x, y) = (f32s(&a, &[10], device), f32s(&b, &[10], device));
+            let plain = op(x.clone(), y.clone()).map_err(|e| e.to_string())?;
+            let (lx, ly) = (x.require_grad().unwrap(), y.require_grad().unwrap());
+            let out = op(lx.clone(), ly.clone()).map_err(|e| e.to_string())?;
+            same(&plain, &out).map_err(|e| format!("forward: {e}"))?;
+            let grads = total(out).backward().map_err(|e| e.to_string())?;
+            for (input, leaf) in [("a", &lx), ("b", &ly)] {
+                if grads.get(leaf).map_err(|e| e.to_string())?.is_none() {
+                    return Err(format!("no gradient for {input}"));
+                }
+            }
+            Ok(())
+        };
+        check(name, run());
     }
     type Unary = fn(DynTensor) -> Result<DynTensor>;
     let clamp_both: Unary = |x| x.clamp(Some(Scalar::Float(-1.0)), Some(Scalar::Float(1.0)));
@@ -274,24 +295,75 @@ fn fixed_ops_survive_non_finite_inputs(device: DeviceId) {
         ("clamp NaN bound", clamp_nan),
     ];
     for (name, op) in unary {
-        let x = f32s(&a, &[10], device);
-        let plain = op(x.clone()).unwrap();
-        let leaf = x.require_grad().unwrap();
-        let out = op(leaf.clone()).unwrap();
-        assert_eq!(bits(&out), bits(&plain), "{name} on {device}");
-        assert!(out.is_tracked(), "{name}");
-        let grads = total(out).backward().unwrap();
-        assert!(grads.get(&leaf).unwrap().is_some(), "{name}");
+        let run = || -> std::result::Result<(), String> {
+            let x = f32s(&a, &[10], device);
+            let plain = op(x.clone()).map_err(|e| e.to_string())?;
+            let leaf = x.require_grad().unwrap();
+            let out = op(leaf.clone()).map_err(|e| e.to_string())?;
+            same(&plain, &out).map_err(|e| format!("forward: {e}"))?;
+            if !out.is_tracked() {
+                return Err("the result is not tracked".into());
+            }
+            let grads = total(out).backward().map_err(|e| e.to_string())?;
+            if grads.get(&leaf).map_err(|e| e.to_string())?.is_none() {
+                return Err("no gradient".into());
+            }
+            Ok(())
+        };
+        check(name, run());
+    }
+    failures
+}
+
+/// Runs `check`, turning a panic (a failed assertion) into a failure message.
+#[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
+fn caught(name: &str, device: DeviceId, check: impl FnOnce()) -> Vec<String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)) {
+        Ok(()) => Vec::new(),
+        Err(panic) => {
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_else(|| "panic".into());
+            vec![format!("{name} on {device}: {message}")]
+        }
     }
 }
 
+/// Every check on `device` (with `to_device` to and from `other`); all failures, none hidden.
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
-fn all(device: DeviceId, other: DeviceId) {
-    leaves_of_every_rank_and_dtype(device);
-    misuse_is_an_error(device);
-    detach_and_gradient_flow(device);
-    mixing_and_index_checks(device, other);
-    fixed_ops_survive_non_finite_inputs(device);
+fn all(device: DeviceId, other: DeviceId) -> Vec<String> {
+    let mut failures = Vec::new();
+    failures.extend(caught("leaves_of_every_rank_and_dtype", device, || {
+        leaves_of_every_rank_and_dtype(device);
+    }));
+    failures.extend(caught("misuse_is_an_error", device, || {
+        misuse_is_an_error(device);
+    }));
+    failures.extend(caught("detach_and_gradient_flow", device, || {
+        detach_and_gradient_flow(device);
+    }));
+    failures.extend(caught("mixing_and_index_checks", device, || {
+        mixing_and_index_checks(device, other);
+    }));
+    failures.extend(caught(
+        "mixing_and_index_checks (from the CPU)",
+        device,
+        || {
+            mixing_and_index_checks(other, device);
+        },
+    ));
+    let mut fixed = Vec::new();
+    failures.extend(caught(
+        "fixed_ops_survive_non_finite_inputs",
+        device,
+        || {
+            fixed = fixed_ops_survive_non_finite_inputs(device);
+        },
+    ));
+    failures.extend(fixed);
+    failures
 }
 
 #[test]
@@ -316,10 +388,13 @@ fn mixing_and_index_checks_cpu() {
 
 #[test]
 fn fixed_ops_survive_non_finite_inputs_cpu() {
-    fixed_ops_survive_non_finite_inputs(DeviceId::Cpu);
+    let failures = fixed_ops_survive_non_finite_inputs(DeviceId::Cpu);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Every test on every GPU device, with `to_device` between it and the CPU.
+/// Every test on every GPU device, with `to_device` between it and the CPU. Runs every check on
+/// every device and fails once at the end with the full list (`SUMMARY autodiff <device>: …`
+/// per device), so that one failure can't hide the rest.
 ///
 /// Lavapipe (a software rasterizer) only with `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1` as well: there
 /// this test crashed the process with SIGSEGV inside lavapipe's kernel code in about 1 of 3 runs
@@ -356,9 +431,20 @@ fn autodiff_gpu() {
     if devices.is_empty() {
         eprintln!("SKIP autodiff_gpu: no GPU device to test");
     }
+    let mut failures = Vec::new();
     for device in devices {
-        all(device, DeviceId::Cpu);
-        mixing_and_index_checks(DeviceId::Cpu, device);
-        eprintln!("SUMMARY autodiff {device}: passed");
+        let found = all(device, DeviceId::Cpu);
+        if found.is_empty() {
+            eprintln!("SUMMARY autodiff {device}: passed");
+        } else {
+            eprintln!("SUMMARY autodiff {device}: {} failed", found.len());
+        }
+        failures.extend(found);
     }
+    assert!(
+        failures.is_empty(),
+        "{} autodiff check(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }

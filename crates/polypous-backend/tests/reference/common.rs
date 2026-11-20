@@ -409,9 +409,14 @@ pub struct Tally {
     pub passed: usize,
     pub skipped: usize,
     pub failed: usize,
-    /// Passed cases whose tracked rerun (float inputs marked with `require_grad`) gave the same
-    /// outputs bit for bit. Every passed case with a float input or param has one.
+    /// Cases whose rerun with tracked inputs (float inputs and params marked with
+    /// `require_grad`) gave the same outputs as the untracked run (by [`compare`]'s exact rule:
+    /// bit for bit, except that any NaN matches any NaN). Every case with a float input or param
+    /// whose untracked outputs could be read back has one, also when those outputs miss the
+    /// fixture.
     pub tracked: usize,
+    /// Cases whose tracked rerun gave different outputs (a failure).
+    pub tracked_differ: usize,
 }
 
 /// Runs every case of `op` on `devices` and fails the test if any case fails.
@@ -426,12 +431,14 @@ fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
     for &device in devices {
         for case in &cases {
             let entry = tally.entry((device.to_string(), case.label())).or_default();
-            match run_case(case, device, run) {
+            let (outcome, tracked) = run_case(case, device, run);
+            match tracked {
+                Tracked::NotRun => {}
+                Tracked::Identical => entry.tracked += 1,
+                Tracked::Differ => entry.tracked_differ += 1,
+            }
+            match outcome {
                 Outcome::Passed => entry.passed += 1,
-                Outcome::PassedTracked => {
-                    entry.passed += 1;
-                    entry.tracked += 1;
-                }
                 Outcome::Skipped(reason) => {
                     eprintln!("SKIP {op}/{} on {device}: {reason}", case.name);
                     entry.skipped += 1;
@@ -453,8 +460,8 @@ fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
         );
         let _ = writeln!(
             summary,
-            "TRACKED {op} {device} {label}: {} identical with tracked inputs",
-            t.tracked
+            "TRACKED {op} {device} {label}: {} identical with tracked inputs, {} differ",
+            t.tracked, t.tracked_differ
         );
     }
     eprint!("{summary}");
@@ -468,33 +475,46 @@ fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
 
 enum Outcome {
     Passed,
-    /// Passed, and so did the rerun with tracked inputs.
-    PassedTracked,
     Skipped(String),
     Failed(String),
 }
 
-fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
+/// The result of a case's rerun with tracked inputs.
+enum Tracked {
+    /// No rerun: no float input or param, or the untracked run gave no outputs to compare.
+    NotRun,
+    Identical,
+    Differ,
+}
+
+/// Runs a case and, where it has a float input or param, reruns it with those inputs tracked.
+/// The rerun runs whether or not the untracked outputs meet the fixture (the CUDA f32 `matmul`
+/// cases of #64 don't): tracking must not change a value even where the backend misses the
+/// reference.
+fn run_case(case: &Case, device: DeviceId, run: &Runner) -> (Outcome, Tracked) {
     let mut dtypes: Vec<DType> = case.inputs.iter().map(|d| d.dtype).collect();
     dtypes.extend(case.params.iter().map(|(_, d)| d.dtype));
     dtypes.extend(case.outputs.iter().map(|(_, d)| d.dtype));
     for dtype in dtypes {
         match DynTensor::device_supports(device, dtype) {
             Ok(true) => {}
-            Ok(false) => return Outcome::Skipped(format!("dtype {dtype} is not supported")),
-            Err(err) => return Outcome::Failed(format!("device_supports: {err}")),
+            Ok(false) => {
+                let reason = format!("dtype {dtype} is not supported");
+                return (Outcome::Skipped(reason), Tracked::NotRun);
+            }
+            Err(err) => {
+                let reason = format!("device_supports: {err}");
+                return (Outcome::Failed(reason), Tracked::NotRun);
+            }
         }
     }
     let outputs = match upload_and_run(case, device, run, false) {
         Ok(outputs) => outputs,
-        Err(outcome) => return outcome,
+        Err(outcome) => return (outcome, Tracked::NotRun),
     };
     if outputs.len() != case.outputs.len() {
-        return Outcome::Failed(format!(
-            "{} outputs, expected {}",
-            outputs.len(),
-            case.outputs.len()
-        ));
+        let reason = format!("{} outputs, expected {}", outputs.len(), case.outputs.len());
+        return (Outcome::Failed(reason), Tracked::NotRun);
     }
     let mut problems = String::new();
     let mut read = Vec::with_capacity(outputs.len());
@@ -515,20 +535,29 @@ fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
             }
         }
     }
-    if !problems.is_empty() {
-        return Outcome::Failed(problems);
-    }
     let has_float = case
         .inputs
         .iter()
         .chain(case.params.iter().map(|(_, data)| data))
         .any(|data| data.dtype.is_float());
-    if !has_float {
-        return Outcome::Passed;
-    }
-    match tracked_rerun(case, device, run, &read) {
-        Ok(()) => Outcome::PassedTracked,
-        Err(message) => Outcome::Failed(format!("tracked rerun: {message}")),
+    let tracked = if has_float && read.len() == case.outputs.len() {
+        match tracked_rerun(case, device, run, &read) {
+            Ok(()) => Tracked::Identical,
+            Err(message) => {
+                let _ = write!(
+                    problems,
+                    "\n  tracked rerun differs from the untracked run:{message}"
+                );
+                Tracked::Differ
+            }
+        }
+    } else {
+        Tracked::NotRun
+    };
+    if problems.is_empty() {
+        (Outcome::Passed, tracked)
+    } else {
+        (Outcome::Failed(problems), tracked)
     }
 }
 
@@ -566,8 +595,8 @@ fn upload_and_run(
 }
 
 /// Runs the case again with every float input and param marked as a leaf
-/// ([`DynTensor::require_grad`]) and requires the outputs to equal `untracked` bit for bit
-/// (any NaN matches any NaN): tracking must not change a value (#75).
+/// ([`DynTensor::require_grad`]) and requires the outputs to equal `untracked` by
+/// [`same_values`]: tracking must not change a value (#75).
 fn tracked_rerun(
     case: &Case,
     device: DeviceId,
@@ -576,8 +605,10 @@ fn tracked_rerun(
 ) -> Result<(), String> {
     let outputs = match upload_and_run(case, device, run, true) {
         Ok(outputs) => outputs,
-        Err(Outcome::Skipped(reason) | Outcome::Failed(reason)) => return Err(reason),
-        Err(Outcome::Passed | Outcome::PassedTracked) => unreachable!("not an error outcome"),
+        Err(Outcome::Skipped(reason) | Outcome::Failed(reason)) => {
+            return Err(format!(" {reason}"));
+        }
+        Err(Outcome::Passed) => return Err(" no outputs".into()),
     };
     if outputs.len() != untracked.len() {
         return Err(format!(
@@ -586,16 +617,11 @@ fn tracked_rerun(
             untracked.len()
         ));
     }
-    let exact = Tolerance {
-        exact: true,
-        atol: 0.0,
-        rtol: 0.0,
-    };
     let mut problems = String::new();
     for ((actual, expected), (name, _)) in outputs.into_iter().zip(untracked).zip(&case.outputs) {
         match actual.into_data() {
             Ok(actual) => {
-                if let Err(message) = compare(expected, &actual, exact) {
+                if let Err(message) = same_values(expected, &actual) {
                     let _ = write!(problems, "\n  {name}: {message}");
                 }
             }
@@ -609,6 +635,20 @@ fn tracked_rerun(
     } else {
         Err(problems)
     }
+}
+
+/// Whether two tensors hold the same values, by the rule of testing-strategy.md §3.2 for
+/// `exact: true`: same dtype and shape, every element bit for bit (`-0` and `+0` differ), except
+/// that any NaN matches any NaN (NaN payloads and signs are not part of op semantics,
+/// graph-ir.md §3.1.8). Used wherever a tracked run is compared with an untracked one. `Err`
+/// describes the first mismatch like [`compare`].
+pub fn same_values(expected: &TensorData, actual: &TensorData) -> Result<(), String> {
+    let exact = Tolerance {
+        exact: true,
+        atol: 0.0,
+        rtol: 0.0,
+    };
+    compare(expected, actual, exact)
 }
 
 /// Compares an output with its expected tensor (testing-strategy.md §3.2). `Err` describes the
@@ -874,6 +914,21 @@ fn compare_follows_the_tolerance_rules() {
     assert!(compare(&e, &f32s(&[1.0, f32::NAN, f32::MAX, 0.0]), tol).is_err());
     // Exact: any NaN matches any NaN, but -0.0 is not 0.0.
     assert!(compare(&e, &f32s(&[1.0, -f32::NAN, f32::INFINITY, -0.0]), exact).is_ok());
+    // `same_values`: NaN payloads don't matter (the GPUs' canonical NaN 0x7FFFFFFF against the
+    // CPU's 0x7FC00000), signed zeros and every other bit do.
+    let quiet = f32::from_bits(0x7FC0_0000);
+    let all_ones = f32::from_bits(0x7FFF_FFFF);
+    let negative_nan = f32::from_bits(0xFFC0_0001);
+    let v = f32s(&[quiet, 0.0, -0.0, 1.5]);
+    assert!(same_values(&v, &f32s(&[all_ones, 0.0, -0.0, 1.5])).is_ok());
+    assert!(same_values(&v, &f32s(&[negative_nan, 0.0, -0.0, 1.5])).is_ok());
+    assert!(same_values(&v, &f32s(&[quiet, -0.0, -0.0, 1.5])).is_err());
+    assert!(same_values(&v, &f32s(&[quiet, 0.0, 0.0, 1.5])).is_err());
+    // A real difference fails: one ulp, a NaN for a number, a number for a NaN.
+    let next = f32::from_bits(1.5f32.to_bits() + 1);
+    assert!(same_values(&v, &f32s(&[quiet, 0.0, -0.0, next])).is_err());
+    assert!(same_values(&v, &f32s(&[quiet, 0.0, -0.0, f32::NAN])).is_err());
+    assert!(same_values(&v, &f32s(&[1.0, 0.0, -0.0, 1.5])).is_err());
     assert!(compare(&e, &f32s(&[1.0, f32::NAN, f32::INFINITY, 0.0]), exact).is_err());
     let message = compare(&e, &f32s(&[1.5, f32::NAN, f32::INFINITY, 0.0]), tol).unwrap_err();
     assert!(message.contains("worst at [0]"), "{message}");

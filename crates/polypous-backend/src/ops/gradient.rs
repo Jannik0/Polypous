@@ -2,7 +2,9 @@
 //! gradient explicitly on their tracked path. See the module documentation of [`crate::ops`],
 //! "Gradients", for which ops use this and why.
 //!
-//! [`with_gradient`] returns a tensor whose **forward value is `out` bit for bit** and whose
+//! [`with_gradient`] returns a tensor whose **forward value is `out` bit for bit, except NaN
+//! payloads** (NaN payloads aren't part of op semantics: graph-ir.md §3.1.8, testing-strategy.md
+//! §3.2) and whose
 //! gradient with respect to each tracked input `x` is `g · d`, where `g` is the upstream gradient
 //! and `d` a derivative tensor the op computes from the spec's formula (any value, including
 //! `±inf` and NaN). It is built from Burn ops only (no custom backward: Burn 0.22.1's dispatch
@@ -12,7 +14,10 @@
 //! constant(out) + T(x₁, d₁) + T(x₂, d₂) + …     with every T exactly -0 in the forward pass
 //! ```
 //!
-//! and `x + (-0) = x` for every `x` (also `-0`, `±inf` and NaN), so the forward value is unchanged.
+//! and `x + (-0) = x` for every `x` (also `-0` and `±inf`), so the forward value is unchanged. A
+//! NaN stays NaN, but the addition may return the backend's canonical NaN instead of the input's
+//! payload: CUDA and Vulkan on the RTX 3060 gave `0x7FFFFFFF` where the untracked `maximum` passed
+//! `0x7FC00000` through (#75, reference-machine run 1).
 //! Each term is `T = ((s · c) · k) · k`:
 //!
 //! - `s` is `+0` with derivative `±1`: `xs - constant(xs)` (`+1`) where `d < 0`, else

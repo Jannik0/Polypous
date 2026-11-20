@@ -20,7 +20,8 @@ All notable changes to Polypous are documented here. The format follows
   where Burn differs (`maximum`/`minimum` ties, `clamp` at its bounds, `pow`'s special values,
   `sqrt`/`rsqrt` at `±0`). A gradient reference harness (`tests/grad_reference_*.rs`) checks the
   107 gradient fixtures of these ops, and the forward reference tests rerun every case with
-  tracked inputs and require identical outputs.
+  tracked inputs and require identical outputs (bit for bit, except NaN payloads, which aren't
+  part of op semantics).
 - End-to-end model reference tests (#46, M1 exit): `tools/reference/gen_models.py` writes an MLP
   (784 → 128 → 10, logits and `log_softmax`) and a small CNN (conv2d, relu, max_pool2d, conv2d,
   batch_norm with non-trivial running statistics, relu, adaptive_avg_pool2d, flatten, linear) as

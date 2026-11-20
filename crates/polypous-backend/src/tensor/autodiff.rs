@@ -29,7 +29,8 @@
 //! **Gradient conventions.** Gradients follow graph-ir.md §3.1.11 (PyTorch's, with its tie and
 //! kink rules). Where Burn's own backward differs, the op fixes it on its tracked path (see the
 //! module documentation of [`crate::ops`], "Gradients"); untracked calls run the forward code
-//! unchanged, and tracked calls give the same forward values bit for bit.
+//! unchanged, and tracked calls give the same forward values bit for bit, except NaN payloads
+//! (NaN payloads aren't part of op semantics: graph-ir.md §3.1.8, testing-strategy.md §3.2).
 //!
 //! No Burn type appears in this API (ADR-0007): [`Gradients`] holds Burn's container privately.
 //!

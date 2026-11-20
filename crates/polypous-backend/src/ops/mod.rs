@@ -37,7 +37,8 @@
 //! reference tests (testing-strategy.md §3.6) are `tests/grad_reference_*.rs`, on the harness in
 //! `tests/reference/grads.rs`; a family's forward and gradient tests share its runner,
 //! `tests/reference/run_<family>.rs`. The forward harness runs every case with float inputs a
-//! second time with those inputs tracked and requires the same outputs bit for bit.
+//! second time with those inputs tracked and requires the same outputs bit for bit, except NaN
+//! payloads (testing-strategy.md §3.2), also where the untracked outputs miss the fixture.
 //!
 //! # Method names
 //!
@@ -197,7 +198,8 @@
 //! from the spec (PyTorch's gradients, with its tie and kink rules), the op takes a **tracked
 //! path**: it computes its forward value from untracked copies of its inputs, exactly as the
 //! untracked path does, and sets the spec's derivative with `gradient::with_gradient` (forward
-//! value kept bit for bit; gradient `g · d` with any `d`, `±inf` and NaN included; see
+//! value kept bit for bit, except NaN payloads, which aren't part of op semantics (§3.1.8,
+//! testing-strategy.md §3.2); gradient `g · d` with any `d`, `±inf` and NaN included; see
 //! `gradient.rs` for the construction). Untracked calls run the code above unchanged, so inference
 //! pays nothing. Burn 0.22.1 findings (CPU `flex` and lavapipe), each shown by its fixture case
 //! failing with the fix switched off (negative check; values are `got` with `expected`):
@@ -228,7 +230,8 @@
 //!   but leave the float graph intact). `full_like` passes no gradient: its result is a new
 //!   untracked tensor.
 //! - **Non-finite inputs** (§3.1.11: gradient unspecified): every fix completes the backward pass
-//!   without a panic, and keeps the forward value bit for bit (`tests/autodiff.rs`).
+//!   without a panic, and keeps the forward value bit for bit except NaN payloads
+//!   (`tests/autodiff.rs`).
 //! - The reductions, `matmul`, `softmax`, `cumsum`, `top_k` (whose host values cut the graph) and
 //!   the `nn` ops follow in #76 and #77.
 //!
