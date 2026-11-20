@@ -14,6 +14,7 @@
 //! | File | Ops (graph-ir.md §3.2, §3.3) |
 //! |---|---|
 //! | `mod.rs` | Shared pieces: [`Scalar`], dtype classes, broadcasting, operand checks |
+//! | `gradient.rs` | Shared: the gradient override of the ops whose Burn gradient differs from the spec (see "Gradients") |
 //! | `elementwise.rs` | `core.add sub mul div pow maximum minimum neg abs exp log sqrt rsqrt sin cos tanh clamp where` |
 //! | `compare.rs` | `core.eq ne lt le gt ge`, and the logic ops `core.and or not` |
 //! | `cast.rs` | `core.cast` |
@@ -32,7 +33,11 @@
 //!
 //! Reference tests live in `tests/reference_*.rs`, one test binary per op family, and share the
 //! fixture harness in `tests/reference/common.rs` (testing-strategy.md §6). A new family adds
-//! its own `tests/reference_<family>.rs` with `mod common;` pointing at that file.
+//! its own `tests/reference_<family>.rs` with `mod common;` pointing at that file. Gradient
+//! reference tests (testing-strategy.md §3.6) are `tests/grad_reference_*.rs`, on the harness in
+//! `tests/reference/grads.rs`; a family's forward and gradient tests share its runner,
+//! `tests/reference/run_<family>.rs`. The forward harness runs every case with float inputs a
+//! second time with those inputs tracked and requires the same outputs bit for bit.
 //!
 //! # Method names
 //!
@@ -185,6 +190,49 @@
 //!   `matmul` run on the f32 path but stay correct on CUDA: their values are exact in TF32
 //!   (10-bit mantissa, as in `f16`).
 //!
+//! # Gradients (graph-ir.md §3.1.11)
+//!
+//! Gradients are Burn's autodiff ([`crate::tensor`], "Autodiff"; ADR-0014): every op records
+//! itself when an input is tracked, and most ops need nothing else. Where Burn's backward differs
+//! from the spec (PyTorch's gradients, with its tie and kink rules), the op takes a **tracked
+//! path**: it computes its forward value from untracked copies of its inputs, exactly as the
+//! untracked path does, and sets the spec's derivative with `gradient::with_gradient` (forward
+//! value kept bit for bit; gradient `g · d` with any `d`, `±inf` and NaN included; see
+//! `gradient.rs` for the construction). Untracked calls run the code above unchanged, so inference
+//! pays nothing. Burn 0.22.1 findings (CPU `flex` and lavapipe), each shown by its fixture case
+//! failing with the fix switched off (negative check; values are `got` with `expected`):
+//!
+//! - **`maximum`/`minimum` ties:** `g / 2` to each operand. Burn's `max_pair`/`min_pair` are
+//!   `mask_where(a < b, b)`, which gives all of `g` to `a` (`core.maximum/ties_f32`: `grad_a`
+//!   `9.921e-1` for `4.961e-1`, `grad_b` `0`; the same on both devices). Elsewhere `g` goes to the
+//!   larger (smaller) operand; with a NaN operand both get `0` (unspecified, §3.1.11).
+//! - **`clamp` at its bounds:** `0` at `x = min` and `x = max` (also `min = max`), PyTorch's form
+//!   with scalar bounds. Burn's `clamp` is two `mask_fill`s on strict comparisons, which pass `g`
+//!   there (`core.clamp/at_bounds_f32`: `9.423e-1` for `0`). A NaN bound gives `0` everywhere.
+//! - **`pow`:** `∂/∂a = g · b · a^(b-1)` (`0` where `b = 0`) and `∂/∂b = g · a^b · ln(a)` (`0` where
+//!   `a = 0` and `b ≥ 0`), with `a^(b-1)` by the C99 rules above. Burn differentiates through the
+//!   C99 masks of the forward pass, which are constants: `core.pow/a_zero_f32` `∂/∂a` NaN on
+//!   `flex` and `0` on lavapipe for `+inf`, `∂/∂b` NaN for `0`; `a_zero_negative_b_f32` NaN on
+//!   `flex` and `-0` on lavapipe for `±inf`; `b_zero_f32` `∂/∂b` NaN for `0`, and on `flex`
+//!   `∂/∂a` NaN for `0`.
+//! - **`sqrt` and `rsqrt` at `±0`:** `g / (2 · sqrt(x))` and `-g · rsqrt(x)³ / 2` (signed by
+//!   `sqrt(-0) = -0`). Burn's `sqrt` backward is `g · x^-0.5 / 2` through the backend's `powf`:
+//!   CubeCL's `pow(0, -0.5)` is `0`, so `sqrt'(0)` was `0` on lavapipe (`core.sqrt/zero_f32`: `-0`
+//!   for `-inf`), and `flex`'s `(-0)^-0.5 = +inf` loses the sign at `-0` (`+inf · g` for
+//!   `-inf · g`). `rsqrt` (`1 / sqrt(x)`) inherits both: NaN on lavapipe and the wrong sign on
+//!   `flex` (`core.rsqrt/zero_f32`).
+//! - **Checked, no fix needed:** the other elementwise ops (including `abs` at `±0`, `log` at
+//!   `±0`, `div` by zero), `where`, `cast` (float → float), every shape op (also on permuted,
+//!   transposed, expanded and stepped views, with broadcast gradients summed), and `gather`/
+//!   `index_select` (repeated indices add up; the index checks read the indices back on the host
+//!   but leave the float graph intact). `full_like` passes no gradient: its result is a new
+//!   untracked tensor.
+//! - **Non-finite inputs** (§3.1.11: gradient unspecified): every fix completes the backward pass
+//!   without a panic, and keeps the forward value bit for bit (unit tests in
+//!   `tensor/autodiff_tests.rs`).
+//! - The reductions, `matmul`, `softmax`, `cumsum`, `top_k` (whose host values cut the graph) and
+//!   the `nn` ops follow in #76 and #77.
+//!
 //! # Semantics (graph-ir.md §3.1)
 //!
 //! - **Strict dtypes** (§3.1.2): operands that must agree have the same dtype, or the op fails
@@ -222,6 +270,7 @@ mod compare;
 mod conv;
 mod creation;
 mod elementwise;
+mod gradient;
 mod indexing;
 mod linalg;
 mod nn_layers;

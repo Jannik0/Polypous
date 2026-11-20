@@ -48,17 +48,24 @@
 //! which would panic on it (`device/resolve.rs`). Each tensor stores the [`DeviceId`] of its device,
 //! so `device()` returns exactly the id it was created with.
 //!
+//! # Autodiff
+//!
+//! Burn's autodiff is always compiled in (ADR-0014, #75). A float tensor marked with
+//! [`DynTensor::require_grad`] is a param leaf; ops on tracked tensors are recorded, and
+//! [`DynTensor::backward`] on a one-element loss returns [`Gradients`], from which
+//! [`Gradients::get`] reads each leaf's gradient as a plain `DynTensor`. Tensors that were never
+//! marked carry no autodiff context. See `autodiff.rs` for the training-step pattern and the
+//! errors.
+//!
 //! [`DeviceId`]: crate::device::DeviceId
 
-// Crate-internal until #75 settles the public API (ADR-0014); only the spike uses it.
-#[cfg(feature = "autodiff")]
-#[allow(dead_code)]
 mod autodiff;
 mod data;
 mod dtype;
 mod dyn_tensor;
 mod error;
 
+pub use autodiff::Gradients;
 pub use data::TensorData;
 pub use dtype::DType;
 pub(crate) use dtype::Kind;

@@ -286,8 +286,6 @@ impl DynTensor {
     }
 
     /// The rank/kind enum, borrowed.
-    #[cfg(feature = "autodiff")]
-    #[allow(dead_code)]
     pub(crate) fn inner_ref(&self) -> &Inner {
         &self.inner
     }

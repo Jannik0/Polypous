@@ -50,7 +50,7 @@ pub struct Tolerance {
 }
 
 /// One fixture case: sidecar fields and the tensors from its safetensors file.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Case {
     pub op: String,
     pub name: String,
@@ -63,6 +63,17 @@ pub struct Case {
     /// Expected outputs in order, with their names.
     pub outputs: Vec<(String, TensorData)>,
     pub tolerance: Tolerance,
+    /// The names of `inputs`, in order.
+    pub input_names: Vec<String>,
+    /// `"inference"`, or `"training"` for the training-mode gradient cases (schema 2,
+    /// testing-strategy.md §3.6). Forward cases are `"inference"`.
+    pub mode: String,
+    /// The `mask` of a schema-2 case (`nn.dropout` in training mode). The run function gets it
+    /// after the params.
+    pub mask: Option<TensorData>,
+    /// Whether [`feed_layout`] still has to build the case's input view. The gradient harness
+    /// builds it before it marks the inputs as leaves and clears this.
+    pub layout_pending: bool,
 }
 
 impl Case {
@@ -174,8 +185,16 @@ pub fn fixture_dir(op: &str) -> PathBuf {
 /// Every case of `op`, sorted by name. Panics (fails the test) if a fixture is missing or
 /// malformed.
 pub fn load_cases(op: &str) -> Vec<Case> {
-    let dir = fixture_dir(op);
-    let entries = std::fs::read_dir(&dir)
+    list_sidecars(&fixture_dir(op))
+        .iter()
+        .map(|path| load_case(op, path))
+        .collect()
+}
+
+/// The `.json` sidecars of a fixture directory, sorted. Panics (fails the test) if the directory
+/// is missing or holds none.
+pub fn list_sidecars(dir: &Path) -> Vec<PathBuf> {
+    let entries = std::fs::read_dir(dir)
         .unwrap_or_else(|err| panic!("missing fixture directory {}: {err}", dir.display()));
     let mut sidecars: Vec<PathBuf> = entries
         .map(|entry| entry.expect("readable fixture directory").path())
@@ -183,87 +202,142 @@ pub fn load_cases(op: &str) -> Vec<Case> {
         .collect();
     sidecars.sort();
     assert!(!sidecars.is_empty(), "no fixtures in {}", dir.display());
-    sidecars.iter().map(|path| load_case(op, path)).collect()
+    sidecars
 }
 
 fn load_case(op: &str, sidecar: &Path) -> Case {
+    let (json, file) = read_sidecar(op, sidecar, 1);
+    case_from(op, sidecar, &json, &file)
+}
+
+/// Reads a sidecar and its safetensors file and checks `schema_version`, `op` and `case`.
+pub fn read_sidecar(op: &str, sidecar: &Path, schema: u64) -> (Value, SafetensorsFile) {
     let text = std::fs::read_to_string(sidecar)
         .unwrap_or_else(|err| panic!("{}: {err}", sidecar.display()));
     let json: Value =
         serde_json::from_str(&text).unwrap_or_else(|err| panic!("{}: {err}", sidecar.display()));
-    let field = |key: &str| {
-        json.get(key)
-            .unwrap_or_else(|| panic!("{}: missing key {key}", sidecar.display()))
-    };
-    assert_eq!(field("schema_version"), 1, "{}", sidecar.display());
-    assert_eq!(field("op"), op, "{}", sidecar.display());
-    let stem = sidecar
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    assert_eq!(field("case"), stem, "{}", sidecar.display());
-
+    assert_eq!(
+        sidecar_field(&json, sidecar, "schema_version"),
+        schema,
+        "{}",
+        sidecar.display()
+    );
+    assert_eq!(
+        sidecar_field(&json, sidecar, "op"),
+        op,
+        "{}",
+        sidecar.display()
+    );
+    assert_eq!(
+        sidecar_field(&json, sidecar, "case"),
+        case_stem(sidecar),
+        "{}",
+        sidecar.display()
+    );
     let tensors = sidecar.with_extension("safetensors");
     let file = SafetensorsFile::open(&tensors)
         .unwrap_or_else(|err| panic!("missing or bad fixture {}: {err}", tensors.display()));
-    let load = |spec: &Value| -> (String, TensorData) {
-        let name = spec["name"].as_str().expect("tensor name").to_string();
-        let dtype_name = spec["dtype"].as_str().expect("tensor dtype");
-        let dtype = DType::from_name(dtype_name)
-            .unwrap_or_else(|| panic!("{}: unknown dtype {dtype_name}", sidecar.display()));
-        let shape: Vec<u64> = spec["shape"]
-            .as_array()
-            .expect("tensor shape")
-            .iter()
-            .map(|d| d.as_u64().expect("dimension"))
-            .collect();
-        let view = file
-            .tensor(&name)
-            .unwrap_or_else(|err| panic!("{}: tensor {name}: {err}", tensors.display()));
-        let stored: Vec<u64> = view.shape().iter().map(|&d| d as u64).collect();
-        assert_eq!(stored, shape, "{}: shape of {name}", tensors.display());
-        assert_eq!(
-            format!("{:?}", view.dtype()).to_lowercase(),
-            dtype_name,
-            "{}: dtype of {name}",
-            tensors.display()
-        );
-        // safetensors and `TensorData` are both row-major and little-endian.
-        let data = TensorData::new(dtype, shape, view.data().to_vec())
-            .unwrap_or_else(|err| panic!("{}: tensor {name}: {err}", tensors.display()));
-        (name, data)
-    };
-    let list = |key: &str| -> Vec<(String, TensorData)> {
-        field(key)
-            .as_array()
-            .unwrap_or_else(|| panic!("{}: {key} is not an array", sidecar.display()))
-            .iter()
-            .map(load)
-            .collect()
-    };
+    (json, file)
+}
+
+/// A required sidecar key.
+pub fn sidecar_field<'a>(json: &'a Value, sidecar: &Path, key: &str) -> &'a Value {
+    json.get(key)
+        .unwrap_or_else(|| panic!("{}: missing key {key}", sidecar.display()))
+}
+
+fn case_stem(sidecar: &Path) -> &str {
+    sidecar
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+}
+
+/// Loads the tensor a sidecar entry `{"name", "dtype", "shape"}` names, checking its dtype and
+/// shape against the safetensors header.
+pub fn load_tensor(file: &SafetensorsFile, sidecar: &Path, spec: &Value) -> (String, TensorData) {
+    let tensors = sidecar.with_extension("safetensors");
+    let name = spec["name"].as_str().expect("tensor name").to_string();
+    let dtype_name = spec["dtype"].as_str().expect("tensor dtype");
+    let dtype = DType::from_name(dtype_name)
+        .unwrap_or_else(|| panic!("{}: unknown dtype {dtype_name}", sidecar.display()));
+    let shape: Vec<u64> = spec["shape"]
+        .as_array()
+        .expect("tensor shape")
+        .iter()
+        .map(|d| d.as_u64().expect("dimension"))
+        .collect();
+    let view = file
+        .tensor(&name)
+        .unwrap_or_else(|err| panic!("{}: tensor {name}: {err}", tensors.display()));
+    let stored: Vec<u64> = view.shape().iter().map(|&d| d as u64).collect();
+    assert_eq!(stored, shape, "{}: shape of {name}", tensors.display());
+    assert_eq!(
+        format!("{:?}", view.dtype()).to_lowercase(),
+        dtype_name,
+        "{}: dtype of {name}",
+        tensors.display()
+    );
+    // safetensors and `TensorData` are both row-major and little-endian.
+    let data = TensorData::new(dtype, shape, view.data().to_vec())
+        .unwrap_or_else(|err| panic!("{}: tensor {name}: {err}", tensors.display()));
+    (name, data)
+}
+
+/// Every tensor of a sidecar list (`inputs`, `outputs`, …).
+pub fn load_list(
+    json: &Value,
+    file: &SafetensorsFile,
+    sidecar: &Path,
+    key: &str,
+) -> Vec<(String, TensorData)> {
+    sidecar_field(json, sidecar, key)
+        .as_array()
+        .unwrap_or_else(|| panic!("{}: {key} is not an array", sidecar.display()))
+        .iter()
+        .map(|spec| load_tensor(file, sidecar, spec))
+        .collect()
+}
+
+/// A `{"exact", "atol", "rtol"}` object.
+pub fn parse_tolerance(value: &Value) -> Tolerance {
+    let number = |key: &str| value[key].as_f64().expect("tolerance number");
+    Tolerance {
+        exact: value["exact"].as_bool().expect("tolerance.exact"),
+        atol: number("atol"),
+        rtol: number("rtol"),
+    }
+}
+
+/// The [`Case`] of a sidecar (the keys schema 1 and 2 share).
+pub fn case_from(op: &str, sidecar: &Path, json: &Value, file: &SafetensorsFile) -> Case {
     // Only ops with params have the key (testing-strategy.md §3.2).
     let params = if json.get("params").is_some() {
-        list("params")
+        load_list(json, file, sidecar, "params")
     } else {
         Vec::new()
     };
-    let tolerance = field("tolerance");
-    let number = |key: &str| tolerance[key].as_f64().expect("tolerance number");
+    let (input_names, inputs) = load_list(json, file, sidecar, "inputs").into_iter().unzip();
     Case {
         op: op.to_string(),
-        name: stem.to_string(),
-        attributes: field("attributes")
+        name: case_stem(sidecar).to_string(),
+        attributes: sidecar_field(json, sidecar, "attributes")
             .as_object()
             .expect("attributes object")
             .clone(),
-        inputs: list("inputs").into_iter().map(|(_, data)| data).collect(),
+        inputs,
         params,
-        outputs: list("outputs"),
-        tolerance: Tolerance {
-            exact: tolerance["exact"].as_bool().expect("tolerance.exact"),
-            atol: number("atol"),
-            rtol: number("rtol"),
-        },
+        outputs: load_list(json, file, sidecar, "outputs"),
+        tolerance: parse_tolerance(sidecar_field(json, sidecar, "tolerance")),
+        input_names,
+        mode: json
+            .get("mode")
+            .map_or("inference", |m| m.as_str().expect("mode is a string"))
+            .to_string(),
+        mask: json
+            .get("mask")
+            .map(|spec| load_tensor(file, sidecar, spec).1),
+        layout_pending: true,
     }
 }
 
@@ -331,10 +405,13 @@ pub fn gpu_devices() -> Vec<DeviceId> {
 }
 
 #[derive(Default)]
-struct Tally {
-    passed: usize,
-    skipped: usize,
-    failed: usize,
+pub struct Tally {
+    pub passed: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    /// Passed cases whose tracked rerun (float inputs marked with `require_grad`) gave the same
+    /// outputs bit for bit. Every passed case with a float input or param has one.
+    pub tracked: usize,
 }
 
 /// Runs every case of `op` on `devices` and fails the test if any case fails.
@@ -351,6 +428,10 @@ fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
             let entry = tally.entry((device.to_string(), case.label())).or_default();
             match run_case(case, device, run) {
                 Outcome::Passed => entry.passed += 1,
+                Outcome::PassedTracked => {
+                    entry.passed += 1;
+                    entry.tracked += 1;
+                }
                 Outcome::Skipped(reason) => {
                     eprintln!("SKIP {op}/{} on {device}: {reason}", case.name);
                     entry.skipped += 1;
@@ -370,6 +451,11 @@ fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
             "SUMMARY {op} {device} {label}: {} passed, {} skipped, {} failed",
             t.passed, t.skipped, t.failed
         );
+        let _ = writeln!(
+            summary,
+            "TRACKED {op} {device} {label}: {} identical with tracked inputs",
+            t.tracked
+        );
     }
     eprint!("{summary}");
     assert!(
@@ -382,6 +468,8 @@ fn run_with(op: &str, devices: &[DeviceId], run: &Runner) {
 
 enum Outcome {
     Passed,
+    /// Passed, and so did the rerun with tracked inputs.
+    PassedTracked,
     Skipped(String),
     Failed(String),
 }
@@ -397,21 +485,9 @@ fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
             Err(err) => return Outcome::Failed(format!("device_supports: {err}")),
         }
     }
-    let mut inputs = Vec::with_capacity(case.inputs.len() + case.params.len());
-    let params = case.params.iter().map(|(_, data)| data);
-    for data in case.inputs.iter().chain(params) {
-        match DynTensor::from_data(data, device) {
-            Ok(t) => inputs.push(t),
-            Err(err) => return Outcome::Failed(format!("upload: {err}")),
-        }
-    }
-    let outputs = match run(case, inputs, device) {
+    let outputs = match upload_and_run(case, device, run, false) {
         Ok(outputs) => outputs,
-        // An op that lacks an implementation for a dtype on this device (graph-ir.md §2.2).
-        Err(err @ TensorError::UnsupportedDType { .. }) => {
-            return Outcome::Skipped(format!("the op reports: {err}"));
-        }
-        Err(err) => return Outcome::Failed(format!("op failed: {err}")),
+        Err(outcome) => return outcome,
     };
     if outputs.len() != case.outputs.len() {
         return Outcome::Failed(format!(
@@ -421,6 +497,7 @@ fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
         ));
     }
     let mut problems = String::new();
+    let mut read = Vec::with_capacity(outputs.len());
     for (actual, (name, expected)) in outputs.into_iter().zip(&case.outputs) {
         if actual.device() != device {
             let _ = write!(problems, "\n  {name}: on {}, not {device}", actual.device());
@@ -431,6 +508,96 @@ fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
                 if let Err(message) = compare(expected, &actual, case.tolerance) {
                     let _ = write!(problems, "\n  {name}: {message}");
                 }
+                read.push(actual);
+            }
+            Err(err) => {
+                let _ = write!(problems, "\n  {name}: read back: {err}");
+            }
+        }
+    }
+    if !problems.is_empty() {
+        return Outcome::Failed(problems);
+    }
+    let has_float = case
+        .inputs
+        .iter()
+        .chain(case.params.iter().map(|(_, data)| data))
+        .any(|data| data.dtype.is_float());
+    if !has_float {
+        return Outcome::Passed;
+    }
+    match tracked_rerun(case, device, run, &read) {
+        Ok(()) => Outcome::PassedTracked,
+        Err(message) => Outcome::Failed(format!("tracked rerun: {message}")),
+    }
+}
+
+/// Uploads the case's inputs and params to `device`, marks the float ones as leaves if `track`,
+/// and runs the op. An `UnsupportedDType` from the op is a skip.
+fn upload_and_run(
+    case: &Case,
+    device: DeviceId,
+    run: &Runner,
+    track: bool,
+) -> Result<Vec<DynTensor>, Outcome> {
+    let mut inputs = Vec::with_capacity(case.inputs.len() + case.params.len());
+    let params = case.params.iter().map(|(_, data)| data);
+    for data in case.inputs.iter().chain(params) {
+        let tensor = DynTensor::from_data(data, device).and_then(|t| {
+            if track && t.dtype().is_float() {
+                t.require_grad()
+            } else {
+                Ok(t)
+            }
+        });
+        match tensor {
+            Ok(t) => inputs.push(t),
+            Err(err) => return Err(Outcome::Failed(format!("upload: {err}"))),
+        }
+    }
+    match run(case, inputs, device) {
+        Ok(outputs) => Ok(outputs),
+        // An op that lacks an implementation for a dtype on this device (graph-ir.md §2.2).
+        Err(err @ TensorError::UnsupportedDType { .. }) => {
+            Err(Outcome::Skipped(format!("the op reports: {err}")))
+        }
+        Err(err) => Err(Outcome::Failed(format!("op failed: {err}"))),
+    }
+}
+
+/// Runs the case again with every float input and param marked as a leaf
+/// ([`DynTensor::require_grad`]) and requires the outputs to equal `untracked` bit for bit
+/// (any NaN matches any NaN): tracking must not change a value (#75).
+fn tracked_rerun(
+    case: &Case,
+    device: DeviceId,
+    run: &Runner,
+    untracked: &[TensorData],
+) -> Result<(), String> {
+    let outputs = match upload_and_run(case, device, run, true) {
+        Ok(outputs) => outputs,
+        Err(Outcome::Skipped(reason) | Outcome::Failed(reason)) => return Err(reason),
+        Err(Outcome::Passed | Outcome::PassedTracked) => unreachable!("not an error outcome"),
+    };
+    if outputs.len() != untracked.len() {
+        return Err(format!(
+            "{} outputs, expected {}",
+            outputs.len(),
+            untracked.len()
+        ));
+    }
+    let exact = Tolerance {
+        exact: true,
+        atol: 0.0,
+        rtol: 0.0,
+    };
+    let mut problems = String::new();
+    for ((actual, expected), (name, _)) in outputs.into_iter().zip(untracked).zip(&case.outputs) {
+        match actual.into_data() {
+            Ok(actual) => {
+                if let Err(message) = compare(expected, &actual, exact) {
+                    let _ = write!(problems, "\n  {name}: {message}");
+                }
             }
             Err(err) => {
                 let _ = write!(problems, "\n  {name}: read back: {err}");
@@ -438,9 +605,9 @@ fn run_case(case: &Case, device: DeviceId, run: &Runner) -> Outcome {
         }
     }
     if problems.is_empty() {
-        Outcome::Passed
+        Ok(())
     } else {
-        Outcome::Failed(problems)
+        Err(problems)
     }
 }
 
@@ -629,10 +796,13 @@ impl Layout {
 /// a prefix are unchanged.
 pub fn feed_layout(case: &Case, mut inputs: Vec<DynTensor>) -> Result<Vec<DynTensor>, TensorError> {
     let layout = Layout::of(&case.name);
-    if layout == Layout::Contiguous || inputs.is_empty() {
+    if layout == Layout::Contiguous || inputs.is_empty() || !case.layout_pending {
         return Ok(inputs);
     }
     let x = inputs.remove(0);
+    // A tracked input (the tracked rerun) is rebuilt as a view of an untracked upload and marked
+    // again: the forward value is what that rerun checks.
+    let tracked = x.is_tracked();
     let (device, shape, rank) = (x.device(), x.shape(), x.rank());
     let upload = |t: DynTensor| -> Result<DynTensor, TensorError> {
         DynTensor::from_data(&t.into_data()?, device)
@@ -675,6 +845,7 @@ pub fn feed_layout(case: &Case, mut inputs: Vec<DynTensor>) -> Result<Vec<DynTen
         case.op,
         case.name
     );
+    let view = if tracked { view.require_grad()? } else { view };
     inputs.insert(0, view);
     Ok(inputs)
 }
