@@ -118,22 +118,43 @@ Fix an item when its area is touched, or file an issue first.
     `-0` on `flex`, NaN at `±0` on lavapipe.
   - Burn's "graph tape has already been consumed" panic (a second backward) leaves the graph usable:
     `DynTensor::backward` catches it and returns an error; fresh forwards from the same leaves work.
-  - **Lavapipe crashes (SIGSEGV) in autodiff work, not worked around.** A standalone reproduction
-    with Burn's API only (`lavapipe_where_select_backward_crash` in
-    `polypous-backend/src/tensor/autodiff_tests.rs`, opt-in with `POLYPOUS_REPRO_LVP_CRASH=1`)
-    crashes 3 of 3 runs on lavapipe (Ubuntu's Mesa, cloud VM): after some backward passes on the
-    device, a tracked `x` through `greater(...).bool_and(is_nan(x).bool_or(is_nan(z)).bool_not())`,
-    `mask_where` and `select`, back-propagated, crashes inside lavapipe's compiled kernel code when
-    the gradient is read. Dropping the earlier work, the `bool_or`, or using `gather` instead of
-    `select` makes it pass. The API test `autodiff_gpu` (`tests/autodiff.rs`) crashed the same way
-    in about 1 of 3 runs, and in parallel with the backend's other GPU unit tests most of the time;
-    it therefore skips lavapipe unless `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1`. The skip stays until
-    [#92](https://github.com/Jannik0/Polypous/issues/92) (find the cause) is resolved (owner
-    decision, 2026-11-20). Lavapipe buffers live in
-    host memory, so this looks like an out-of-bounds read in a CubeCL kernel that only faults with
-    some heap layouts. The gradient reference tests (30 of 30 runs) and the forward tests with
-    tracked inputs pass on lavapipe. On the reference machine (Windows) the reproduction passed
-    5 of 5 runs with correct values on `cuda:0` and both Vulkan GPUs (#75, PR 91).
+  - **Lavapipe crashes (SIGSEGV) in `select`'s backward: a Mesa (lavapipe) bug, not a Burn or
+    CubeCL one; hardware GPUs aren't affected** (#75 found it, #92 found the cause). The API test
+    `autodiff_gpu` (`tests/autodiff.rs`) crashes in about 1 of 4 runs on lavapipe (11 of 40 in
+    #92), so it skips lavapipe unless `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1` (owner decision,
+    2026-11-20). The skip stays: lavapipe is a documented limitation here, not a training target.
+    - **Faulting kernel:** Burn's `select_assign_kernel` (`burn-cubecl` `kernel/index/select_assign.rs`),
+      which `select`'s backward runs (a scatter-add into zeros). Each invocation loops over the
+      indices, reads `indices[i]`, then `tensor[indices[i]]`.
+    - **Cause:** Mesa's gallivm doesn't branch on an empty exec mask, so it runs the rest of the
+      loop body once more after the last invocation has left the loop, with `i` equal to the
+      index count. Its load from a uniform global address (`visit_load_global` in
+      `src/gallium/auxiliary/gallivm/lp_bld_nir_soa.c`, Mesa 26.0.8 lines 4666–4673) ignores the
+      exec mask. CubeCL 0.11.3's SPIR-V reaches buffers through buffer device addresses
+      (`PhysicalStorageBuffer64`), which Vulkan's robustness doesn't cover. So the extra pass reads
+      `indices[len]`, whatever lies after the index buffer in CubeCL's memory pool, and then
+      `tensor[that value]`, which faults when it isn't mapped. The store stays masked, so the values
+      are right whenever the address is mapped. The masks, the earlier backward passes and
+      `gather` instead of `select` (whose backward has no such loop) only changed what lay after the
+      index buffer.
+    - **Evidence:** gdb at the fault (both reproductions and `autodiff_gpu`): the only active lane has
+      just left the loop (loop counter 3 = index count 3) when the load of `tensor[0xFFC00000]` faults.
+      The kernel's SPIR-V reads `indices[i]` only inside the loop; Vulkan validation reports nothing
+      at dispatch.
+    - **Reproductions** in `polypous-backend/src/tensor/autodiff_tests.rs`, opt-in with
+      `POLYPOUS_REPRO_LVP_CRASH=1`: `lavapipe_select_assign_stale_index_crash` (one
+      `select_assign` after leaving `0xFFC00000` in freed pool slots, no autodiff) and
+      `lavapipe_where_select_backward_crash` (#75's). Each crashes 3 of 3 runs with Ubuntu's Mesa 25.2.8,
+      26.0.3 and 26.0.8 (LLVM 20 and 21). With a small value after the indices it passes with the
+      right values.
+    - **Hardware GPUs:** they don't execute loads for invocations that have left a loop, and no
+      active invocation reads out of bounds. On lavapipe, random `select` and `select_assign` cases
+      matched `flex` bit for bit, with canary buffers around them unchanged (2000 cases). On the
+      reference machine #75's reproduction passed 5 of 5 runs with correct values on `cuda:0` and
+      both Vulkan GPUs (PR 91).
+    - **Upstream, unrelated to the crash:** `select_assign_kernel` claims checked mode clamps
+      out-of-range indices, but its read `tensor[index]` is not clamped in the SPIR-V (only the write
+      is checked). Polypous checks indices before every indexing op, so it isn't reachable from here.
 - **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work.

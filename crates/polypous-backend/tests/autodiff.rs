@@ -397,12 +397,11 @@ fn fixed_ops_survive_non_finite_inputs_cpu() {
 /// per device), so that one failure can't hide the rest.
 ///
 /// Lavapipe (a software rasterizer) only with `POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1` as well: there
-/// this test crashed the process with SIGSEGV inside lavapipe's kernel code in about 1 of 3 runs
-/// after the CPU tests of this file (each part alone passed 10 of 10), a Burn 0.22.1 / CubeCL
-/// finding with a standalone reproduction (`lavapipe_where_select_backward_crash` in
-/// `src/tensor/autodiff_tests.rs`, docs/status.md §4). The skip stays, as a documented
-/// limitation, until #92 (the cause of the crash) is resolved (owner decision, 2026-11-20). The
-/// gradient reference tests still run on lavapipe.
+/// this test crashes the process with SIGSEGV in about 1 of 4 runs, in `select`'s backward. That is
+/// a Mesa (lavapipe) bug, not a Burn or CubeCL one, and hardware GPUs aren't affected (#92,
+/// docs/status.md §4; reproductions in `src/tensor/autodiff_tests.rs`). The skip stays as a
+/// documented limitation (owner decision, 2026-11-20). The gradient reference tests still run on
+/// lavapipe.
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
 #[test]
 #[ignore = "gpu"]
@@ -422,9 +421,9 @@ fn autodiff_gpu() {
         }
         if hardware_only.skips(id) && !flag("POLYPOUS_TEST_LAVAPIPE_AUTODIFF") {
             eprintln!(
-                "SKIP autodiff_gpu on {id}: software rasterizer; the test crashes lavapipe \
-                 intermittently (#92, docs/status.md §4). Set POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1 \
-                 to run it"
+                "SKIP autodiff_gpu on {id}: software rasterizer; a Mesa lavapipe bug crashes \
+                 this test intermittently (#92, docs/status.md §4). Set \
+                 POLYPOUS_TEST_LAVAPIPE_AUTODIFF=1 to run it"
             );
             continue;
         }
