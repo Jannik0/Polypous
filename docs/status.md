@@ -79,7 +79,10 @@ GPU builds of the whole workspace need `-j 2` on the 16 GB reference machine (de
 
 Fix an item when its area is touched, or file an issue first.
 
-- **f32 `matmul` and `nn.linear` on CUDA are not f32-accurate ([#64](https://github.com/Jannik0/Polypous/issues/64); M1 closed with it, owner decision).**
+Every finding in a dependency (Burn, CubeCL, cubek, GPU drivers) has an ID, its workaround and its
+upstream state in the [upstream findings register](upstream-findings.md); the IDs are given below.
+
+- **f32 `matmul` and `nn.linear` on CUDA are not f32-accurate ([#64](https://github.com/Jannik0/Polypous/issues/64), M1-9; M1 closed with it, owner decision).**
   - Burn 0.22.1 / cubek-matmul 0.3.1 run f32 `matmul` on TF32 tensor cores when the GPU supports TF32 (Ampere or newer): `adjust_dtypes` in cubek-matmul's `multi_level/definition/blueprint.rs`, mirrored in burn-cubecl's `kernel/matmul/tune/base.rs`. TF32 rounds the inputs to a 10-bit mantissa. There is no setting to turn it off.
   - On the RTX 3060 (Windows, NVIDIA 621.14), 9 of 11 `core.matmul` f32 cases fail on `cuda:0`: relative errors of 6e-4 to 6.5e-2 against `rtol 1e-3`. The output equals an f32 matmul with TF32-rounded inputs (max rel difference 6.7e-6). Vulkan on the same GPU, the Iris Xe, the CPU and lavapipe pass; f16/bf16 pass on CUDA.
   - **No workaround in Polypous (owner decision):** the spec (graph-ir.md §3.2, testing-strategy.md §2) stays as it is, and the tests keep failing on `cuda:0`. A trial computing in f64 on CUDA was exact but 61× slower than TF32 at 2048³, and was discarded.
@@ -88,11 +91,11 @@ Fix an item when its area is touched, or file an issue first.
   - f16/bf16 `matmul` computes in f32 since #67 and is not affected: f16 and bf16 values are exact in TF32 (10-bit mantissa, the same as f16's).
   - The M1 exit check confirmed it on Windows and Debian: 16 op cases (in the backend and the runtime tests) and the f32 cases of both end-to-end models (1.5–5.2× the allowed error) fail on `cuda:0`; nothing else does.
 
-- **Burn 0.22.1 bool bug** in `bool_to_device` across Dispatch backends:
+- **Burn 0.22.1 bool bug** in `bool_to_device` across Dispatch backends (M0-1):
   - Burn hands native bool storage to CubeCL, which panics on storage that isn't its own.
   - `DynTensor` works around it by going through host memory (`tensor/dyn_tensor.rs`).
   - The upstream report and a standalone reproduction are handled outside this repository, so there's no issue here. Re-check when Burn is updated (ADR-0007).
-- **Burn 0.22.1 / CubeCL 0.11.3 numerics found in M1 (#40, PR 54)**, each worked around in `polypous-backend` (`ops/mod.rs` documents them). Re-check when Burn is updated (ADR-0007):
+- **Burn 0.22.1 / CubeCL 0.11.3 numerics found in M1 (#40, PR 54; M1-1 … M1-8, M1-10 … M1-20 in the register)**, each worked around in `polypous-backend` (`ops/mod.rs` documents them). Re-check when Burn is updated (ADR-0007):
   - `flex` computes `i64` `add`/`sub`/`mul` with plain arithmetic, which panics on overflow in debug builds. The CPU runs these on the host with wrapping arithmetic.
   - `max_pair`/`min_pair` (generic code in `burn-tensor`, so every backend) drop a NaN in the second operand. `maximum`, `minimum` and `clamp` use NaN masks.
   - CubeCL's SPIR-V lowering maps float `!=` to `OpFOrdNotEqual`: `ne` with NaN and float → `bool` casts of NaN gave `false` on Vulkan. The LLVM path (CUDA) uses the unordered form. Explicit masks.
@@ -104,7 +107,7 @@ Fix an item when its area is touched, or file an issue first.
   - Found with #43 (PR 60): CubeCL's `max_pool2d` pads with `-f32::MAX` instead of `-inf` (an all-padding window, or a padded window of only `-inf` inputs, gives `-3.4028235e38`) and dropped NaN on lavapipe (the window `1, NaN, 5, 6` gave 6); `max_pool2d` sets both explicitly with one extra pool of a code tensor. CubeCL's `erf` is the Abramowitz–Stegun 7.1.26 polynomial (absolute error 1.5e-7, inside the `gelu` tolerances), and its `log1p` is `ln(1 + x)`, which is 0 in f32 below `x ≈ 6e-8`: `softplus(x)` gave 0 below `x ≈ -16.6` on every CubeCL device (CUDA and Vulkan; `softplus(-17)`: 0 instead of 4.14e-8), and so did `mish`. Mesa's Vulkan `tanh` (lavapipe) returns noise of about 3e-8 for tiny arguments. `softplus` uses its own `log1p` and `mish` its own `tanh` for non-negative arguments, with series for small arguments. In f16, Burn's `matmul` and conv (`flex` and lavapipe) miss `rtol 1e-2` on outputs that cancel to near zero, and f16 norms and activations fail without f32 compute; f16/bf16 `nn.linear`, conv, average pools, norms and activations compute in f32 (graph-ir.md §3.1.8).
   - Found with the M1 exit check (#47, #67): `core.matmul/k256_f16` (`[2, 4, 256] @ [256, 3]`, `rtol 1e-2`) missed on the Iris Xe with Mesa 25.0.7 ANV (Debian 13.7), deterministically: 1 of 24 elements, max abs error 3.125e-2, max rel error 2.17e-2 (expected 9.009e-2, got 8.813e-2, about 32 f16 ulps), which looks like half-precision partial sums. The CPU, CUDA, the RTX 3060 through Vulkan and every Windows driver passed. Cause not confirmed: cubek-matmul 0.3.1 accumulates f16 in f32 in registers, but `MatmulElems::adjust_stage_dtypes` stages the accumulator in the output dtype, which the autotune picks on ANV may use. f16/bf16 `matmul` computes in f32 and rounds once since #67 (graph-ir.md §3.1.8). With the f32 path off, the unit test `half_precision_computes_in_f32_and_rounds_once` (k = 4096, products not exact in f16, exact f32 sums) misses in f16 on `flex` (−0.6201 instead of −0.6099), passes in f16 on lavapipe, and passes in bf16 on `flex`; the `k256_f16` fixture passes on both without it.
   - The owner follows these up in Burn and CubeCL upstream, outside this repository.
-- **Burn 0.22.1 autodiff findings of M2.** Six were handed off from the spike (#71, PR 86): no
+- **Burn 0.22.1 autodiff findings of M2 (M2-1 … M2-8; the lavapipe crash is M2-9).** Six were handed off from the spike (#71, PR 86): no
   `retain_graph`, `backward` panics on an untracked tensor, `sqrt'(0)` on CubeCL, tie rules, Adam
   scalars, the global seed. New with #75, each worked around in `polypous-backend` (`ops/mod.rs`,
   "Gradients"; `tensor/autodiff.rs`). Re-check when Burn is updated (ADR-0007):
@@ -155,18 +158,18 @@ Fix an item when its area is touched, or file an issue first.
     - **Upstream, unrelated to the crash:** `select_assign_kernel` claims checked mode clamps
       out-of-range indices, but its read `tensor[index]` is not clamped in the SPIR-V (only the write
       is checked). Polypous checks indices before every indexing op, so it isn't reachable from here.
-- **The first open of a Vulkan device still enumerates once inside CubeCL**, and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
+- **The first open of a Vulkan device still enumerates once inside CubeCL** (M0-7; M0-6 is the race it is left over from), and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
-- **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work.
+- **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work (M0-9).
   - Software rasterizers are skipped unless opted in (#21).
   - Ubuntu's newer Mesa in CI is fine.
-- **Worker-thread panics in probe reasons** are collected only in the prober process (#32). In-process probing shows the calling thread's view, for example `RecvError`.
+- **Worker-thread panics in probe reasons** are collected only in the prober process (#32, M0-8). In-process probing shows the calling thread's view, for example `RecvError`.
 - **Not verified on hardware:**
   - Metal: compile-checked in CI only.
   - A `cuda` build on Windows with no NVIDIA driver installed: approximated with `CUDA_VISIBLE_DEVICES=-1`.
   - The "driver library is not installed" reason on Windows: `nvcuda.dll` can't be hidden without admin rights. It is unit-tested, and verified on Debian.
 - **macOS driver fingerprint:** unknown, so macOS takes the enumerate-only probe path.
-- **Dependabot alerts 1 and 2:**
+- **Dependabot alerts 1 and 2** (M0-14):
   - Both concern `zip` 0.6.6 (one critical, one moderate). It enters `Cargo.lock` only through Burn's optional LibTorch backend (`burn-tch` → `tch`/`torch-sys`), which Polypous never compiles: `cargo tree --all-features --target all` doesn't list it.
   - There's no fix through an update while Burn is pinned at 0.22.1.
   - If cargo-deny starts failing once RustSec publishes the advisories, add a `deny.toml` ignore entry with this reason. The owner decides whether to dismiss the GitHub alerts.

@@ -8,6 +8,7 @@
 | [architecture.md](architecture.md) | see how the crates fit together and how data flows |
 | [roadmap.md](roadmap.md) | know what gets built in which milestone, and when a milestone is done |
 | [status.md](status.md) | see what exists now, what's verified, known limitations, and where the next milestone starts |
+| [upstream-findings.md](upstream-findings.md) | look up every problem found in Burn, CubeCL, cubek and GPU drivers: its workaround, upstream state and what to re-check after a Burn upgrade |
 | [glossary.md](glossary.md) | look up terms (block, tier, `.polyp`, session, …) |
 
 ## Specifications ([`specs/`](specs/))

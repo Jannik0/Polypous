@@ -240,7 +240,8 @@ How M0 (#7) and M1 (#47) closed:
 
 ### 8.7 Upstream (Burn and CubeCL) findings
 
-M1 found 15 problems in Burn 0.22.1 / CubeCL 0.11.3 / cubek 0.3.1 (status.md §4). The rules that came
+M1 found 18 problems in Burn 0.22.1 / CubeCL 0.11.3 / cubek 0.3.1, and two in GPU drivers. They are
+all numbered in the [upstream findings register](upstream-findings.md) (M1-1 … M1-20). The rules that came
 out of it:
 - **A bug or gap at the edges** (NaN, overflow, out-of-range indices, special values, half-precision
   accumulation) is handled in `polypous-backend` so the spec holds on every backend: explicit masks,
@@ -254,6 +255,14 @@ out of it:
   hand-off prompt (findings, reproduction on a Burn fork, expected semantics with a PyTorch
   reference, suggested fix, one issue and one PR per finding) and **follow-up prompts** for new
   findings, because the first prompt is already in use. These prompts live outside this repository.
+- **The lead keeps the [register](upstream-findings.md) current:**
+  - every finding gets the next ID of its milestone when it is reported, in the same PR or the next
+    docs PR;
+  - hand-off prompts refer to those IDs;
+  - the upstream agent's reports (issue and PR links, fixed versions) go into the "Upstream" column.
+
+  A finding found in M1 was missed in a hand-off because the findings were only described in prose.
+  The register's IDs make each hand-off checkable against the list.
 - Never loosen a tolerance or skip a test to get around a Burn bug.
 
 ### 8.8 Owner preferences (M1)
