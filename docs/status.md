@@ -158,18 +158,18 @@ upstream state in the [upstream findings register](upstream-findings.md); the ID
     - **Upstream, unrelated to the crash:** `select_assign_kernel` claims checked mode clamps
       out-of-range indices, but its read `tensor[index]` is not clamped in the SPIR-V (only the write
       is checked). Polypous checks indices before every indexing op, so it isn't reachable from here.
-- **The first open of a Vulkan device still enumerates once inside CubeCL** (M0-2), and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
+- **The first open of a Vulkan device still enumerates once inside CubeCL** (M0-7; M0-6 is the race it is left over from), and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
-- **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work (M0-3).
+- **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work (M0-9).
   - Software rasterizers are skipped unless opted in (#21).
   - Ubuntu's newer Mesa in CI is fine.
-- **Worker-thread panics in probe reasons** are collected only in the prober process (#32). In-process probing shows the calling thread's view, for example `RecvError`.
+- **Worker-thread panics in probe reasons** are collected only in the prober process (#32, M0-8). In-process probing shows the calling thread's view, for example `RecvError`.
 - **Not verified on hardware:**
   - Metal: compile-checked in CI only.
   - A `cuda` build on Windows with no NVIDIA driver installed: approximated with `CUDA_VISIBLE_DEVICES=-1`.
   - The "driver library is not installed" reason on Windows: `nvcuda.dll` can't be hidden without admin rights. It is unit-tested, and verified on Debian.
 - **macOS driver fingerprint:** unknown, so macOS takes the enumerate-only probe path.
-- **Dependabot alerts 1 and 2:**
+- **Dependabot alerts 1 and 2** (M0-14):
   - Both concern `zip` 0.6.6 (one critical, one moderate). It enters `Cargo.lock` only through Burn's optional LibTorch backend (`burn-tch` → `tch`/`torch-sys`), which Polypous never compiles: `cargo tree --all-features --target all` doesn't list it.
   - There's no fix through an update while Burn is pinned at 0.22.1.
   - If cargo-deny starts failing once RustSec publishes the advisories, add a `deny.toml` ignore entry with this reason. The owner decides whether to dismiss the GitHub alerts.
