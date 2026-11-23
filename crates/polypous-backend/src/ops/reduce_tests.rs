@@ -224,3 +224,72 @@ fn reduced_shape_and_axes_helpers() {
         vec![1, 2, 4, 6]
     );
 }
+
+/// `max`/`min` give a zero result IEEE 754-2019's sign (`-0 < +0`), whichever zero comes first
+/// and over any axes; other results and NaN are unchanged.
+#[test]
+fn signed_zero_results() {
+    let bits = |t: DynTensor| -> Vec<u32> { read_f32(t).iter().map(|v| v.to_bits()).collect() };
+    let (pz, nz) = (0.0f32.to_bits(), (-0.0f32).to_bits());
+    let x = floats(&[4, 2], &[0.0, -0.0, -0.0, 0.0, -0.0, -0.0, 0.0, 0.0]);
+    assert_eq!(
+        bits(x.clone().max(Some(&[1]), false).unwrap()),
+        [pz, pz, nz, pz]
+    );
+    assert_eq!(
+        bits(x.clone().min(Some(&[1]), false).unwrap()),
+        [nz, nz, nz, pz]
+    );
+    assert_eq!(bits(x.clone().max(None, false).unwrap()), [pz]);
+    assert_eq!(bits(x.clone().min(Some(&[0, 1]), true).unwrap()), [nz]);
+    let neg = floats(&[2, 2], &[-0.0, -1.0, -0.0, -0.0]);
+    assert_eq!(bits(neg.clone().max(Some(&[0]), false).unwrap()), [nz, nz]);
+    assert_eq!(
+        bits(neg.min(Some(&[0]), false).unwrap()),
+        [nz, (-1.0f32).to_bits()]
+    );
+    // A NaN slice stays NaN; non-zero results are unchanged.
+    let mixed = floats(&[2, 3], &[f32::NAN, 0.0, -0.0, 2.0, -0.0, 0.0]);
+    let max = read_f32(mixed.clone().max(Some(&[1]), false).unwrap());
+    assert!(max[0].is_nan());
+    assert_eq!(max[1], 2.0);
+    let min = read_f32(mixed.min(Some(&[1]), false).unwrap());
+    assert!(min[0].is_nan());
+    assert_eq!(min[1].to_bits(), nz);
+}
+
+/// The gradient of `max`/`min` splits a tie evenly (`g / k`, graph-ir.md §3.1.11), over one dim,
+/// several dims and every dim, also between `0` and `-0`.
+#[test]
+fn tie_gradients_split_evenly() {
+    let x = [3.0, 1.0, 3.0, 3.0, 0.0, -0.0, -1.0, 0.0];
+    let grad = |op: fn(DynTensor) -> Result<DynTensor>| -> Vec<f32> {
+        let leaf = floats(&[2, 4], &x).require_grad().unwrap();
+        let out = op(leaf.clone()).unwrap();
+        let loss = out.sum(None, true).unwrap().reshape(&[1]).unwrap();
+        let grads = loss.backward().unwrap();
+        read_f32(grads.get(&leaf).unwrap().unwrap())
+    };
+    let third = 1.0 / 3.0;
+    assert_eq!(
+        grad(|x| x.max(Some(&[1]), false)),
+        [third, 0.0, third, third, third, third, 0.0, third]
+    );
+    assert_eq!(
+        grad(|x| x.min(Some(&[1]), true)),
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    );
+    assert_eq!(
+        grad(|x| x.max(None, false)),
+        [third, 0.0, third, third, 0.0, 0.0, 0.0, 0.0]
+    );
+    // Over dim 0: the columns (3, 0), (1, -0), (3, -1), (3, 0).
+    assert_eq!(
+        grad(|x| x.min(Some(&[0]), false)),
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+    );
+    let zeros = floats(&[3], &[0.0, -0.0, 0.0]).require_grad().unwrap();
+    let out = zeros.clone().min(None, false).unwrap();
+    let grads = out.backward().unwrap();
+    assert_eq!(read_f32(grads.get(&zeros).unwrap().unwrap()), [third; 3]);
+}

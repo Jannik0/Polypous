@@ -157,3 +157,40 @@ fn largest_finite_values() {
     assert_eq!(largest_finite(BurnDType::F16), f16::MAX.to_f64());
     assert_eq!(largest_finite(BurnDType::BF16), bf16::MAX.to_f64());
 }
+
+/// [`with_reduced_gradient`] keeps `out` bit for bit (also `-0`, which a plain sum of the `-0`
+/// terms could turn into `+0`), and broadcasts `g · d` over the reduced axes.
+#[test]
+fn reduced_gradient_keeps_out_and_broadcasts() {
+    let d2 = |values: &[f32]| -> Tensor<2> {
+        Tensor::from_data(TensorData::new(values.to_vec(), [2, 3]), &device())
+    };
+    let leaf = d2(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        .autodiff()
+        .require_grad();
+    let d = d2(&[0.5, 0.0, 0.5, f32::INFINITY, -1.0, 2.0]);
+    let out: Tensor<2> =
+        Tensor::from_data(TensorData::new(vec![-0.0f32, f32::NAN], [2, 1]), &device()).autodiff();
+    let y = with_reduced_gradient(out, leaf.clone(), d, &[1]);
+    let forward: Vec<f32> = y
+        .clone()
+        .without_autodiff()
+        .into_data()
+        .try_to_vec()
+        .unwrap();
+    assert_eq!(forward[0].to_bits(), (-0.0f32).to_bits());
+    assert!(forward[1].is_nan());
+    let g: Tensor<2> =
+        Tensor::from_data(TensorData::new(vec![2.0f32, 0.5], [2, 1]), &device()).autodiff();
+    let grads = (y * g).sum().backward();
+    let grad: Vec<f32> = leaf.grad(&grads).unwrap().into_data().try_to_vec().unwrap();
+    assert_eq!(grad, [1.0, 0.0, 1.0, f32::INFINITY, -0.5, 1.0]);
+    // Untracked `x`: the constant `out`.
+    let plain = with_reduced_gradient(
+        d2(&[0.0; 6]).autodiff().sum_dim(1),
+        d2(&[1.0; 6]),
+        d2(&[1.0; 6]),
+        &[1],
+    );
+    assert!(!plain.is_tracked());
+}

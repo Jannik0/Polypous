@@ -7,7 +7,10 @@
 //! overflow are set explicitly, so the results don't depend on a backend's reduction order:
 //!
 //! - `max`/`min`: NaN is replaced by `-inf`/`+inf` before the reduction, and the result is NaN
-//!   where the reduced slice held a NaN.
+//!   where the reduced slice held a NaN. A zero result gets its sign by IEEE 754-2019's
+//!   `maximum`/`minimum` order (`-0 < +0`), whichever zero the backend picked ([`signed_zero`]).
+//! - `max`/`min` on tracked inputs: ties split the gradient evenly (`g / k`, as `torch.amax`;
+//!   [`extremum_axes`]).
 //! - `argmax`/`argmin`: the candidates are the positions equal to the (NaN-free) extremum, or
 //!   the NaN positions in a slice with a NaN; the result is the smallest candidate index (an
 //!   integer `min`, exact in any order).
@@ -19,6 +22,7 @@
 
 use burn::tensor::{DType as BurnDType, Device, FloatDType, Int, Tensor};
 
+use super::gradient::{constant, with_reduced_gradient};
 use super::{DTypeClass, backend_error, check_axis, check_shape};
 use crate::device::DeviceId;
 use crate::tensor::{DType, DynTensor, Ranked, Result, TensorError, map_rank};
@@ -265,6 +269,71 @@ pub(crate) fn extremum_dim<const D: usize>(x: Tensor<D>, dim: usize, largest: bo
     out.mask_fill(any_dim(nan, dim), f64::NAN)
 }
 
+/// `max` (or `min`) of a float tensor over `axes`, keeping them as size 1 ([`extremum_dim`] one
+/// axis at a time).
+///
+/// Tracked: the same forward value, computed from an untracked copy, with PyTorch's gradient
+/// (`torch.amax`/`amin`, graph-ir.md §3.1.11): the `k` elements of a reduced slice that equal
+/// its result each get `g / k`. Burn's `max_dim`/`min_dim` backward sends all of `g` to one
+/// index (the one its `argmax` picks). The derivative is the tie mask divided by the tie count,
+/// broadcast back over `axes`, set with [`with_reduced_gradient`]. `0` and `-0` are equal, so
+/// they tie. A slice that holds a NaN has a NaN result that equals no element: its gradient is
+/// `0` (unspecified, §3.1.11). An infinite element that is the result counts in the tie count,
+/// but gets `0` itself ([`with_gradient`]'s rule for non-finite inputs; also unspecified).
+fn extremum_axes<const D: usize>(x: Tensor<D>, axes: &[usize], largest: bool) -> Result<Tensor<D>> {
+    let forward = |x: Tensor<D>| {
+        let out = axes
+            .iter()
+            .fold(x.clone(), |x, &axis| extremum_dim(x, axis, largest));
+        signed_zero(out, x, axes, largest)
+    };
+    if !x.is_tracked() {
+        return Ok(forward(x));
+    }
+    let xd = constant(x.clone());
+    let out = forward(xd.clone());
+    let shape = shape_array::<D>(&xd.dims())?;
+    // In `x`'s dtype: Burn's `Bool::float` gives `f32`, which `flex` refuses to mix with `f16`
+    // later (`binary_op: dtype mismatch`, a panic).
+    let ties = xd
+        .zeros_like()
+        .mask_fill(xd.equal(out.clone().expand(shape)), 1.0);
+    let count = sum_axes(ties.clone(), axes).clamp_min(1.0);
+    let d = ties.div(count.expand(shape));
+    Ok(with_reduced_gradient(out, x, d, axes))
+}
+
+/// Sets the sign of a zero result of `max` (`largest`) or `min` over `axes`: `+0` for `max` if the
+/// reduced slice holds a `+0`, else `-0`; `-0` for `min` if it holds a `-0`, else `+0`. That is
+/// IEEE 754-2019's `maximum`/`minimum` order (`-0 < +0`; graph-ir.md §3.1.8). Backends pick either zero of a tie
+/// between `0` and `-0`: on lavapipe, `max` of `[0, -0, -1, -2, -0.5]` gave `-0` (PyTorch: `0`,
+/// `core.max/zero_ties_f32`) and `min` of `[-0, 0, 1, 2, 0.5]` gave `0` (PyTorch: `-0`); `flex`
+/// matched PyTorch. Other results, NaN included, are unchanged.
+///
+/// The sign is read as the sign of `1 / x` (`±inf` for `±0`), the same division by a signed
+/// zero that the `sqrt`/`rsqrt` gradients rely on. Costs a few elementwise ops and one `max`
+/// per reduced axis, on every float `max`/`min`.
+fn signed_zero<const D: usize>(
+    out: Tensor<D>,
+    x: Tensor<D>,
+    axes: &[usize],
+    largest: bool,
+) -> Tensor<D> {
+    let zero = x.clone().equal_elem(0.0);
+    let positive = x.recip().greater_elem(0.0);
+    // +0 elements for `max`, -0 elements for `min`.
+    let wanted = if largest {
+        zero.bool_and(positive)
+    } else {
+        zero.bool_and(positive.bool_not())
+    };
+    let found = axes.iter().fold(wanted, |m, &axis| any_dim(m, axis));
+    let (with, without) = if largest { (0.0, -0.0) } else { (-0.0, 0.0) };
+    let out_zero = out.clone().equal_elem(0.0);
+    out.mask_fill(out_zero.clone().bool_and(found.clone()), with)
+        .mask_fill(out_zero.bool_and(found.bool_not()), without)
+}
+
 /// Whether any element along `dim` is true, keeping `dim` as size 1. Computed as the `max` of
 /// the mask as `f32` (exact for 0 and 1), which needs no bool reduction kernel.
 fn any_dim<const D: usize>(
@@ -311,11 +380,7 @@ impl<const D: usize> Ranked<D> {
                     let count = count as f64;
                     accumulate_in_f32(x, |x| sum_axes(x, axes).div_scalar(count))
                 }
-                Reduce::Max | Reduce::Min => {
-                    let largest = op == Reduce::Max;
-                    axes.iter()
-                        .fold(x, |x, &axis| extremum_dim(x, axis, largest))
-                }
+                Reduce::Max | Reduce::Min => extremum_axes(x, axes, op == Reduce::Max)?,
             })),
             Ranked::Int(x) => Ok(Ranked::Int(match op {
                 Reduce::Sum if host => host_sum_i64(x, axes)?,
