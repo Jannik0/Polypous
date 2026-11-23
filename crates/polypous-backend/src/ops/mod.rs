@@ -113,6 +113,12 @@
 //!   `argmax`/`argmin` take the smallest index among the positions equal to the extremum (the
 //!   NaN positions, in a slice with a NaN), with an integer `min`. Burn's own `argmax` got NaN and
 //!   ties right on `flex` and lavapipe in our probes, but nothing in Burn promises it.
+//! - **The sign of a zero `max`/`min`** follows IEEE 754-2019's `maximum`/`minimum` order
+//!   (`-0 < +0`): `max` is `+0` if the reduced slice holds a `+0`, `min` is `-0` if it holds a `-0`.
+//!   Backends return either zero of a `0`/`-0` tie: lavapipe gave `max([0, -0, -1, -2, -0.5]) = -0`
+//!   and `min([-0, 0, 1, 2, 0.5]) = 0`, where PyTorch gives `0` and `-0`
+//!   (`core.max/zero_ties_f32`, `core.min/zero_ties_f32`, exact; `flex` matched). It costs a few
+//!   elementwise ops and one `max` per reduced axis on every float `max`/`min`.
 //! - **Integer `sum` and `cumsum` wrap** (§3.1.8). `flex` sums `i64` with plain `+`, and computes
 //!   `cumsum` of `i32` and `i64` with plain `+`; all three panic on overflow in debug builds
 //!   (`attempt to add with overflow`). On the CPU they run on the host with `wrapping_add`
@@ -131,9 +137,12 @@
 //!   backend's kernel.
 //! - **`softmax`/`log_softmax`** subtract the NaN-propagating row maximum first, so large inputs
 //!   don't overflow; rows with NaN or `+inf`, and rows of only `-inf`, are NaN, as in PyTorch.
-//! - **`top_k` runs on the host** on every backend, with one device sync per call: Burn 0.22.1
+//! - **`top_k` sorts on the host** on every backend, with one device sync per call: Burn 0.22.1
 //!   has no GPU sort (its CubeCL sort reads back to the host too), its sorts are unstable, and
-//!   CubeCL's `topk_with_indices` returned garbage after a NaN on lavapipe. See `topk.rs`.
+//!   CubeCL's `topk_with_indices` returned garbage after a NaN on lavapipe. Only the indices are
+//!   uploaded; the values are a `gather` from the input on its device at those indices (a copy of
+//!   the input's bits, so the forward results are those of the host values), which makes them
+//!   differentiable. See `topk.rs`.
 //! - **`matmul`** broadcasts the batch dims explicitly (different ranks allowed) before Burn's
 //!   `matmul` sees them.
 //!
@@ -223,7 +232,25 @@
 //!   for `-inf`), and `flex`'s `(-0)^-0.5 = +inf` loses the sign at `-0` (`+inf · g` for
 //!   `-inf · g`). `rsqrt` (`1 / sqrt(x)`) inherits both: NaN on lavapipe and the wrong sign on
 //!   `flex` (`core.rsqrt/zero_f32`).
-//! - **Checked, no fix needed:** the other elementwise ops (including `abs` at `±0`, `log` at
+//! - **`max`/`min` ties:** `g / k` to each of the `k` elements of a reduced slice that equal the
+//!   result (`torch.amax`/`amin`), also between `0` and `-0`, over one or several dims. Burn's
+//!   `max_dim`/`min_dim` send all of `g` to one index (`core.max/ties_all_f32`: `grad_x[2, 0]`
+//!   `-7.141e-1` for `-1.785e-1`; `core.min/ties_all_f32`: `5.718e-1` for `1.429e-1`; 4 cases each,
+//!   the same on both devices). The derivative is the tie mask divided by the tie count, set with
+//!   `gradient::with_reduced_gradient` (the reduction form of `with_gradient`: `g` broadcast over
+//!   the reduced dims). A slice that holds a NaN gets `0` (unspecified).
+//! - **`top_k` values:** M1 built them on the host, which cut the graph (`backward` of every
+//!   `core.top_k` gradient case: "the tensor is not tracked"). The `gather` above routes the
+//!   gradient to the elements at the returned indices (§3.1.11: ties by §3.1.8); `indices` has no
+//!   gradient.
+//! - **Checked, no fix needed:** `sum`, `mean` (`g / count`, over every dim or some), `cumsum`
+//!   (the reversed cumulative sum of `g`, also on permuted and transposed views), `softmax` and
+//!   `log_softmax` (through the max-subtracted forms; the gradient through the subtracted maximum
+//!   cancels to rounding error, also at logits near `±1000` with a tied maximum), `matmul` (the
+//!   broadcast batch dims summed back by `expand`'s backward, also rank 2 against rank 4; half
+//!   precision differentiates through its `f32` casts) and `argmax`/`argmin` (untracked integer
+//!   results, not differentiable). Shown by their fixtures and by `tests/autodiff.rs`'s formula
+//!   checks. The other elementwise ops (including `abs` at `±0`, `log` at
 //!   `±0`, `div` by zero), `where`, `cast` (float → float), every shape op (also on permuted,
 //!   transposed, expanded and stepped views, with broadcast gradients summed), and `gather`/
 //!   `index_select` (repeated indices add up; the index checks read the indices back on the host
@@ -231,9 +258,9 @@
 //!   untracked tensor.
 //! - **Non-finite inputs** (§3.1.11: gradient unspecified): every fix completes the backward pass
 //!   without a panic, and keeps the forward value bit for bit except NaN payloads
-//!   (`tests/autodiff.rs`).
-//! - The reductions, `matmul`, `softmax`, `cumsum`, `top_k` (whose host values cut the graph) and
-//!   the `nn` ops follow in #76 and #77.
+//!   (`tests/autodiff.rs`; for `max`/`min` over every dim, some dims and with `keepdim`, and
+//!   `top_k` as well).
+//! - The `nn` ops follow in #77.
 //!
 //! # Semantics (graph-ir.md §3.1)
 //!

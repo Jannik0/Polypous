@@ -22,6 +22,12 @@ All notable changes to Polypous are documented here. The format follows
   107 gradient fixtures of these ops, and the forward reference tests rerun every case with
   tracked inputs and require identical outputs (bit for bit, except NaN payloads, which aren't
   part of op semantics).
+- Gradients of `core.sum`, `mean`, `max`, `min`, `matmul`, `softmax`, `log_softmax`, `cumsum`
+  and `top_k` (`values`) in `polypous-backend` (#76), checked against their 41 gradient fixtures
+  (`tests/grad_reference_reduce.rs`; 148 gradient cases in all). `max`/`min` split a tie's
+  gradient evenly (`g / k`, as `torch.amax`/`amin`), where Burn sends it to one element.
+  `top_k` still sorts on the host but takes its values with a `gather` on the device, so its
+  `values` output is differentiable (it cut the graph before); its results are unchanged.
 - End-to-end model reference tests (#46, M1 exit): `tools/reference/gen_models.py` writes an MLP
   (784 → 128 → 10, logits and `log_softmax`) and a small CNN (conv2d, relu, max_pool2d, conv2d,
   batch_norm with non-trivial running statistics, relu, adaptive_avg_pool2d, flatten, linear) as
@@ -273,6 +279,9 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- `core.max`/`core.min` of floats give a zero result the sign of IEEE 754-2019's order
+  (`-0 < +0`) on every backend (#76): on lavapipe, `max` of a `0`/`-0` tie returned `-0` and
+  `min` returned `0`, where PyTorch gives `0` and `-0`. Other results are unchanged.
 - `core.matmul` in `f16`/`bf16` computes in `f32` and rounds once to the dtype, like `nn.linear`,
   conv and the reductions (#67; graph-ir.md §3.1.8). `core.matmul/k256_f16` missed `rtol 1e-2` on
   an Intel Iris Xe with Mesa ANV. `f32` `matmul` is unchanged.

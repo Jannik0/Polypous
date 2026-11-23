@@ -66,6 +66,31 @@ pub(crate) fn with_gradient<const D: usize, const N: usize>(
         .fold(constant(out), |acc, (x, d)| acc + zero_with_gradient(x, d))
 }
 
+/// The reduction form of [`with_gradient`]: `out` in the forward pass, where `out` is `x` reduced
+/// over `axes` (kept as size 1, so `out` has `x`'s rank), and gradient `g · d` to `x`, with `g`
+/// broadcast back over `axes`. `x` and `d` have the same shape and dtype. If `x` is untracked,
+/// the result is the constant `out`.
+///
+/// The term is `-sum_axes(-T(x, d))`. `T` is `-0` everywhere, so `-T` is `+0` everywhere, and a
+/// sum of `+0`s is `+0` in any order and from any starting value (`±0 + +0 = +0`); its negation
+/// is `-0` again, so the forward value stays `out` bit for bit, except NaN payloads. Summing `T`
+/// itself would not do: a backend that starts its sum at `+0` returns `+0 + -0 = +0`, which
+/// turns an `out` of `-0` into `+0`. The gradient of the sum broadcasts `g` over `axes`, and the
+/// two negations cancel.
+pub(crate) fn with_reduced_gradient<const D: usize>(
+    out: Tensor<D>,
+    x: Tensor<D>,
+    d: Tensor<D>,
+    axes: &[usize],
+) -> Tensor<D> {
+    if !x.is_tracked() {
+        return constant(out);
+    }
+    let positive = zero_with_gradient(x, d).neg();
+    let summed = axes.iter().fold(positive, |acc, &axis| acc.sum_dim(axis));
+    constant(out) + summed.neg()
+}
+
 /// `-0` in the forward pass, gradient `g · d` to `x` (see the module documentation).
 fn zero_with_gradient<const D: usize>(x: Tensor<D>, d: Tensor<D>) -> Tensor<D> {
     let d = constant(d);

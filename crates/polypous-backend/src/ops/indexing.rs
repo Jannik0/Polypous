@@ -40,7 +40,16 @@ impl DynTensor {
         for d in (0..shape.len()).filter(|&d| d != dim && index_shape[d] < shape[d]) {
             x = x.slice(d, 0, index_shape[d], 1)?;
         }
-        let (inner, dtype, device) = x.into_parts();
+        x.gather_in_range(dim, index)
+    }
+
+    /// Burn's `gather` without the checks of [`DynTensor::gather`]. The caller proved that
+    /// `index` is an integer tensor on `self`'s device, of `self`'s rank, with `self`'s sizes
+    /// outside `dim` and every index in `0..self.shape()[dim]` (`top_k`: indices from its own
+    /// sort). A rank mismatch is still an error, not a panic.
+    pub(super) fn gather_in_range(self, dim: usize, index: Self) -> Result<Self> {
+        const OP: &str = "gather";
+        let (inner, dtype, device) = self.into_parts();
         let (index, _, _) = index.into_parts();
         let inner = match (inner, index) {
             (Inner::R1(x), Inner::R1(i)) => Inner::R1(x.gather(dim, i)?),

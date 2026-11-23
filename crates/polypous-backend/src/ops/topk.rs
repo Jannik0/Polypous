@@ -1,9 +1,14 @@
 //! `core.top_k`: graph-ir.md §3.2, "Other". General rules: §3.1 (see the module documentation
 //! of [`crate::ops`]).
 //!
-//! **Runs on the host on every backend.** The tensor is read back once, each slice along `dim`
+//! **Sorts on the host on every backend.** The tensor is read back once, each slice along `dim`
 //! is sorted with a stable sort (NaN largest, ties in index order, graph-ir.md §3.1.8), and the
-//! `k` values and indices are uploaded to the tensor's device. Burn 0.22.1 offers nothing better:
+//! `k` indices are uploaded to the tensor's device. The values are then taken from the tensor on
+//! the device with a `gather` at those indices (a copy, so the values are the input's bits), so
+//! the gradient of `values` flows back to the selected elements (graph-ir.md §3.1.11: "to the
+//! elements at the returned `indices`"; Burn's `gather` backward is a scatter-add).
+//!
+//! Burn 0.22.1 offers nothing better than the host sort:
 //! - it has no GPU sort; its CubeCL `sort`/`topk` read the tensor back to the host as well
 //!   (`burn-backend` `float_sort`, `try_read_sync`),
 //! - its sorts are unstable (`sort_unstable_by`), so ties come back in any order (seen on `flex`
@@ -12,8 +17,8 @@
 //! - CubeCL's `topk_with_indices` returns `-3.4e38` with index `-1` for the slots after a NaN on
 //!   lavapipe.
 //!
-//! The cost is **one device sync per call** and a transfer of the whole input; `top_k` is used on
-//! logits for sampling, where that is small.
+//! The cost is **one device sync per call**, a transfer of the whole input, the upload of the
+//! indices and one `gather`; `top_k` is used on logits for sampling, where that is small.
 
 use super::reduce::check_index_dtype;
 use super::{DTypeClass, check_axis, check_shape};
@@ -29,7 +34,9 @@ impl DynTensor {
     /// replaced by `k`.
     ///
     /// `dim` must be in range, `1 ≤ k ≤` the size of `dim`, and `dtype` an integer dtype the
-    /// device supports. Runs on the host (one device sync, see the module documentation).
+    /// device supports. Sorts on the host (one device sync, see the module documentation) and
+    /// takes the values with a `gather` on the device, so `values` is differentiable: its gradient
+    /// goes to the elements at `indices`. `indices` has no gradient.
     pub fn top_k(self, k: usize, dim: usize, largest: bool, dtype: DType) -> Result<(Self, Self)> {
         const OP: &str = "top_k";
         DTypeClass::Float.check(OP, self.dtype())?;
@@ -49,18 +56,18 @@ impl DynTensor {
         check_shape(OP, &out_shape, self.dtype())?;
         check_shape(OP, &out_shape, dtype)?;
 
-        let data = self.into_data()?;
+        // `self` stays on the device for the gather below; a clone shares its storage.
+        let data = self.clone().into_data()?;
         let width = data.dtype.size_bytes();
         let keys: Vec<u32> = data
             .bytes
             .chunks_exact(width)
             .map(|b| order_key(data.dtype, b))
             .collect();
+        drop(data);
         let outer: usize = shape[..dim].iter().product();
         let inner: usize = shape[dim + 1..].iter().product();
-        let count = outer * k * inner;
-        let mut values = Vec::with_capacity(count * width);
-        let mut indices: Vec<usize> = Vec::with_capacity(count);
+        let mut indices: Vec<usize> = Vec::with_capacity(outer * k * inner);
         let mut order: Vec<usize> = Vec::with_capacity(n);
         // Output element (o, j, i) comes from input element (o, order[j], i).
         let mut picked = vec![0usize; k * inner];
@@ -79,14 +86,7 @@ impl DynTensor {
                     picked[j * inner + i] = src;
                 }
             }
-            for j in 0..k {
-                for i in 0..inner {
-                    let src = picked[j * inner + i];
-                    let at = ((o * n + src) * inner + i) * width;
-                    values.extend_from_slice(&data.bytes[at..at + width]);
-                    indices.push(src);
-                }
-            }
+            indices.extend_from_slice(&picked);
         }
         let dims: Vec<u64> = out_shape.iter().map(|&d| d as u64).collect();
         let index_bytes: Vec<u8> = if dtype == DType::I32 {
@@ -101,12 +101,13 @@ impl DynTensor {
                 .flat_map(|&i| (i as i64).to_le_bytes())
                 .collect()
         };
-        let values = TensorData::new(data.dtype, dims.clone(), values)?;
         let indices = TensorData::new(dtype, dims, index_bytes)?;
-        Ok((
-            DynTensor::from_data(&values, device)?,
-            DynTensor::from_data(&indices, device)?,
-        ))
+        let indices = DynTensor::from_data(&indices, device)?;
+        // Every index is below n (it comes from the sort of 0..n), and `indices` has `self`'s
+        // shape outside `dim`, so the unchecked gather is in range. It copies the values, so they
+        // are the bits of `self` at the sorted positions, and the gradient flows back to them.
+        let values = self.gather_in_range(dim, indices.clone())?;
+        Ok((values, indices))
     }
 }
 
