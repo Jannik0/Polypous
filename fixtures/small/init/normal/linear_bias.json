@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "kind": "normal",
+  "case": "linear_bias",
+  "description": "normal of a nn.linear bias [16]",
+  "seed": 138,
+  "param": {
+    "name": "fc.bias",
+    "shape": [
+      16
+    ],
+    "init": {
+      "kind": "normal",
+      "mean": 0.5,
+      "std": 2.0
+    },
+    "role": {
+      "op": "nn.linear",
+      "param": "bias"
+    },
+    "fans": null
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 1
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "ln and cos are the platform's, so normal-based values may differ by 1 ulp (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

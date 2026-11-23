@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "uniform",
+  "case": "equal_bounds",
+  "description": "uniform with low = high: a constant",
+  "seed": 142,
+  "param": {
+    "name": "u",
+    "shape": [
+      6
+    ],
+    "init": {
+      "kind": "uniform",
+      "low": 0.25,
+      "high": 0.25
+    },
+    "role": null,
+    "fans": null
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        6
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 0
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "bit-exact on every platform (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

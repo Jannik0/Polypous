@@ -115,6 +115,8 @@ error_codes! {
     RepeatTooDeep => "repeat_too_deep",
     /// An element count doesn't fit in `u64` or exceeds its limit.
     TooManyElements => "too_many_elements",
+    /// A fan-based `init` on a param without (consistent) fans (§2.4.1).
+    InvalidInit => "invalid_init",
 }
 
 impl fmt::Display for ErrorCode {
@@ -235,7 +237,7 @@ mod tests {
 
     #[test]
     fn codes_are_unique_and_round_trip() {
-        assert_eq!(ErrorCode::ALL.len(), 39);
+        assert_eq!(ErrorCode::ALL.len(), 40);
         let mut seen = std::collections::HashSet::new();
         for &c in ErrorCode::ALL {
             assert!(seen.insert(c.as_str()));

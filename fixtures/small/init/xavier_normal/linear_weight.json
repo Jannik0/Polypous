@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "kind": "xavier_normal",
+  "case": "linear_weight",
+  "description": "xavier_normal of a nn.linear weight [16, 12]",
+  "seed": 113,
+  "param": {
+    "name": "fc.weight",
+    "shape": [
+      16,
+      12
+    ],
+    "init": {
+      "kind": "xavier_normal"
+    },
+    "role": {
+      "op": "nn.linear",
+      "param": "weight"
+    },
+    "fans": {
+      "fan_in": 12,
+      "fan_out": 16
+    }
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        16,
+        12
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 1
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "ln and cos are the platform's, so normal-based values may differ by 1 ulp (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

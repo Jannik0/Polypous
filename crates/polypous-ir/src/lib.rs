@@ -17,6 +17,8 @@
 //! - [`save`]: the canonical JSON form (§6), [`Graph::to_json`].
 //! - [`dim`]: dim expressions, their normal form and equality (§2.3).
 //! - [`diag`]: error codes (§4.2) and the [`ValidationReport`].
+//! - [`params`]: param uses after expanding repeats, fans (§2.4.1) and trainable params, part of
+//!   the [`Analysis`].
 //! - [`rng`]: the Polypous random generator (§3.1.12) and the dropout keep mask (§3.3).
 //!
 //! Validation problems are data: a [`ValidationReport`] with a list of [`Diagnostic`]s, not `Err`.
@@ -49,6 +51,7 @@ pub mod load;
 pub mod model;
 pub mod names;
 pub mod ops;
+pub mod params;
 pub mod rng;
 pub mod save;
 pub mod validate;
@@ -63,7 +66,8 @@ pub use diag::{Diagnostic, ErrorCode, Item, ValidationReport};
 pub use dim::{DimError, DimExpr};
 pub use dtype::{ComputeDtype, Dtype, DtypeSpec};
 pub use load::{LoadOutcome, load};
-pub use model::Graph;
+pub use model::{Graph, Init};
+pub use params::{Fans, ParamInfo, ParamUse};
 pub use validate::ValidateOptions;
 
 impl Graph {

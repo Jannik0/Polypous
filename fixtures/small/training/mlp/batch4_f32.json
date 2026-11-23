@@ -1,0 +1,93 @@
+{
+  "schema_version": 2,
+  "model": "mlp",
+  "case": "batch4_f32",
+  "description": "linear 6->5 (bias trainable: false), relu, linear 5->3, in training mode. Batch 4, seed 11, step 0.",
+  "compute_dtype": "f32",
+  "mode": "training",
+  "training": {
+    "seed": 11,
+    "step": 0
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "running_stats": [],
+  "masks": [],
+  "upstream": [
+    {
+      "name": "grad/y",
+      "output": "y",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad/fc1.weight",
+      "param": "fc1.weight",
+      "dtype": "f32",
+      "shape": [
+        5,
+        6
+      ]
+    },
+    {
+      "name": "grad/fc2.weight",
+      "param": "fc2.weight",
+      "dtype": "f32",
+      "shape": [
+        3,
+        5
+      ]
+    },
+    {
+      "name": "grad/fc2.bias",
+      "param": "fc2.bias",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "the graph as PyTorch functional ops in f64 on the f32 weights and input, rounded once to f32; gradients: torch.autograd.grad((y * grad_y).sum(), trainable params)",
+  "notes": "Dropout multiplies by x * (mask / (1 - p)) with the Polypous keep mask of `training.seed`, `training.step` and the node path (graph-ir.md \u00a73.1.12, polyrng.dropout_mask), stored under `masks`. batch_norm runs F.batch_norm(..., training=True); `running_stats` are its updated running statistics. Gradients are listed for every trainable param (trainable: true and not a running statistic) in declaration order; the other params get none.",
+  "seed": 401,
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

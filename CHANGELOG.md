@@ -44,6 +44,28 @@ All notable changes to Polypous are documented here. The format follows
   `normal`, and `dropout_mask`, the keep mask of a dropout node for a shape (checked element
   count, fallible allocation). Tested against the spec's known values and the statistics of
   testing-strategy.md §3.8.
+- Training mode and params given by the caller in `polypous-runtime` (#78, runtime.md §3.1–§3.3):
+  `Model::run_with(inputs, state, params, mode, options)` and `Plan::run` (a plan without loaded
+  weights, for the trainer's param store) take a `RunMode` (`Inference`, the default, or
+  `Training { seed, step }`) and optionally `Params` (param name → `DynTensor`), checked on metadata
+  only: missing or extra names, dtype, shape, device (`RuntimeError::Param`). A training-mode call
+  requires the compute dtype `f32`, exactly one use per `batch_norm` running statistic and at least
+  2 values per channel (`TrainingDtype`, `SharedRunningStat`, `BatchNormValues`), runs
+  `nn.batch_norm` with batch statistics and `nn.dropout` with host masks keyed by seed, step and
+  node path, and returns the new running statistics in `RunOutput::running_stats`. Tracked params
+  record through every op. `Model::run` and every M1 call are unchanged.
+- Param analysis in `polypous-ir` (#78, graph-ir.md §2.4, §2.4.1): every param's uses after
+  expanding repeats and its fans (`Analysis::params`, `param_fans`, `trainable_params`), the new
+  validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
+  with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
+  `std >= 0`, values that round to a finite f32).
+- Initial values in `polypous-train` (#78, graph-ir.md §2.4.1): `initial_values(seed, name, shape,
+  init, fans)` computes every `init` kind on the host in f64, rounded once to f32. Reference
+  fixtures from a Python implementation of the spec (`tools/reference/polyrng.py`,
+  `gen_training.py`): 45 initial-value cases (`fixtures/small/init/`) and 3 training-mode graph cases
+  against PyTorch (`fixtures/small/training/`: outputs, running statistics, dropout masks and
+  gradients), with their schemas in testing-strategy.md §3.9 and §3.10 and checks in
+  `tools/ci/check_fixtures.py`.
 - End-to-end model reference tests (#46, M1 exit): `tools/reference/gen_models.py` writes an MLP
   (784 → 128 → 10, logits and `log_softmax`) and a small CNN (conv2d, relu, max_pool2d, conv2d,
   batch_norm with non-trivial running statistics, relu, adaptive_avg_pool2d, flatten, linear) as

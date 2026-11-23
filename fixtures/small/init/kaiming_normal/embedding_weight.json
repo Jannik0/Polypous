@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "kind": "kaiming_normal",
+  "case": "embedding_weight",
+  "description": "kaiming_normal of a nn.embedding weight [20, 8]",
+  "seed": 106,
+  "param": {
+    "name": "emb.weight",
+    "shape": [
+      20,
+      8
+    ],
+    "init": {
+      "kind": "kaiming_normal"
+    },
+    "role": {
+      "op": "nn.embedding",
+      "param": "weight"
+    },
+    "fans": {
+      "fan_in": 8,
+      "fan_out": 20
+    }
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        20,
+        8
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 1
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "ln and cos are the platform's, so normal-based values may differ by 1 ulp (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

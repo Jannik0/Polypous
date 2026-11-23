@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "kind": "xavier_uniform",
+  "case": "conv2d_weight",
+  "description": "xavier_uniform of a nn.conv2d weight [4, 3, 3, 3]",
+  "seed": 112,
+  "param": {
+    "name": "conv2.weight",
+    "shape": [
+      4,
+      3,
+      3,
+      3
+    ],
+    "init": {
+      "kind": "xavier_uniform"
+    },
+    "role": {
+      "op": "nn.conv2d",
+      "param": "weight"
+    },
+    "fans": {
+      "fan_in": 27,
+      "fan_out": 36
+    }
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3,
+        3,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 0
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "bit-exact on every platform (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -4566,7 +4566,11 @@ name = "polypous-train"
 version = "0.0.0"
 dependencies = [
  "polypous-backend",
+ "polypous-formats",
+ "polypous-ir",
  "polypous-runtime",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

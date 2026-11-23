@@ -18,6 +18,7 @@ use crate::diag::{Diagnostic, ErrorCode, ValidationReport};
 use crate::dim::{DimExpr, EvalError};
 use crate::dtype::{ComputeDtype, Dtype};
 use crate::model::Graph;
+use crate::params::{Fans, ParamInfo};
 use crate::validate::ValidateOptions;
 
 /// The resolved dtype and inferred shape of a value.
@@ -338,8 +339,31 @@ pub struct Analysis {
     /// (`layers.0.k`, `layers.0.v`, `layers.1.k`, …). This is the order in which state values bind
     /// symbols (§2.3.4 step 2).
     pub state: Vec<NamedValue>,
+    /// Every declared param, in declaration order: its shape, `init`, uses after expanding repeats,
+    /// fans (§2.4.1) and whether it is trainable (training.md §1.1).
+    pub params: Vec<ParamInfo>,
     /// Root nodes, parallel to `graph.nodes`.
     pub nodes: Vec<NodeInfo>,
+}
+
+impl Analysis {
+    /// The param `name`, if declared.
+    pub fn param(&self, name: &str) -> Option<&ParamInfo> {
+        self.params.iter().find(|p| p.name == name)
+    }
+
+    /// The fans of param `name` (§2.4.1): `Some` if every use of it, after expanding repeats, is in
+    /// a role with fans and they agree. Validation guarantees them for every param with a
+    /// fan-based `init`.
+    pub fn param_fans(&self, name: &str) -> Option<Fans> {
+        self.param(name).and_then(|p| p.fans)
+    }
+
+    /// The trainable params (training.md §1.1), in declaration order: `trainable: true` (the
+    /// default) and not used as `running_mean` or `running_var` of any `nn.batch_norm` node.
+    pub fn trainable_params(&self) -> impl Iterator<Item = &ParamInfo> {
+        self.params.iter().filter(|p| p.is_trainable())
+    }
 }
 
 impl Graph {
