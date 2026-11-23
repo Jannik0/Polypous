@@ -158,12 +158,13 @@ upstream state in the [upstream findings register](upstream-findings.md); the ID
     - **Upstream, unrelated to the crash:** `select_assign_kernel` claims checked mode clamps
       out-of-range indices, but its read `tensor[index]` is not clamped in the SPIR-V (only the write
       is checked). Polypous checks indices before every indexing op, so it isn't reachable from here.
-- **Found with #76 (proposed M2-10, M2-11; worked around in `polypous-backend`, `ops/mod.rs`).** Re-check when Burn is updated (ADR-0007):
+- **Found with #76 (M2-10, M2-11; worked around in `polypous-backend`, `ops/mod.rs`).** Re-check when Burn is updated (ADR-0007):
   - On lavapipe, `max_dim`/`min_dim` return either zero of a tie between `0` and `-0`:
-    `max([0, -0, -1, -2, -0.5])` gave `-0` and `min([-0, 0, 1, 2, 0.5])` gave `0`; PyTorch gives
-    `0` and `-0` (`core.max/zero_ties_f32`, `core.min/zero_ties_f32`, exact). `flex` matched.
+    `max([0, -0, -1, -2, -0.5])` gave `-0` and `min([-0, 0, 1, 2, 0.5])` gave `0`; `flex` and
+    PyTorch (which returns the first zero of the slice) give `0` and `-0` (`core.max/zero_ties_f32`,
+    `core.min/zero_ties_f32`, exact).
     SPIR-V's `FMax`/`FMin` allow either zero. Float `max`/`min` now set the sign of a zero result
-    by IEEE 754-2019's order (`-0 < +0`) on every backend.
+    by IEEE 754-2019's order (`-0 < +0`) on every backend (owner decision, graph-ir.md §3.1.8).
   - `flex` checks the dtypes of binary float ops with a `debug_assert_eq!` only, so mixing `f16`
     and `f32` panics in debug builds (`binary_op: dtype mismatch`) instead of returning an error.
     Burn's `Bool::float` gives the default float dtype (`f32`), whatever dtype the mask came from,

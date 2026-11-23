@@ -114,7 +114,7 @@
 //!   NaN positions, in a slice with a NaN), with an integer `min`. Burn's own `argmax` got NaN and
 //!   ties right on `flex` and lavapipe in our probes, but nothing in Burn promises it.
 //! - **The sign of a zero `max`/`min`** follows IEEE 754-2019's `maximum`/`minimum` order
-//!   (`-0 < +0`): `max` is `+0` if the reduced slice holds a `+0`, `min` is `-0` if it holds a `-0`.
+//!   (`-0 < +0`, §3.1.8; PyTorch's `amax`/`amin` return the first zero of the slice instead): `max` is `+0` if the reduced slice holds a `+0`, `min` is `-0` if it holds a `-0`.
 //!   Backends return either zero of a `0`/`-0` tie: lavapipe gave `max([0, -0, -1, -2, -0.5]) = -0`
 //!   and `min([-0, 0, 1, 2, 0.5]) = 0`, where PyTorch gives `0` and `-0`
 //!   (`core.max/zero_ties_f32`, `core.min/zero_ties_f32`, exact; `flex` matched). It costs a few

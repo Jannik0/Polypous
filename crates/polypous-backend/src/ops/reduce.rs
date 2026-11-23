@@ -305,7 +305,7 @@ fn extremum_axes<const D: usize>(x: Tensor<D>, axes: &[usize], largest: bool) ->
 
 /// Sets the sign of a zero result of `max` (`largest`) or `min` over `axes`: `+0` for `max` if the
 /// reduced slice holds a `+0`, else `-0`; `-0` for `min` if it holds a `-0`, else `+0`. That is
-/// IEEE 754-2019's `maximum`/`minimum` order (`-0 < +0`). Backends pick either zero of a tie
+/// IEEE 754-2019's `maximum`/`minimum` order (`-0 < +0`; graph-ir.md §3.1.8). Backends pick either zero of a tie
 /// between `0` and `-0`: on lavapipe, `max` of `[0, -0, -1, -2, -0.5]` gave `-0` (PyTorch: `0`,
 /// `core.max/zero_ties_f32`) and `min` of `[-0, 0, 1, 2, 0.5]` gave `0` (PyTorch: `-0`); `flex`
 /// matched PyTorch. Other results, NaN included, are unchanged.

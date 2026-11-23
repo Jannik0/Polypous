@@ -589,6 +589,10 @@ A wrong JSON type, a value outside the listed range, an unknown enum value or a 
   - `argmax`, `argmin`: NaN counts as larger (and smaller) than every number, so the index of the
     first NaN is returned.
   - `top_k`: NaN counts as larger than every number.
+- **Signed zero in `max`/`min`:** for `core.max` and `core.min`, a zero result follows IEEE
+  754-2019's order (`-0 < +0`): `max` gives `+0` if the reduced slice holds a `+0`, else `-0`;
+  `min` gives `-0` if it holds a `-0`, else `+0`. PyTorch's `amax`/`amin` return the first zero
+  of the slice instead, so a fixture whose slice holds both zeros puts the expected one first.
   - `eq`, `lt`, …: NaN compares false, except `ne`, which is true.
 - **Ties:** `argmax`, `argmin` and `top_k` return the lowest index among equal values. `top_k`
   output is sorted (largest first, or smallest first with `largest: false`), and equal values keep
