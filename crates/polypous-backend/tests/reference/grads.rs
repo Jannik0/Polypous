@@ -20,13 +20,16 @@
 //! - runs every case on every device: the CPU in a normal test, every GPU device in a
 //!   `#[ignore = "gpu"]` test (lavapipe only with `POLYPOUS_TEST_SOFTWARE_VULKAN=1`).
 //! - uploads the inputs and params, builds the first input's view if the case name asks for one
-//!   ([`feed_layout`], before marking, so the view itself is the leaf), and marks every input and
-//!   param that the sidecar lists a gradient for as a leaf ([`DynTensor::require_grad`]).
+//!   ([`feed_layout`], before marking, so the view itself is the leaf), and marks every float
+//!   input and param as a leaf ([`DynTensor::require_grad`]): those the sidecar lists a gradient
+//!   for, and the others (`nn.batch_norm`'s running statistics), which must get none.
 //! - compares the outputs and running statistics with `tolerance`, back-propagates the
 //!   one-element loss `Σ_p sum(out_p · grad_p)` over the float outputs `p` (whose gradient with
 //!   respect to `out_p` is exactly the upstream gradient `grad_p`, §3.6), and compares each leaf's
 //!   gradient with `gradient_tolerance`: NaN must match NaN, `±inf` the same inf (§3.2). A leaf
-//!   without a gradient is a failure. On a mismatch it prints the max abs/rel error and the worst
+//!   without a gradient is a failure, and so is a gradient of a float input or param that the
+//!   sidecar lists none for. The returned running statistics must carry no autodiff context
+//!   (runtime.md §3.3). On a mismatch it prints the max abs/rel error and the worst
 //!   element's index.
 //! - `same_value_*` cases (two float inputs holding the same values) run a second time with one
 //!   leaf fed to both inputs; its gradient must match the sum of the two expected gradients
@@ -214,6 +217,17 @@ fn run_grad_case(case: &GradCase, device: DeviceId, run: RunCase) -> Result<bool
         }
     }
     let leaves: Vec<usize> = case.gradients.iter().map(|(_, i, _)| *i).collect();
+    // Float inputs and params without an expected gradient (`batch_norm`'s running statistics)
+    // are marked too, and must get none (graph-ir.md §3.1.11, §3.3).
+    let no_gradient: Vec<usize> = c
+        .inputs
+        .iter()
+        .chain(c.params.iter().map(|(_, d)| d))
+        .enumerate()
+        .filter(|(i, data)| data.dtype.is_float() && !leaves.contains(i))
+        .map(|(i, _)| i)
+        .collect();
+    let leaves: Vec<usize> = leaves.into_iter().chain(no_gradient).collect();
     run_and_check(case, device, run, &leaves, None)?;
     if c.name.starts_with("same_value") {
         let pair = same_value_pair(case)?;
@@ -290,6 +304,14 @@ fn run_and_check(
     }
 
     let mut problems = String::new();
+    for (actual, (name, _)) in outputs[c.outputs.len()..].iter().zip(&case.running_stats) {
+        if actual.has_autodiff() {
+            let _ = write!(
+                problems,
+                "\n  {name}: carries autodiff context (runtime.md §3.3)"
+            );
+        }
+    }
     for (actual, (name, want)) in outputs.iter().zip(&expected) {
         if actual.device() != device {
             let _ = write!(problems, "\n  {name}: on {}, not {device}", actual.device());
@@ -342,6 +364,29 @@ fn run_and_check(
             }
             Err(err) => {
                 let _ = write!(problems, "\n  {name}: {err}");
+            }
+        }
+    }
+    let names: Vec<&String> = c
+        .input_names
+        .iter()
+        .chain(c.params.iter().map(|(name, _)| name))
+        .collect();
+    for &index in leaves {
+        if case.gradients.iter().any(|(_, i, _)| *i == index) {
+            continue;
+        }
+        match grads.get(&marked[index]) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                let _ = write!(
+                    problems,
+                    "\n  {}: got a gradient, expected none",
+                    names[index]
+                );
+            }
+            Err(err) => {
+                let _ = write!(problems, "\n  {}: {err}", names[index]);
             }
         }
     }

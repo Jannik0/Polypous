@@ -17,6 +17,7 @@
 //! - [`save`]: the canonical JSON form (§6), [`Graph::to_json`].
 //! - [`dim`]: dim expressions, their normal form and equality (§2.3).
 //! - [`diag`]: error codes (§4.2) and the [`ValidationReport`].
+//! - [`rng`]: the Polypous random generator (§3.1.12) and the dropout keep mask (§3.3).
 //!
 //! Validation problems are data: a [`ValidationReport`] with a list of [`Diagnostic`]s, not `Err`.
 //!
@@ -48,6 +49,7 @@ pub mod load;
 pub mod model;
 pub mod names;
 pub mod ops;
+pub mod rng;
 pub mod save;
 pub mod validate;
 

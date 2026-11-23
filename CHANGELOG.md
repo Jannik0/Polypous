@@ -28,6 +28,22 @@ All notable changes to Polypous are documented here. The format follows
   gradient evenly (`g / k`, as `torch.amax`/`amin`), where Burn sends it to one element.
   `top_k` still sorts on the host but takes its values with a `gather` on the device, so its
   `values` output is differentiable (it cut the graph before); its results are unchanged.
+- Gradients of the `nn` ops, and `nn.batch_norm` and `nn.dropout` in training mode, in
+  `polypous-backend` (#77), checked against their 105 gradient fixtures
+  (`tests/grad_reference_nn.rs`; all 253 gradient cases in all). `relu`, `leaky_relu` and
+  `softplus` follow PyTorch at their kinks (`0` at `relu(±0)`, `negative_slope` at
+  `leaky_relu(±0)`, `1/2` at `β·x = 0`), and `sigmoid`/`silu` keep their gradients far below
+  zero (they were `0` below `x ≈ -44`). New `DynTensor::batch_norm_training` normalizes with the
+  batch statistics (the gradient flows through them) and returns the new running statistics
+  without autodiff context; `DynTensor::dropout_training` applies a `bool` keep mask the caller
+  gives (`out = x · s` with `s = 1 / (1 - p)` as PyTorch computes it). `batch_norm`'s running
+  statistics never get a gradient, in either mode. The gradient harness now also checks that
+  inputs without an expected gradient get none.
+- The Polypous random generator in `polypous-ir` (`polypous_ir::rng`, graph-ir.md §3.1.12, #77):
+  SplitMix64 as a counter-based hash (`mix`, `fnv1a`, `stream_key`, `draw`), `u24`, `u53`,
+  `normal`, and `dropout_mask`, the keep mask of a dropout node for a shape (checked element
+  count, fallible allocation). Tested against the spec's known values and the statistics of
+  testing-strategy.md §3.8.
 - End-to-end model reference tests (#46, M1 exit): `tools/reference/gen_models.py` writes an MLP
   (784 → 128 → 10, logits and `log_softmax`) and a small CNN (conv2d, relu, max_pool2d, conv2d,
   batch_norm with non-trivial running statistics, relu, adaptive_avg_pool2d, flatten, linear) as
@@ -279,6 +295,8 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- A tracked `nn.max_pool2d` gives the untracked result bit for bit (#77): on lavapipe, a window
+  holding `0` and `-0` gave `+0` when the input was tracked and `-0` when it wasn't.
 - `core.max`/`core.min` of floats give a zero result the sign of IEEE 754-2019's order
   (`-0 < +0`) on every backend (#76): on lavapipe, `max` of a `0`/`-0` tie returned `-0` and
   `min` returned `0`, where PyTorch gives `0` and `-0`. Other results are unchanged.

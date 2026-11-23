@@ -17,6 +17,12 @@
 //!   accurate for tiny arguments (CubeCL's is `ln(1 + x)`); `mish` takes the `tanh` of that
 //!   (`≥ 0`) with a series for tiny arguments, where lavapipe's `tanh` is noise; `gelu_tanh` uses
 //!   `0.5·(1 + tanh(u)) = sigmoid(2u)`, so neither needs `tanh` of large arguments.
+//! - **Gradients** (graph-ir.md §3.1.11): `relu`, `leaky_relu`, `sigmoid`, `silu` and `softplus`
+//!   set PyTorch's derivative on their tracked path ([`derivative`], with
+//!   `gradient::with_gradient`): the selections pass `g` at `0` and `softplus`'s `max(z, 0)` term
+//!   at `β·x = 0`, and Burn's derivative of `1 / (1 + exp(-x))` overflows to `0` below
+//!   `x ≈ -44`. `gelu`, `gelu_tanh` and `mish` differentiate through their forward ops (their
+//!   fixtures pass, the own `tanh`/`log1p` tails included). Untracked calls run unchanged.
 //! - **Infinities** follow the formulas, as in PyTorch: `silu(-inf)`, `mish(-inf)` and
 //!   `gelu_tanh(-inf)` are NaN (`-inf · 0`), `gelu(-inf)` too. `gelu(+inf)` is `+inf`
 //!   (PyTorch's `f32` CPU kernel gives NaN there, its `f64` kernel `+inf`; fixtures leave `+inf`
@@ -25,6 +31,7 @@
 use burn::tensor::Tensor;
 
 use super::DTypeClass;
+use super::gradient::{constant, with_gradient};
 use super::reduce::accumulate_in_f32;
 use crate::tensor::{DynTensor, Ranked, Result, TensorError, map_rank};
 
@@ -135,11 +142,79 @@ impl<const D: usize> Ranked<D> {
         let Ranked::Float(x) = self else {
             return Err(self.kind_error(op.name()));
         };
+        let tracked = x.is_tracked() && op.sets_gradient();
         Ok(Ranked::Float(match op {
+            Activation::Relu if tracked => activate_tracked(x, op),
             Activation::Relu => relu(x),
+            op if tracked => accumulate_in_f32(x, |x| activate_tracked(x, op)),
             op => accumulate_in_f32(x, |x| activate(x, op)),
         }))
     }
+}
+
+impl Activation {
+    /// Whether the activation sets its gradient on the tracked path (graph-ir.md §3.1.11; see
+    /// [`derivative`]). The others differentiate through their forward ops with Burn's autodiff.
+    fn sets_gradient(self) -> bool {
+        matches!(
+            self,
+            Activation::Relu
+                | Activation::LeakyRelu { .. }
+                | Activation::Sigmoid
+                | Activation::Silu
+                | Activation::Softplus { .. }
+        )
+    }
+}
+
+/// The tracked path: the forward value of [`activate`] on an untracked copy of `x`, bit for bit,
+/// with the gradient `g · derivative` set by [`with_gradient`].
+fn activate_tracked<const D: usize>(x: Tensor<D>, op: Activation) -> Tensor<D> {
+    let xc = constant(x.clone());
+    let out = activate(xc.clone(), op);
+    match derivative(xc, out.clone(), op) {
+        Some(d) => with_gradient(out, [(x, d)]),
+        // Not reached (`sets_gradient` gates the call); Burn's own gradient is the fallback.
+        None => activate(x, op),
+    }
+}
+
+/// The derivative PyTorch's backward uses (graph-ir.md §3.1.11), from `x` and the forward value
+/// `y`, for the activations whose Burn gradient differs (see the module documentation):
+///
+/// - `relu`: `1` where `x > 0`, else `0` (also at `±0`). Burn's `mask_fill` passes `g` at `0`.
+/// - `leaky_relu`: `1` where `x > 0`, else `negative_slope` (also at `±0`). Burn's `mask_where`
+///   passes `g` at `0`.
+/// - `sigmoid`: `(1 - y) · y`, PyTorch's form. Burn differentiates `1 / (1 + exp(-x))`, whose
+///   `(1 + exp(-x))²` overflows below `x ≈ -44` and gave `0` for gradients near `1e-37`.
+/// - `silu`: `s · (1 + x · (1 - s))` with `s = sigmoid(x)`, PyTorch's form (the same overflow).
+/// - `softplus`: `1` where `β·x > threshold`, else `e / (e + 1)` with `e = exp(β·x)`, PyTorch's
+///   form: `1/2` at `β·x = 0`, where Burn's `max(z, 0)` term passes `g` and gives `g` in place of
+///   `g / 2`.
+///
+/// NaN inputs give `0` (`relu`), `negative_slope` (`leaky_relu`) or NaN; their gradient is
+/// unspecified (§3.1.11). `None` for the other activations.
+fn derivative<const D: usize>(x: Tensor<D>, y: Tensor<D>, op: Activation) -> Option<Tensor<D>> {
+    Some(match op {
+        Activation::Relu => x.zeros_like().mask_fill(x.greater_elem(0.0), 1.0),
+        Activation::LeakyRelu { negative_slope } => x
+            .ones_like()
+            .mask_fill(x.greater_elem(0.0).bool_not(), negative_slope),
+        Activation::Sigmoid => y.clone().neg().add_scalar(1.0).mul(y),
+        Activation::Silu => {
+            let s = sigmoid(x.clone());
+            let inner = x.mul(s.clone().neg().add_scalar(1.0)).add_scalar(1.0);
+            s.mul(inner)
+        }
+        Activation::Softplus { beta, threshold } => {
+            let z = x.mul_scalar(beta);
+            let linear = z.clone().greater_elem(threshold);
+            let e = z.exp();
+            let smooth = e.clone().div(e.add_scalar(1.0));
+            smooth.mask_fill(linear, 1.0)
+        }
+        Activation::Gelu | Activation::GeluTanh | Activation::Mish => return None,
+    })
 }
 
 /// `max(x, 0)` as a selection: `x < 0` is false for NaN and `-0.0`, which therefore pass through.

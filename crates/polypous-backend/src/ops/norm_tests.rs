@@ -170,3 +170,89 @@ fn half_precision_keeps_the_dtype() {
         assert_eq!(out.dtype(), dtype);
     }
 }
+
+#[test]
+fn batch_norm_training_formulas_and_checks() {
+    // [N = 2, C = 2, 2]: channel 0 holds 1, 2, 5, 6 (mean 3.5, biased variance 4.25),
+    // channel 1 holds 3, 3, 3, 3 (mean 3, variance 0).
+    let x = || floats(&[2, 2, 2], &[1.0, 2.0, 3.0, 3.0, 5.0, 6.0, 3.0, 3.0]);
+    let rm = || floats(&[2], &[10.0, -1.0]);
+    let rv = || floats(&[2], &[2.0, 0.5]);
+    let (out, mean, var) = x()
+        .batch_norm_training(rm(), rv(), None, Some(ones(&[2])), 1e-5, 0.25)
+        .unwrap();
+    let sd = (4.25f32 + 1e-5).sqrt();
+    close(
+        &read_f32(out),
+        &[
+            -2.5 / sd + 1.0,
+            -1.5 / sd + 1.0,
+            1.0,
+            1.0,
+            1.5 / sd + 1.0,
+            2.5 / sd + 1.0,
+            1.0,
+            1.0,
+        ],
+    );
+    // Running statistics: (1 - m) · r + m · batch, with the unbiased variance (n = 4).
+    close(
+        &read_f32(mean),
+        &[0.75 * 10.0 + 0.25 * 3.5, -0.75 + 0.25 * 3.0],
+    );
+    close(
+        &read_f32(var),
+        &[0.75 * 2.0 + 0.25 * 4.25 * 4.0 / 3.0, 0.75 * 0.5],
+    );
+    // momentum 0 keeps the running statistics exactly; 1 replaces them.
+    let (_, mean, var) = x()
+        .batch_norm_training(rm(), rv(), None, None, 1e-5, 0.0)
+        .unwrap();
+    assert_eq!(read_f32(mean), [10.0, -1.0]);
+    assert_eq!(read_f32(var), [2.0, 0.5]);
+    let (_, mean, _) = x()
+        .batch_norm_training(rm(), rv(), None, None, 1e-5, 1.0)
+        .unwrap();
+    assert_eq!(read_f32(mean), [3.5, 3.0]);
+    // The running statistics carry no autodiff context, also from tracked inputs.
+    let (out, mean, var) = x()
+        .require_grad()
+        .unwrap()
+        .batch_norm_training(
+            rm().require_grad().unwrap(),
+            rv().require_grad().unwrap(),
+            None,
+            None,
+            1e-5,
+            0.1,
+        )
+        .unwrap();
+    assert!(out.is_tracked());
+    assert!(!mean.has_autodiff() && !var.has_autodiff());
+
+    let invalid3 = |result: Result<(DynTensor, DynTensor, DynTensor)>| {
+        invalid(result.map(|(out, _, _)| out), "batch_norm");
+    };
+    for momentum in [-0.1, 1.5, f64::NAN] {
+        invalid3(x().batch_norm_training(rm(), rv(), None, None, 1e-5, momentum));
+    }
+    // n < 2 values per channel: [1, 2] and [1, 2, 1].
+    invalid3(ones(&[1, 2]).batch_norm_training(rm(), rv(), None, None, 1e-5, 0.1));
+    invalid3(ones(&[1, 2, 1]).batch_norm_training(rm(), rv(), None, None, 1e-5, 0.1));
+    // n = 2 works.
+    assert!(
+        ones(&[2, 2])
+            .batch_norm_training(rm(), rv(), None, None, 1e-5, 0.1)
+            .is_ok()
+    );
+    // The inference checks apply too.
+    invalid3(x().batch_norm_training(rm(), rv(), None, None, 0.0, 0.1));
+    invalid3(x().batch_norm_training(ones(&[3]), rv(), None, None, 1e-5, 0.1));
+    // Half precision keeps the dtype, for the output and the statistics.
+    let half = x().cast(DType::F16).unwrap();
+    let r = rm().cast(DType::F16).unwrap();
+    let (out, mean, _) = half
+        .batch_norm_training(r.clone(), r, None, None, 1e-5, 0.1)
+        .unwrap();
+    assert_eq!((out.dtype(), mean.dtype()), (DType::F16, DType::F16));
+}

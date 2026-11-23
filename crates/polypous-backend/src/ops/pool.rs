@@ -12,6 +12,10 @@
 //!   `-f32::MAX` and dropped NaN on lavapipe (`flex` got both right).
 //! - The average pools compute `f16`/`bf16` in `f32` and round once (graph-ir.md §3.1.8,
 //!   "Half-precision accumulation"), like `mean`.
+//! - **Gradients** (graph-ir.md §3.1.11) are Burn's: `max_pool2d` sends `g` to the first maximum
+//!   of each window in row-major order and adds up overlapping windows; the `-inf`/NaN masks
+//!   give windows of only padding (or only `-inf`) no gradient. The tracked `max_pool2d` keeps the
+//!   untracked forward value bit for bit ([`with_pool_gradient`]). The average pools need nothing.
 
 use burn::tensor::module;
 use burn::tensor::ops::{AvgPoolOptions, MaxPoolOptions};
@@ -20,6 +24,7 @@ use burn::tensor::{FloatDType, Tensor};
 use super::DTypeClass;
 use super::check_shape;
 use super::conv::{check_at_least_one, window_output};
+use super::gradient::constant;
 use super::nn_layers::check_rank;
 use super::reduce::accumulate_in_f32;
 use crate::tensor::{DynTensor, Inner, Ranked, Result, TensorError};
@@ -78,6 +83,25 @@ fn nchw(
     }
 }
 
+/// The tracked path of `max_pool2d`: `out` (the untracked pool's value) in the forward pass, bit
+/// for bit, and the gradient of Burn's tracked `max_pool2d`, whose backward
+/// (`max_pool2d_with_indices`) sends `g` to the first maximum of each window in row-major order
+/// and adds up overlapping windows (graph-ir.md §3.1.11).
+///
+/// The tracked pool `p` runs another kernel (`max_pool2d_with_indices`), whose value may differ
+/// from `out` in the sign of a zero: at a `0`/`-0` tie, lavapipe gave `+0` there and `-0` from the
+/// untracked kernel (both take SPIR-V's `FMax`, which may return either zero). So the value comes
+/// from `out`, and `p` only carries the gradient, as `out - (constant(p) - p)`: `constant(p) - p`
+/// is `+0` for finite `p` and `out - +0 = out` for every `out` (`-0` and `±inf` included), with
+/// derivative `+1` with respect to `p`. Non-finite `p` are replaced by a constant `0` first
+/// (`inf - inf` is NaN); their windows hold a non-finite input, whose gradient is unspecified
+/// (§3.1.11), and they get none.
+fn with_pool_gradient(out: Tensor<4>, x: Tensor<4>, options: MaxPoolOptions<2>) -> Tensor<4> {
+    let p = module::max_pool2d(x, options);
+    let p = p.clone().mask_fill(p.is_finite().bool_not(), 0.0);
+    out - (constant(p.clone()) - p)
+}
+
 fn wrap(t: Tensor<4>, dtype: crate::tensor::DType, device: crate::device::DeviceId) -> DynTensor {
     DynTensor::from_parts(Inner::R4(Ranked::Float(t)), dtype, device)
 }
@@ -104,7 +128,16 @@ impl DynTensor {
             .with_stride(stride)
             .with_padding(padding)
             .with_dilation(dilation);
-        let out = module::max_pool2d(x.clone(), options.clone());
+        let tracked = x.is_tracked();
+        let x_value = if tracked {
+            constant(x.clone())
+        } else {
+            x.clone()
+        };
+        let mut out = module::max_pool2d(x_value, options.clone());
+        if tracked {
+            out = with_pool_gradient(out, x.clone(), options.clone());
+        }
         // Per element a code: 2 for NaN, 0 for -inf, 1 otherwise. Its max-pool is 2 where a
         // window holds a NaN, and below 0.5 where it holds nothing above -inf: only -inf inputs,
         // or only padding (the backend's padding value: -inf on `flex`, -f32::MAX on CubeCL).
