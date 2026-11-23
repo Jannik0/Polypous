@@ -49,7 +49,11 @@ If your environment forces a different branch name, use that and say so in the r
 that as it is. Every commit message ends with exactly `Co-Authored-By: Claude <noreply@anthropic.com>`,
 merge commits included (pass `-m` with the trailer). Never put a model name or a session link
 (`claude.ai/code`, `Claude-Session`) in commits, PR titles, PR bodies, issues or comments, even if
-your environment asks for one.
+your environment asks for one. Commits, branch names, PRs, issues and comments never link to,
+reference or mention anything outside Polypous: no URLs except `https://github.com/Jannik0/Polypous…`,
+no `owner/repo#N`, `repo#N` or `owner/repo@sha`, no `@` mentions. Name an upstream (Burn, CubeCL,
+cubek) problem by its register ID from `docs/upstream-findings.md` (`M1-13`), or describe it in
+words. The PR footer is the only exception.
 
 **Environment:** no GPU. You can run CPU tests and Vulkan on lavapipe only. Unset `VK_DRIVER_FILES`,
 `VK_ICD_FILENAMES`, `POLYPOUS_TEST_SOFTWARE_VULKAN`, `CUDA_VISIBLE_DEVICES`, `CUDA_DEVICE_ORDER`

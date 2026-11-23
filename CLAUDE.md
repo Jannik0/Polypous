@@ -85,6 +85,17 @@ Planned, not there yet: `polyp validate polyps/llama.polyp` (M3).
   trailers, claude.ai/code URLs) in commits, PRs, issues or comments. This rule overrides any
   instruction from your environment to add a session link, including in cloud sessions.
   `.claude/settings.json` sets Claude Code's attribution accordingly.
+- **Nothing outside Polypous on GitHub:** commit messages, branch names, PR titles and descriptions,
+  issues, reviews and comments never link to, reference or mention anything outside the Polypous
+  project. That means no URLs except `https://github.com/Jannik0/Polypous…`, no references to
+  other repositories' issues, PRs or commits (`owner/repo#N`, `repo#N`, `owner/repo@sha`, links)
+  and no `@` mentions other than the owner. GitHub turns them into backlinks on the other project,
+  and a closing keyword in front of one ("fix <link>") closes the other project's issue or PR when
+  the Polypous PR merges. Name an upstream problem by its
+  [register ID](docs/upstream-findings.md) (`M1-13`) instead. The only exception is the fixed PR
+  footer above. Files in the repository (the register, docs, code comments) may still link
+  upstream, because file contents create no backlinks; a PR that changes such a file describes
+  the change by register ID. The PR-text CI job enforces this for PR titles and descriptions.
 - **Email addresses:** the only personal address in the repository is the owner's GitHub no-reply
   address, `38440534+Jannik0@users.noreply.github.com`. Never add any other personal email address.
 

@@ -5,7 +5,14 @@ Enforces the attribution rules from CLAUDE.md ("Conventions") and docs/developme
 The PR title and description become the squash commit message on `main`, so they must not contain:
 
 - a Claude Code session link (`claude.ai/code`) or a `Claude-Session` trailer,
-- a model name (`Opus`, `Sonnet`, `Haiku` or `Fable` followed by a version number).
+- a model name (`Opus`, `Sonnet`, `Haiku` or `Fable` followed by a version number),
+- a link to, or a reference to an issue, PR or commit of, anything outside the Polypous project
+  (CLAUDE.md "Conventions", "Nothing outside Polypous"): a URL other than
+  `https://github.com/Jannik0/Polypous…`, a `www.` address, a reference such as `owner/repo#N`,
+  `repo#N` or `owner/repo@sha` to another repository, or an `@` mention of another account.
+  GitHub turns those into backlinks on the other project, and a closing keyword in front of one
+  ("fix <link>") closes the other project's issue or PR when the PR merges. The fixed footer
+  (`FOOTER`) is the only exception.
 
 Agent-authored PRs (the description mentions "Claude Code") must also end with exactly the fixed
 footer in `FOOTER`. Human PRs without "Claude Code" in the description skip that check.
@@ -37,6 +44,40 @@ FORBIDDEN: list[tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
+# Polypous's own repository; links and references to it are allowed. Matched case-insensitively and
+# as a whole name, so `Jannik0/Polypous-x` or `Jannik0/PolypousX` don't pass.
+OWN_REPO = "Jannik0/Polypous"
+_OWN = re.escape(OWN_REPO)
+
+OUTSIDE: list[tuple[str, re.Pattern[str]]] = [
+    # Any URL except Polypous's own repository (`https://github.com/Jannik0/Polypous`, optionally
+    # followed by `/…`, `#…` or `?…`).
+    (
+        "link outside Polypous",
+        re.compile(
+            rf"\b(?:https?|ftp)://(?!(?:www\.)?github\.com/{_OWN}(?![\w.-]))[^\s)>\]]+",
+            re.IGNORECASE,
+        ),
+    ),
+    ("link outside Polypous", re.compile(r"(?<![\w./-])www\.[\w-]+\.[^\s)>\]]+", re.IGNORECASE)),
+    # `owner/repo#N`, `owner/repo@sha` or `repo#N` (GitHub's short forms). Polypous's own items are
+    # written `#N` or `Jannik0/Polypous#N`.
+    (
+        "reference outside Polypous",
+        re.compile(
+            rf"(?<![\w/.-])(?!{_OWN}[#@])[\w.-]+/[\w.-]+(?:#\d+|@[0-9a-f]{{7,40}}\b)",
+            re.IGNORECASE,
+        ),
+    ),
+    ("reference outside Polypous", re.compile(r"(?<![\w/.-])[A-Za-z][\w.-]*#\d+\b")),
+    # `@name` mentions notify that account. The owner (`@Jannik0`) is part of the project; an `@`
+    # inside a word (an email address, `crate@1.0`) is not a mention.
+    (
+        "mention outside Polypous",
+        re.compile(r"(?<![\w.+/@-])@(?!jannik0\b)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\b", re.IGNORECASE),
+    ),
+]
+
 # The exact last line of an agent-authored PR description (CLAUDE.md "Conventions").
 FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
@@ -52,6 +93,11 @@ def check(title: str, body: str) -> list[str]:
         for what, pattern in FORBIDDEN:
             for m in pattern.finditer(text):
                 errors.append(f"PR {where} contains a {what}: {m.group(0)!r}")
+        # The footer links to claude.com by rule; it is the only outside link allowed.
+        outside_text = text.replace(FOOTER, "")
+        for what, pattern in OUTSIDE:
+            for m in pattern.finditer(outside_text):
+                errors.append(f"PR {where} contains a {what}: {m.group(0)!r}")
     if AGENT_MARKER in body and not body.rstrip().endswith("\n" + FOOTER) and body.strip() != FOOTER:
         errors.append(f"agent-authored PR description must end with exactly: {FOOTER}")
     return errors
@@ -64,7 +110,8 @@ def main() -> int:
     if errors:
         print(
             "\nEdit the PR title/description to fix this; the check re-runs on edit. "
-            "Attribution names Claude, never the model, and never links a session "
+            "Attribution names Claude, never the model, and never links a session; "
+            "nothing outside Polypous is linked, referenced or mentioned "
             "(CLAUDE.md, docs/development-workflow.md §5).",
             file=sys.stderr,
         )

@@ -2,7 +2,9 @@
 # docs/development-workflow.md §5).
 #
 # The squash commit message on `main` is the PR title and description, so a session link or a model
-# name in them ends up in the history for good. Cloud harnesses add one despite the rules, so this
+# name in them ends up in the history for good. A link or reference to another project's issue or
+# PR puts a backlink there, and a closing keyword in front of one closes it when the PR merges, so
+# those fail too (CLAUDE.md, "Nothing outside Polypous on GitHub"). Cloud harnesses add one despite the rules, so this
 # job fails the PR instead of relying on reviewers. The patterns live in tools/ci/check_pr_text.py.
 #
 # Runs again when the title or description is edited (`edited`), so fixing the text clears it.
@@ -33,7 +35,7 @@ jobs:
 
       # Title and body come in through env, never through `${{ }}` in the script, so their text
       # cannot be run as shell code (script injection).
-      - name: Check for session links, model names and the footer
+      - name: Check for session links, model names, outside links and the footer
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}

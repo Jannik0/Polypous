@@ -61,7 +61,10 @@ Tasks that touch different crates can run in parallel. Tasks that touch the same
   The **PR title and description** CI job ([`pr-text.yml`](../.github/workflows/pr-text.yml),
   patterns in [`tools/ci/check_pr_text.py`](../tools/ci/check_pr_text.py)) fails a PR whose title or
   description contains `claude.ai/code`, `Claude-Session` or a model name with a version
-  (`Opus`/`Sonnet`/`Haiku`/`Fable` + number). If the description mentions "Claude Code", it must also
+  (`Opus`/`Sonnet`/`Haiku`/`Fable` + number), or that links to, references or mentions anything
+  outside Polypous (a URL other than `https://github.com/Jannik0/Polypous…`, `owner/repo#N`,
+  `repo#N`, `owner/repo@sha`, an `@` mention other than the owner; CLAUDE.md "Nothing outside
+  Polypous on GitHub"). The fixed footer is the only exception. If the description mentions "Claude Code", it must also
   end with exactly `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. It re-runs when
   the description is edited, so fix the text instead of re-running the job.
 
@@ -158,6 +161,8 @@ the milestone exit check covers them.
   - `Closes #N`, or `Part of #N` when the issue stays open.
   - Wait for green CI. Don't merge.
   - The attribution rules of CLAUDE.md. After opening the PR, re-read its body through the API.
+  - Nothing outside Polypous in commits, the PR or comments: upstream problems by register ID
+    only (CLAUDE.md). Repeat this line in every worker prompt that touches upstream findings.
 - **The report back:** the PR link, results, decisions, and what wasn't verified.
 
 [agent-prompts.md](agent-prompts.md) has the M1 templates: the shared rules block of every cloud
@@ -177,6 +182,9 @@ CI log when a report doesn't match).
      - Commits from cloud sessions are authored `Claude <noreply@anthropic.com>`. That's expected: it isn't a personal address, and the squash merge replaces these commits on `main`.
      - Any other address is a finding.
    - The PR title and description have no session link and no model name (the PR-text job enforces this).
+   - Nothing in the commits, the PR title or description, or the squash `commit_message` you write
+     links to, references or mentions anything outside Polypous (CLAUDE.md). The PR-text job checks
+     the title and description only; check the commit messages and your merge message yourself.
 2. **Review focus:**
    - Untrusted input is bounded: files, prober output, registry, sysfs.
    - No panics across the API.
@@ -260,6 +268,12 @@ out of it:
     docs PR;
   - hand-off prompts refer to those IDs;
   - the upstream agent's reports (issue and PR links, fixed versions) go into the "Upstream" column.
+  - The register file may link upstream, but the PR that changes it, its commits and the squash
+    message name findings **by register ID only**, with no upstream link or reference
+    (CLAUDE.md, "Nothing outside Polypous on GitHub"). PR 96 described its register update with
+    phrases such as "fix <upstream PR link>"; GitHub read them as closing keywords and closed
+    two upstream PRs when PR 96 merged, and every linked item got a backlink to Polypous (owner
+    rule since 2026-11-23).
 
   A finding found in M1 was missed in a hand-off because the findings were only described in prose.
   The register's IDs make each hand-off checkable against the list.
