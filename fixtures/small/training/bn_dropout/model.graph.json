@@ -1,0 +1,266 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "name": "bn_dropout",
+  "opsets": {
+    "core": 1,
+    "nn": 1
+  },
+  "dims": {
+    "batch": {}
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "float",
+      "shape": [
+        "batch",
+        2,
+        4,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "value": "head"
+    }
+  ],
+  "params": [
+    {
+      "name": "conv.weight",
+      "dtype": "float",
+      "shape": [
+        3,
+        2,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "conv.bias",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "bn.running_mean",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "bn.running_var",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "bn.weight",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "bn.bias",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "fc.weight",
+      "dtype": "float",
+      "shape": [
+        6,
+        48
+      ]
+    },
+    {
+      "name": "fc.bias",
+      "dtype": "float",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "blocks.0.lin.weight",
+      "dtype": "float",
+      "shape": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "blocks.0.lin.bias",
+      "dtype": "float",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "blocks.1.lin.weight",
+      "dtype": "float",
+      "shape": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "blocks.1.lin.bias",
+      "dtype": "float",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "head.weight",
+      "dtype": "float",
+      "shape": [
+        3,
+        6
+      ]
+    },
+    {
+      "name": "head.bias",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "conv",
+      "op": "nn.conv2d",
+      "inputs": {
+        "x": "x"
+      },
+      "params": {
+        "weight": "conv.weight",
+        "bias": "conv.bias"
+      },
+      "attrs": {
+        "padding": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "bn",
+      "op": "nn.batch_norm",
+      "inputs": {
+        "x": "conv"
+      },
+      "params": {
+        "running_mean": "bn.running_mean",
+        "running_var": "bn.running_var",
+        "weight": "bn.weight",
+        "bias": "bn.bias"
+      },
+      "attrs": {
+        "eps": 1e-05,
+        "momentum": 0.2
+      }
+    },
+    {
+      "id": "act",
+      "op": "nn.relu",
+      "inputs": {
+        "x": "bn"
+      }
+    },
+    {
+      "id": "drop1",
+      "op": "nn.dropout",
+      "inputs": {
+        "x": "act"
+      },
+      "attrs": {
+        "p": 0.25
+      }
+    },
+    {
+      "id": "flat",
+      "op": "core.flatten",
+      "inputs": {
+        "x": "drop1"
+      },
+      "attrs": {
+        "start_dim": 1
+      }
+    },
+    {
+      "id": "fc",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "flat"
+      },
+      "params": {
+        "weight": "fc.weight",
+        "bias": "fc.bias"
+      }
+    },
+    {
+      "id": "blocks",
+      "op": "repeat",
+      "count": 2,
+      "carry": {
+        "h": "fc"
+      },
+      "body": {
+        "params_prefix": "blocks.{i}.",
+        "nodes": [
+          {
+            "id": "lin",
+            "op": "nn.linear",
+            "inputs": {
+              "x": "h"
+            },
+            "params": {
+              "weight": "lin.weight",
+              "bias": "lin.bias"
+            }
+          },
+          {
+            "id": "relu",
+            "op": "nn.relu",
+            "inputs": {
+              "x": "lin"
+            }
+          },
+          {
+            "id": "drop",
+            "op": "nn.dropout",
+            "inputs": {
+              "x": "relu"
+            },
+            "attrs": {
+              "p": 0.5
+            }
+          }
+        ],
+        "carry_out": {
+          "h": "drop"
+        }
+      }
+    },
+    {
+      "id": "head",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "blocks:h"
+      },
+      "params": {
+        "weight": "head.weight",
+        "bias": "head.bias"
+      }
+    }
+  ]
+}

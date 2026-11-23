@@ -1,0 +1,92 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "name": "mlp",
+  "opsets": {
+    "core": 1,
+    "nn": 1
+  },
+  "dims": {
+    "batch": {}
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "float",
+      "shape": [
+        "batch",
+        6
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "value": "fc2"
+    }
+  ],
+  "params": [
+    {
+      "name": "fc1.weight",
+      "dtype": "float",
+      "shape": [
+        5,
+        6
+      ]
+    },
+    {
+      "name": "fc1.bias",
+      "dtype": "float",
+      "shape": [
+        5
+      ],
+      "trainable": false
+    },
+    {
+      "name": "fc2.weight",
+      "dtype": "float",
+      "shape": [
+        3,
+        5
+      ]
+    },
+    {
+      "name": "fc2.bias",
+      "dtype": "float",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fc1",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "x"
+      },
+      "params": {
+        "weight": "fc1.weight",
+        "bias": "fc1.bias"
+      }
+    },
+    {
+      "id": "act",
+      "op": "nn.relu",
+      "inputs": {
+        "x": "fc1"
+      }
+    },
+    {
+      "id": "fc2",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "act"
+      },
+      "params": {
+        "weight": "fc2.weight",
+        "bias": "fc2.bias"
+      }
+    }
+  ]
+}

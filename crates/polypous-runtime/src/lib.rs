@@ -9,6 +9,9 @@
 //!   device check, topological order, value lifetimes.
 //! - [`Model`]: a plan with its weights loaded from a [`WeightFile`] (runtime.md §2), and
 //!   [`Model::run`], one call with inputs and state by name (runtime.md §3).
+//! - [`Model::run_with`] and [`Plan::run`]: a call in a [`RunMode`] (inference or training,
+//!   runtime.md §3.1), with the loaded params or with [`Params`] given by the caller (§3.2). A
+//!   training-mode call returns the new `batch_norm` running statistics (§3.3).
 //! - [`CancellationToken`] (runtime.md §4) and [`RuntimeError`] with its [`ErrorKind`]
 //!   (runtime.md §5).
 //!
@@ -46,7 +49,7 @@ mod plan;
 mod weights;
 
 pub use cancel::CancellationToken;
-pub use error::{ErrorKind, Result, RuntimeError, WeightProblem};
-pub use exec::{Model, RunOptions, RunOutput, TraceStep};
+pub use error::{ErrorKind, ParamProblem, Result, RuntimeError, WeightProblem};
+pub use exec::{Model, Params, RunMode, RunOptions, RunOutput, TraceStep};
 pub use plan::{Plan, PlanOptions, ScheduledStep};
 pub use weights::WeightFile;

@@ -1,0 +1,219 @@
+{
+  "schema_version": 2,
+  "model": "bn_dropout",
+  "case": "batch4_step4_f32",
+  "description": "conv2d 2->3 (3x3, padding 1), batch_norm (momentum 0.2), relu, dropout 0.25, flatten, linear 48->6, a repeat of 2 iterations (blocks.{i}.: linear 6->6, relu, dropout 0.5), linear 6->3, in training mode. Batch 4, seed 1234, step 4.",
+  "compute_dtype": "f32",
+  "mode": "training",
+  "training": {
+    "seed": 1234,
+    "step": 4
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "f32",
+      "shape": [
+        4,
+        2,
+        4,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "running_stats": [
+    {
+      "name": "new/bn.running_mean",
+      "param": "bn.running_mean",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "new/bn.running_var",
+      "param": "bn.running_var",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "masks": [
+    {
+      "name": "mask/drop1",
+      "node": "drop1",
+      "dtype": "bool",
+      "shape": [
+        4,
+        3,
+        4,
+        4
+      ]
+    },
+    {
+      "name": "mask/blocks[0]/drop",
+      "node": "blocks[0]/drop",
+      "dtype": "bool",
+      "shape": [
+        4,
+        6
+      ]
+    },
+    {
+      "name": "mask/blocks[1]/drop",
+      "node": "blocks[1]/drop",
+      "dtype": "bool",
+      "shape": [
+        4,
+        6
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "name": "grad/y",
+      "output": "y",
+      "dtype": "f32",
+      "shape": [
+        4,
+        3
+      ]
+    }
+  ],
+  "gradients": [
+    {
+      "name": "grad/conv.weight",
+      "param": "conv.weight",
+      "dtype": "f32",
+      "shape": [
+        3,
+        2,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "grad/conv.bias",
+      "param": "conv.bias",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "grad/bn.weight",
+      "param": "bn.weight",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "grad/bn.bias",
+      "param": "bn.bias",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "grad/fc.weight",
+      "param": "fc.weight",
+      "dtype": "f32",
+      "shape": [
+        6,
+        48
+      ]
+    },
+    {
+      "name": "grad/fc.bias",
+      "param": "fc.bias",
+      "dtype": "f32",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "grad/blocks.0.lin.weight",
+      "param": "blocks.0.lin.weight",
+      "dtype": "f32",
+      "shape": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "grad/blocks.0.lin.bias",
+      "param": "blocks.0.lin.bias",
+      "dtype": "f32",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "grad/blocks.1.lin.weight",
+      "param": "blocks.1.lin.weight",
+      "dtype": "f32",
+      "shape": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "grad/blocks.1.lin.bias",
+      "param": "blocks.1.lin.bias",
+      "dtype": "f32",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "grad/head.weight",
+      "param": "head.weight",
+      "dtype": "f32",
+      "shape": [
+        3,
+        6
+      ]
+    },
+    {
+      "name": "grad/head.bias",
+      "param": "head.bias",
+      "dtype": "f32",
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "gradient_tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "the graph as PyTorch functional ops in f64 on the f32 weights and input, rounded once to f32; gradients: torch.autograd.grad((y * grad_y).sum(), trainable params)",
+  "notes": "Dropout multiplies by x * (mask / (1 - p)) with the Polypous keep mask of `training.seed`, `training.step` and the node path (graph-ir.md \u00a73.1.12, polyrng.dropout_mask), stored under `masks`. batch_norm runs F.batch_norm(..., training=True); `running_stats` are its updated running statistics. Gradients are listed for every trainable param (trainable: true and not a running statistic) in declaration order; the other params get none.",
+  "seed": 403,
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

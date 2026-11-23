@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "kind": "ones",
+  "case": "layer_norm_weight",
+  "description": "ones of a nn.layer_norm weight [3, 4]",
+  "seed": 125,
+  "param": {
+    "name": "ln.weight",
+    "shape": [
+      3,
+      4
+    ],
+    "init": {
+      "kind": "ones"
+    },
+    "role": {
+      "op": "nn.layer_norm",
+      "param": "weight"
+    },
+    "fans": null
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 0
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "bit-exact on every platform (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

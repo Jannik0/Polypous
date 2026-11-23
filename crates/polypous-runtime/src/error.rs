@@ -75,6 +75,43 @@ pub enum WeightProblem {
     },
 }
 
+/// What is wrong with a param given by the caller (runtime.md §3.2). Always reported with the
+/// param's name in [`RuntimeError::Param`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ParamProblem {
+    /// The graph declares the param, the given params don't hold it.
+    #[error("the graph declares this param, but the call's params don't hold it")]
+    Missing,
+    /// The given params hold a name that the graph doesn't declare.
+    #[error("the call's params hold this name, but the graph declares no param of that name")]
+    Extra,
+    /// The tensor's dtype is not the compute dtype.
+    #[error("has dtype {actual}, but params have the compute dtype {expected}")]
+    Dtype {
+        /// The compute dtype.
+        expected: String,
+        /// The given tensor's dtype.
+        actual: String,
+    },
+    /// The tensor's shape differs from the declared one.
+    #[error("has shape {actual:?}, but the graph declares {expected:?}")]
+    Shape {
+        /// The declared shape.
+        expected: Vec<usize>,
+        /// The given shape.
+        actual: Vec<usize>,
+    },
+    /// The tensor lives on another device than the plan's.
+    #[error("is on device {actual}, but the model runs on {expected}")]
+    Device {
+        /// The plan's device.
+        expected: String,
+        /// The tensor's device.
+        actual: String,
+    },
+}
+
 /// An error of the runtime (runtime.md §5). [`RuntimeError::kind`] gives its category.
 ///
 /// Errors raised while running a node carry the node path (`layers[3]/attn`, runtime.md §5). The
@@ -156,6 +193,54 @@ pub enum RuntimeError {
         actual: String,
     },
 
+    /// A param given by the caller doesn't fit the graph (runtime.md §3.2). Nothing has run.
+    #[error("param `{name}` {problem}")]
+    Param {
+        /// The param name.
+        name: String,
+        /// What is wrong.
+        problem: ParamProblem,
+    },
+
+    /// A training-mode call on a plan whose compute dtype isn't `f32` (runtime.md §3.1 check 1).
+    #[error(
+        "training mode requires the compute dtype f32 in this version, but the model's compute dtype is {dtype}"
+    )]
+    TrainingDtype {
+        /// The plan's compute dtype.
+        dtype: Dtype,
+    },
+
+    /// A training-mode call on a graph where a `batch_norm` running statistic has more than one
+    /// use (runtime.md §3.1 check 2).
+    #[error(
+        "training mode: running statistic `{param}` has {uses} uses, but needs exactly one: {first} and {second}"
+    )]
+    SharedRunningStat {
+        /// The param name.
+        param: String,
+        /// Its number of uses after expanding repeats.
+        uses: u64,
+        /// One use: `node \`bn1\` (nn.batch_norm) as \`running_mean\``.
+        first: String,
+        /// Another use.
+        second: String,
+    },
+
+    /// A training-mode `nn.batch_norm` with fewer than 2 values per channel (runtime.md §3.1
+    /// check 3). Nothing has run.
+    #[error(
+        "node `{node}` (nn.batch_norm): training mode needs at least 2 values per channel, but `x` {shape:?} has {values}"
+    )]
+    BatchNormValues {
+        /// The node path.
+        node: String,
+        /// The bound shape of `x`.
+        shape: Vec<usize>,
+        /// Values per channel.
+        values: usize,
+    },
+
     /// The call was cancelled before `before` ran (runtime.md §4).
     #[error("cancelled before node `{before}`")]
     Cancelled {
@@ -200,7 +285,13 @@ impl RuntimeError {
             },
             RuntimeError::WeightUpload { source, .. } => tensor_error_kind(source),
             RuntimeError::Bind(BindError::Unbound { .. }) => ErrorKind::Internal,
-            RuntimeError::Bind(_) | RuntimeError::WrongDevice { .. } => ErrorKind::InvalidInput,
+            RuntimeError::Bind(_)
+            | RuntimeError::WrongDevice { .. }
+            | RuntimeError::Param { .. }
+            | RuntimeError::BatchNormValues { .. } => ErrorKind::InvalidInput,
+            RuntimeError::TrainingDtype { .. } | RuntimeError::SharedRunningStat { .. } => {
+                ErrorKind::UnsupportedOperation
+            }
             RuntimeError::Cancelled { .. } => ErrorKind::Cancelled,
             RuntimeError::Node { source, .. } => tensor_error_kind(source),
             RuntimeError::Internal { .. } => ErrorKind::Internal,
@@ -212,7 +303,9 @@ impl RuntimeError {
         match self {
             RuntimeError::UnsupportedDtype { node, .. } => node.as_deref(),
             RuntimeError::Cancelled { before } => Some(before),
-            RuntimeError::Node { node, .. } => Some(node),
+            RuntimeError::Node { node, .. } | RuntimeError::BatchNormValues { node, .. } => {
+                Some(node)
+            }
             _ => None,
         }
     }

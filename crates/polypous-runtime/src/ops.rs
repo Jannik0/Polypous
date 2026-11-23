@@ -9,7 +9,7 @@
 //! internal error, never a panic.
 
 use polypous_backend::device::DeviceId;
-use polypous_backend::{DType, DynTensor, Scalar, TensorError};
+use polypous_backend::{DType, DynTensor, Scalar, TensorData, TensorError};
 use polypous_ir::{AttrValue, Attrs, BoundDim, BoundOp, Dtype, OpInfo};
 
 /// The value dtype of the backend for an IR dtype.
@@ -129,6 +129,19 @@ pub(crate) enum Arg {
     /// Boxed: a `DynTensor` is a few hundred bytes (one variant per rank and kind).
     One(Box<DynTensor>),
     Many(Vec<DynTensor>),
+}
+
+/// The mode an op node runs in (runtime.md §3.1). Only `nn.batch_norm` and `nn.dropout` look
+/// at it (graph-ir.md §3.1.10).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum OpMode<'a> {
+    Inference,
+    Training {
+        seed: u64,
+        step: u64,
+        /// The node path of runtime.md §5, which keys the dropout stream (graph-ir.md §3.1.12).
+        node_path: &'a str,
+    },
 }
 
 /// Why [`run_op`] failed.
@@ -328,12 +341,18 @@ fn scalar(s: polypous_ir::Scalar) -> Scalar {
 
 /// Runs one op node. `inputs` and `params` are in catalog order (`None`: not bound). Returns the
 /// outputs in port order.
+///
+/// In training mode `nn.batch_norm` puts its new `(running_mean, running_var)` into `running`
+/// (runtime.md §3.3), and `nn.dropout` builds its keep mask on the host
+/// ([`polypous_ir::rng::dropout_mask`]) and uploads it as a constant `bool` tensor.
 pub(crate) fn run_op(
     info: &OpInfo,
     bound: &BoundOp,
     inputs: Vec<Option<Arg>>,
     params: Vec<Option<DynTensor>>,
     device: DeviceId,
+    mode: OpMode<'_>,
+    running: &mut Option<(DynTensor, DynTensor)>,
 ) -> R<Vec<DynTensor>> {
     let mut n = Node {
         info,
@@ -601,14 +620,36 @@ pub(crate) fn run_op(
         }
         "nn.dropout" => {
             let p = n.float("p")?;
-            one(n.input(0)?.dropout(p)?)
+            let x = n.input(0)?;
+            match mode {
+                // `p = 0` is the identity in both modes and draws nothing (graph-ir.md §3.3).
+                OpMode::Training {
+                    seed,
+                    step,
+                    node_path,
+                } if p > 0.0 => {
+                    let keep = dropout_keep(seed, step, node_path, &x.shape(), p, device)?;
+                    one(x.dropout_training(p, keep)?)
+                }
+                _ => one(x.dropout(p)?),
+            }
         }
 
         // Normalization.
         "nn.batch_norm" => {
             let (mean, var) = (n.required_param(0)?, n.required_param(1)?);
             let (weight, bias, eps) = (n.param(2), n.param(3), n.float("eps")?);
-            one(n.input(0)?.batch_norm(mean, var, weight, bias, eps)?)
+            match mode {
+                OpMode::Training { .. } => {
+                    let momentum = n.float("momentum")?;
+                    let (out, new_mean, new_var) = n
+                        .input(0)?
+                        .batch_norm_training(mean, var, weight, bias, eps, momentum)?;
+                    *running = Some((new_mean, new_var));
+                    one(out)
+                }
+                OpMode::Inference => one(n.input(0)?.batch_norm(mean, var, weight, bias, eps)?),
+            }
         }
         "nn.layer_norm" => {
             let (weight, bias) = (n.param(0), n.param(1));
@@ -638,6 +679,27 @@ pub(crate) fn run_op(
 
         other => internal(format!("op `{other}` has no backend mapping")),
     }
+}
+
+/// The keep mask of a training-mode `nn.dropout` (graph-ir.md §3.3, §3.1.12), built on the host
+/// and uploaded to `device` as a `bool` tensor of `shape`. It is a constant: uploaded data carries
+/// no autodiff tracking. `shape` is the shape of a tensor that exists, so its element count fits;
+/// a mask that can't be allocated is reported as an internal error, never a panic.
+fn dropout_keep(
+    seed: u64,
+    step: u64,
+    node_path: &str,
+    shape: &[usize],
+    p: f64,
+    device: DeviceId,
+) -> R<DynTensor> {
+    let mask = polypous_ir::rng::dropout_mask(seed, step, node_path, shape, p)
+        .map_err(|e| OpFailure::Internal(format!("dropout mask: {e}")))?;
+    // `bool` and `u8` have the same layout, so this collects in place, without a new allocation.
+    let bytes: Vec<u8> = mask.into_iter().map(u8::from).collect();
+    let dims = shape.iter().map(|&d| d as u64).collect();
+    let data = TensorData::new(DType::Bool, dims, bytes)?;
+    Ok(DynTensor::from_data(&data, device)?)
 }
 
 #[cfg(test)]

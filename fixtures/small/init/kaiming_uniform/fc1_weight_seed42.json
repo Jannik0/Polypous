@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "kind": "kaiming_uniform",
+  "case": "fc1_weight_seed42",
+  "description": "kaiming_uniform (a = 0) of fc1.weight [128, 784], seed 42: the known values of graph-ir.md \u00a73.1.12",
+  "seed": 42,
+  "param": {
+    "name": "fc1.weight",
+    "shape": [
+      128,
+      784
+    ],
+    "init": {
+      "kind": "kaiming_uniform"
+    },
+    "role": {
+      "op": "nn.linear",
+      "param": "weight"
+    },
+    "fans": {
+      "fan_in": 784,
+      "fan_out": 128
+    }
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        128,
+        784
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 0
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "bit-exact on every platform (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

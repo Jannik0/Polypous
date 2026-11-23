@@ -27,6 +27,7 @@ use crate::json::{self, Value, push_pointer};
 use crate::limits;
 use crate::model::{Body, Dim, Graph, InputRef, Node, NodeKind, OpNode, Param, Repeat, StateEntry};
 use crate::names;
+use crate::params::{self, ParamInfo, UseRecorder};
 use crate::validate::ValidateOptions;
 
 use limits::{MAX_CONCAT_SPLIT, MAX_CONSTANT_ELEMENTS};
@@ -84,6 +85,7 @@ pub(crate) fn run(
         })
         .collect();
     inf.scopes.pop();
+    let params = check_param_uses(&mut inf);
 
     let mut state = Vec::new();
     for (entry, info) in graph.state.iter().zip(&root_state) {
@@ -97,8 +99,8 @@ pub(crate) fn run(
     let nodes: Option<Vec<NodeInfo>> = nodes.into_iter().collect();
     let inputs: Option<Vec<NamedValue>> = inputs.into_iter().collect();
     let outputs: Option<Vec<NamedValue>> = outputs.into_iter().collect();
-    let analysis = match (inf.complete, nodes, inputs, outputs) {
-        (true, Some(nodes), Some(inputs), Some(outputs))
+    let analysis = match (inf.complete, nodes, inputs, outputs, params) {
+        (true, Some(nodes), Some(inputs), Some(outputs), Some(params))
             if root_state.iter().all(Option::is_some) =>
         {
             expand_body_state(&graph.nodes, &nodes, &mut Vec::new(), &mut state);
@@ -116,12 +118,64 @@ pub(crate) fn run(
                 inputs,
                 outputs,
                 state,
+                params,
                 nodes,
             })
         }
         _ => None,
     };
     (inf.report, analysis)
+}
+
+/// The fan checks of §2.4.1 (`invalid_init`, §4.2) on the recorded param uses, and the
+/// [`ParamInfo`] of every declared param, in declaration order (`None` if a param shape isn't a
+/// valid literal shape; that is reported elsewhere).
+fn check_param_uses(inf: &mut Inferrer<'_>) -> Option<Vec<ParamInfo>> {
+    let graph = inf.graph;
+    let mut out = Some(Vec::with_capacity(graph.params.len()));
+    for (i, param) in graph.params.iter().enumerate() {
+        let uses = inf.uses.by_param.get(param.name.as_str());
+        let problem = param
+            .init
+            .as_ref()
+            .filter(|init| params::is_fan_based(init))
+            .and_then(|init| {
+                params::fan_problem(&param.name, init.kind(), uses, inf.uses.complete)
+            });
+        if let Some(msg) = problem {
+            inf.report.push(
+                Diagnostic::new(ErrorCode::InvalidInit, format!("/params/{i}/init"), msg)
+                    .with_item(Item::Param(param.name.clone())),
+            );
+        }
+        let shape: Option<Vec<usize>> = param
+            .shape
+            .iter()
+            .map(|d| match d {
+                Dim::Literal(v) if *v >= 1 => usize::try_from(*v).ok(),
+                _ => None,
+            })
+            .collect();
+        let (Some(list), Some(shape)) = (out.as_mut(), shape) else {
+            out = None;
+            continue;
+        };
+        let fans = uses.and_then(|u| match (&u.fans, &u.no_fans, &u.disagree) {
+            (Some((f, _)), None, None) => Some(*f),
+            _ => None,
+        });
+        list.push(ParamInfo {
+            name: param.name.clone(),
+            shape,
+            init: param.init.clone(),
+            trainable_written: param.trainable.unwrap_or(true),
+            running_stat: uses.is_some_and(|u| u.running_stat),
+            uses: uses.map_or(0, |u| u.count),
+            first_uses: uses.map(|u| u.first.clone()).unwrap_or_default(),
+            fans,
+        });
+    }
+    out
 }
 
 /// Appends the expanded body state entries (§2.6) in binding order.
@@ -169,6 +223,8 @@ struct Scope {
 struct Level<'g> {
     /// `false` if the prefix or count is invalid (already reported): params aren't resolved.
     ok: bool,
+    /// The repeat's node id, for node paths.
+    id: &'g str,
     params_prefix: &'g str,
     varies: bool,
     count: u64,
@@ -187,6 +243,8 @@ struct Inferrer<'g> {
     scopes: Vec<Scope>,
     /// Every node and value got a result.
     complete: bool,
+    /// Every param use, with the repeats expanded (§2.4.1).
+    uses: UseRecorder,
 }
 
 fn node_ptr(base: &str, i: usize) -> String {
@@ -265,6 +323,7 @@ impl<'g> Inferrer<'g> {
             levels: Vec::new(),
             scopes: Vec::new(),
             complete: true,
+            uses: UseRecorder::new(),
         }
     }
 
@@ -379,6 +438,10 @@ impl<'g> Inferrer<'g> {
             // Nodes on a cycle (reported structurally) are never ready.
             self.complete = false;
         }
+        if indegree.iter().any(|&d| d > 0) {
+            // Nodes on a cycle never ran, so their param uses are unknown.
+            self.uses.complete = false;
+        }
         infos
     }
 
@@ -442,6 +505,7 @@ impl<'g> Inferrer<'g> {
         let placeholders = names::prefix_placeholders(prefix);
         self.levels.push(Level {
             ok: count.is_some() && placeholders.is_some(),
+            id,
             params_prefix: prefix,
             varies: placeholders.is_some_and(|n| n > 0),
             count: count.unwrap_or(1),
@@ -641,6 +705,66 @@ impl<'g> Inferrer<'g> {
         }
     }
 
+    /// Records the uses of the body param `name` by node `node` in role `role` (§2.4.1), one per
+    /// iteration of the enclosing repeats. `shape` is the param's literal shape, the same in every
+    /// iteration ([`Inferrer::param_shape`] succeeded). The number of expanded names is bounded by
+    /// the param binding limit (§4.3); levels whose prefix has no `{i}` multiply the uses of one
+    /// name instead of being expanded.
+    fn record_uses(
+        &mut self,
+        name: &str,
+        node: &str,
+        op: &'static str,
+        role: &'static str,
+        shape: &[i64],
+    ) {
+        let dims: Vec<u64> = shape.iter().map(|&d| d.unsigned_abs()).collect();
+        let fans = params::fans_of(op, role, &dims);
+        let levels = &self.levels;
+        let varying: Vec<usize> = (0..levels.len()).filter(|&l| levels[l].varies).collect();
+        let fixed: Vec<usize> = (0..levels.len()).filter(|&l| !levels[l].varies).collect();
+        let multiplicity = fixed
+            .iter()
+            .fold(1u64, |m, &l| m.saturating_mul(levels[l].count));
+        let mut index = vec![0u64; levels.len()];
+        loop {
+            let mut full = String::new();
+            for (l, level) in levels.iter().enumerate() {
+                full.push_str(&names::expand_prefix(level.params_prefix, index[l]));
+            }
+            full.push_str(name);
+            // The `k`-th use of this name: the fixed levels' indices in mixed radix, innermost
+            // fastest.
+            let path = |mut k: u64| {
+                let mut idx = index.clone();
+                for &l in fixed.iter().rev() {
+                    let count = levels[l].count.max(1);
+                    idx[l] = k % count;
+                    k /= count;
+                }
+                let mut path = String::new();
+                for (l, level) in levels.iter().enumerate() {
+                    path.push_str(&format!("{}[{}]/", level.id, idx[l]));
+                }
+                path.push_str(node);
+                path
+            };
+            self.uses.record(&full, op, role, fans, multiplicity, path);
+            let mut advanced = false;
+            for &l in varying.iter().rev() {
+                index[l] += 1;
+                if index[l] < levels[l].count {
+                    advanced = true;
+                    break;
+                }
+                index[l] = 0;
+            }
+            if !advanced {
+                return;
+            }
+        }
+    }
+
     fn infer_op(
         &mut self,
         node: &'g Node,
@@ -648,6 +772,9 @@ impl<'g> Inferrer<'g> {
         p: &str,
     ) -> (Option<NodeInfo>, Option<Vec<(String, ValueInfo)>>) {
         let Some(def) = self.available(&op.op) else {
+            if !op.params.is_empty() {
+                self.uses.complete = false;
+            }
             return (None, None);
         };
         let id = node.id.as_str();
@@ -699,8 +826,12 @@ impl<'g> Inferrer<'g> {
                 Some((_, gname)) => {
                     let pp = push_pointer(&format!("{p}/params"), d.name);
                     let shape = self.param_shape(gname, &pp, id, d.name);
-                    if shape.is_none() {
-                        known = false;
+                    match &shape {
+                        Some(s) => self.record_uses(gname, id, def.name, d.name, s),
+                        None => {
+                            known = false;
+                            self.uses.complete = false;
+                        }
                     }
                     params.push(shape);
                 }

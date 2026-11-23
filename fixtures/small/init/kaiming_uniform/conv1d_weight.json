@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "kaiming_uniform",
+  "case": "conv1d_weight",
+  "description": "kaiming_uniform of a nn.conv1d weight [6, 2, 3]",
+  "seed": 103,
+  "param": {
+    "name": "conv1.weight",
+    "shape": [
+      6,
+      2,
+      3
+    ],
+    "init": {
+      "kind": "kaiming_uniform",
+      "a": 2.23606797749979
+    },
+    "role": {
+      "op": "nn.conv1d",
+      "param": "weight"
+    },
+    "fans": {
+      "fan_in": 6,
+      "fan_out": 18
+    }
+  },
+  "outputs": [
+    {
+      "name": "values",
+      "dtype": "f32",
+      "shape": [
+        6,
+        2,
+        3
+      ]
+    }
+  ],
+  "tolerance": {
+    "ulp": 0
+  },
+  "reference": "tools/reference/polyrng.py initial_values: graph-ir.md \u00a72.4.1 in f64, rounded once to f32",
+  "notes": "bit-exact on every platform (graph-ir.md \u00a73.1.12)",
+  "generator": "tools/reference/gen_training.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

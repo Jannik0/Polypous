@@ -420,12 +420,49 @@ impl<'g> Validator<'g> {
             .filter(|(_, v)| !v.is_finite())
             .map(|(k, _)| *k)
             .collect();
+        let finite = bad.is_empty();
         for k in bad {
             self.err(
                 ErrorCode::InvalidValue,
                 push_pointer(pointer, k),
                 format!("init `{k}` must be a finite number"),
             );
+        }
+        if !finite {
+            return;
+        }
+        // The values must be usable, as `torch.nn.init` requires (§2.4): every field except
+        // `kaiming_uniform.a` rounds to a finite f32, `low <= high`, `std >= 0`.
+        let to_f32: &[(&str, f64)] = match init {
+            Init::KaimingUniform { .. } => &[],
+            _ => fields,
+        };
+        for (k, v) in to_f32 {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "the rounding to f32 is what is checked (§2.4)"
+            )]
+            let rounded = *v as f32;
+            if !rounded.is_finite() {
+                self.err(
+                    ErrorCode::InvalidValue,
+                    push_pointer(pointer, k),
+                    format!("init `{k}` is {v}, which doesn't round to a finite f32"),
+                );
+            }
+        }
+        match init {
+            Init::Uniform { low, high } if low > high => self.err(
+                ErrorCode::InvalidValue,
+                push_pointer(pointer, "high"),
+                format!("init `high` ({high}) must not be less than `low` ({low})"),
+            ),
+            Init::Normal { std, .. } if *std < 0.0 => self.err(
+                ErrorCode::InvalidValue,
+                push_pointer(pointer, "std"),
+                format!("init `std` ({std}) must not be negative"),
+            ),
+            _ => {}
         }
     }
 

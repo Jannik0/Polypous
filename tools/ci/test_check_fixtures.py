@@ -23,6 +23,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 SAMPLE = os.path.join(REPO, "fixtures", "small", "ops", "core.add", "same_shape_f32")
 MODEL_SAMPLE = os.path.join(REPO, "fixtures", "small", "models", "cnn")
 GRADS = os.path.join(REPO, "fixtures", "small", "grads")
+INIT = os.path.join(REPO, "fixtures", "small", "init")
+TRAINING_SAMPLE = os.path.join(REPO, "fixtures", "small", "training", "bn_dropout")
 
 
 def write(path: str, data: bytes) -> None:
@@ -447,6 +449,142 @@ class GradSidecarValidationTest(unittest.TestCase):
 class CommittedFixturesTest(unittest.TestCase):
     def test_committed_fixtures_are_clean(self) -> None:
         self.assertEqual(check_fixtures.check(os.path.join(REPO, "fixtures", "small")), [])
+
+
+class InitValidationTest(unittest.TestCase):
+    """Copies committed initial-value fixtures (testing-strategy.md §3.9) and breaks them."""
+
+    CASES = {"kaiming": ("kaiming_normal", "conv2d_weight"), "uniform": ("uniform", "unused")}
+
+    def setUp(self) -> None:
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        for kind, name in self.CASES.values():
+            os.makedirs(os.path.join(self.root, "init", kind), exist_ok=True)
+            for ext in (".json", ".safetensors"):
+                shutil.copy(os.path.join(INIT, kind, name + ext), os.path.join(self.root, "init", kind, name + ext))
+
+    def edit(self, key: str, change) -> None:
+        kind, name = self.CASES[key]
+        path = os.path.join(self.root, "init", kind, name + ".json")
+        with open(path, encoding="utf-8") as f:
+            sidecar = json.load(f)
+        change(sidecar)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(fixturelib.canonical_json(sidecar))
+
+    def assert_problem(self, text: str) -> None:
+        problems = check_fixtures.check(self.root)
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def test_copy_is_clean(self) -> None:
+        self.assertEqual(check_fixtures.check(self.root), [])
+
+    def test_keys(self) -> None:
+        self.edit("uniform", lambda s: s.pop("notes"))
+        self.assert_problem("differ from the schema")
+
+    def test_kind_must_match_the_directory(self) -> None:
+        self.edit("uniform", lambda s: s.update(kind="normal"))
+        self.assert_problem("does not match the directory name")
+
+    def test_fans_must_match_the_shape(self) -> None:
+        self.edit("kaiming", lambda s: s["param"]["fans"].update(fan_in=1))
+        self.assert_problem("differ from the fans of its shape")
+
+    def test_fan_kind_needs_a_role_with_fans(self) -> None:
+        self.edit("kaiming", lambda s: s["param"].update(role={"op": "nn.linear", "param": "bias"}, fans=None))
+        self.assert_problem("needs a role with fans")
+
+    def test_fans_without_a_role_with_fans(self) -> None:
+        self.edit("uniform", lambda s: s["param"].update(fans={"fan_in": 1, "fan_out": 1}))
+        self.assert_problem("must be null")
+
+    def test_tolerance(self) -> None:
+        self.edit("uniform", lambda s: s.update(tolerance={"ulp": 1}))
+        self.assert_problem("tolerance must be")
+        self.edit("uniform", lambda s: s.update(tolerance={"exact": True, "atol": 0, "rtol": 0}))
+        self.assert_problem("tolerance must be")
+
+    def test_values_shape(self) -> None:
+        self.edit("uniform", lambda s: s["param"].update(shape=[7, 5]))
+        self.assert_problem("with the param's shape")
+
+
+class TrainingValidationTest(unittest.TestCase):
+    """Copies the committed bn_dropout training model (testing-strategy.md §3.10) and breaks it."""
+
+    CASE = "batch4_step3_f32"
+
+    def setUp(self) -> None:
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.dir = os.path.join(self.root, "training", "bn_dropout")
+        os.makedirs(self.dir)
+        for name in ("model.graph.json", "model.safetensors", self.CASE + ".json", self.CASE + ".safetensors"):
+            shutil.copy(os.path.join(TRAINING_SAMPLE, name), os.path.join(self.dir, name))
+        self.json = os.path.join(self.dir, self.CASE + ".json")
+        self.graph = os.path.join(self.dir, "model.graph.json")
+
+    def edit(self, path: str, change) -> None:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        change(doc)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(fixturelib.canonical_json(doc))
+
+    def assert_problem(self, text: str) -> None:
+        problems = check_fixtures.check(self.root)
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def test_copy_is_clean(self) -> None:
+        self.assertEqual(check_fixtures.check(self.root), [])
+
+    def test_keys_follow_the_mode(self) -> None:
+        self.edit(self.json, lambda s: s.update(mode="inference"))
+        self.assert_problem("differ from schema 2 for mode 'inference'")
+
+    def test_schema_version(self) -> None:
+        self.edit(self.json, lambda s: s.update(schema_version=1))
+        self.assert_problem("is not 2")
+
+    def test_training_seed_and_step(self) -> None:
+        self.edit(self.json, lambda s: s.update(training={"seed": -1, "step": 3}))
+        self.assert_problem("both u64")
+
+    def test_masks_name_every_dropout_path(self) -> None:
+        self.edit(self.json, lambda s: s["masks"].pop())
+        self.assert_problem("masks must be mask/<node path>")
+
+    def test_running_stats_name_every_statistic(self) -> None:
+        self.edit(self.json, lambda s: s["running_stats"].pop())
+        self.assert_problem("running_stats must be")
+
+    def test_gradients_only_of_trainable_params(self) -> None:
+        def add(s: dict) -> None:
+            s["gradients"].append({"name": "grad/bn.running_mean", "param": "bn.running_mean", "dtype": "f32", "shape": [3]})
+        self.edit(self.json, add)
+        self.assert_problem("gradients must be grad/<param> of trainable params")
+
+    def test_a_param_marked_untrainable_has_no_gradient(self) -> None:
+        self.edit(self.graph, lambda g: g["params"][0].update(trainable=False))
+        self.assert_problem("gradients must be grad/<param> of trainable params")
+
+    def test_upstream_names_the_output(self) -> None:
+        self.edit(self.json, lambda s: s["upstream"][0].update(output="z"))
+        self.assert_problem("upstream must be")
+
+    def test_only_f32(self) -> None:
+        self.edit(self.json, lambda s: s.update(compute_dtype="f16"))
+        self.assert_problem("compute_dtype must be f32")
+
+    def test_mask_must_be_bool(self) -> None:
+        self.edit(self.json, lambda s: s["masks"][0].update(dtype="f32"))
+        self.assert_problem("must be bool")
+
+    def test_file_directly_in_training(self) -> None:
+        write(os.path.join(self.root, "training", "stray.json"), b"{}")
+        self.assert_problem("a file directly in training/")
 
 
 if __name__ == "__main__":

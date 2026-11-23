@@ -597,3 +597,293 @@ def validate_grad_case(json_path: str) -> list[str]:
     problems += entry_problems(json_path, st_path, plain, header,
                                ("inputs", "params", "mask", "upstream", "outputs", "running_stats", "gradients"))
     return problems + subnormal_problems(st_path, header)
+
+
+# ---------------------------------------------------------------------------------------------
+# Initial-value fixtures (docs/testing-strategy.md §3.9), in `fixtures/small/init/<kind>/<case>`.
+
+INIT_SCHEMA_VERSION = 1
+INIT_SIDECAR_KEYS = (
+    "schema_version",
+    "kind",
+    "case",
+    "description",
+    "seed",
+    "param",
+    "outputs",
+    "tolerance",
+    "reference",
+    "notes",
+    "generator",
+    "versions",
+)
+INIT_PARAM_KEYS = ("name", "shape", "init", "role", "fans")
+INIT_KINDS = (
+    "zeros", "ones", "constant", "uniform", "normal",
+    "kaiming_uniform", "kaiming_normal", "xavier_uniform", "xavier_normal",
+)
+INIT_FAN_KINDS = ("kaiming_uniform", "kaiming_normal", "xavier_uniform", "xavier_normal")
+INIT_NORMAL_KINDS = ("normal", "kaiming_normal", "xavier_normal")
+# The roles with fans (graph-ir.md §2.4.1, "Fans").
+FAN_ROLES = {("nn.linear", "weight"), ("nn.embedding", "weight"), ("nn.conv1d", "weight"), ("nn.conv2d", "weight")}
+
+
+def _is_uint(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def validate_init_case(json_path: str) -> list[str]:
+    """Checks an initial-value sidecar (docs/testing-strategy.md §3.9) against the schema and its
+    safetensors file: one `values` tensor, F32, with the param's shape. Returns problems."""
+    sidecar, text = read_sidecar(json_path)
+    if sidecar is None:
+        return [text or f"{json_path}: cannot read"]
+    if not isinstance(sidecar, dict):
+        return [f"{json_path}: sidecar is not a JSON object"]
+    if tuple(sidecar.keys()) != INIT_SIDECAR_KEYS:
+        return [f"{json_path}: keys {list(sidecar.keys())} differ from the schema {list(INIT_SIDECAR_KEYS)}"]
+    problems: list[str] = []
+    if sidecar["schema_version"] != INIT_SCHEMA_VERSION:
+        problems.append(f"{json_path}: schema_version {sidecar['schema_version']!r} is not {INIT_SCHEMA_VERSION}")
+    if text != canonical_json(sidecar):
+        problems.append(f"{json_path}: not in canonical form (rerun the generator)")
+    stem = os.path.splitext(os.path.basename(json_path))[0]
+    if sidecar["case"] != stem:
+        problems.append(f"{json_path}: case {sidecar['case']!r} does not match the file name")
+    kind = sidecar["kind"]
+    if kind not in INIT_KINDS:
+        problems.append(f"{json_path}: kind {kind!r} is not one of {list(INIT_KINDS)}")
+    if kind != os.path.basename(os.path.dirname(json_path)):
+        problems.append(f"{json_path}: kind {kind!r} does not match the directory name")
+    if not _is_uint(sidecar["seed"]) or sidecar["seed"] >= 1 << 64:
+        problems.append(f"{json_path}: seed must be a u64")
+    param = sidecar["param"]
+    if not (isinstance(param, dict) and tuple(param) == INIT_PARAM_KEYS):
+        return problems + [f"{json_path}: param must have exactly the keys {list(INIT_PARAM_KEYS)}"]
+    shape = param["shape"]
+    if not (isinstance(param["name"], str) and isinstance(shape, list) and shape and all(_is_uint(d) and d > 0 for d in shape)):
+        problems.append(f"{json_path}: param needs a name and a literal shape")
+        shape = None
+    init = param["init"]
+    if not (isinstance(init, dict) and init.get("kind") == kind):
+        problems.append(f"{json_path}: param.init must be an init object of kind {kind!r}")
+    role = param["role"]
+    if role is not None and not (isinstance(role, dict) and list(role) == ["op", "param"]
+                                 and all(isinstance(v, str) for v in role.values())):
+        problems.append(f"{json_path}: param.role must be null or {{\"op\", \"param\"}}")
+        role = None
+    fans = param["fans"]
+    has_fans = role is not None and (role["op"], role["param"]) in FAN_ROLES
+    if kind in INIT_FAN_KINDS and not has_fans:
+        problems.append(f"{json_path}: a fan-based kind needs a role with fans")
+    if has_fans and shape is not None:
+        rf = math.prod(shape[2:]) if len(shape) >= 2 else 0
+        want = {"fan_in": shape[1] * rf, "fan_out": shape[0] * rf} if len(shape) >= 2 else None
+        if fans != want:
+            problems.append(f"{json_path}: param.fans {fans!r} differ from the fans of its shape {want!r}")
+    elif fans is not None:
+        problems.append(f"{json_path}: param.fans must be null for a role without fans")
+    tol = sidecar["tolerance"]
+    want_ulp = 1 if kind in INIT_NORMAL_KINDS else 0
+    if not (isinstance(tol, dict) and list(tol) == ["ulp"] and tol["ulp"] in (0, want_ulp)):
+        problems.append(f"{json_path}: tolerance must be {{\"ulp\": {want_ulp}}} for {kind} (or 0)")
+    outputs = _named_entries(sidecar["outputs"])
+    if outputs is None or [e["name"] for e in outputs] != ["values"] or outputs[0]["dtype"] != "f32" or (
+        shape is not None and outputs[0]["shape"] != shape
+    ):
+        return problems + [f"{json_path}: outputs must be one f32 tensor `values` with the param's shape"]
+    st_path = os.path.splitext(json_path)[0] + ".safetensors"
+    try:
+        header = read_safetensors_header(st_path)
+    except (OSError, FixtureError) as e:
+        return problems + [str(e)]
+    problems += entry_problems(json_path, st_path, sidecar, header, ("outputs",))
+    return problems + subnormal_problems(st_path, header)
+
+
+# ---------------------------------------------------------------------------------------------
+# Training-mode graph fixtures: model fixtures with case schema version 2 (docs/testing-strategy.md
+# §3.10), in `fixtures/small/training/<model>/`.
+
+TRAINING_SCHEMA_VERSION = 2
+
+
+def training_sidecar_keys(mode: Any) -> tuple[str, ...]:
+    """The keys of a schema-2 model case, in order (`training`, `running_stats` and `masks` only in
+    training mode)."""
+    keys = ["schema_version", "model", "case", "description", "compute_dtype", "mode"]
+    keys += ["training"] if mode == "training" else []
+    keys += ["inputs", "outputs"]
+    keys += ["running_stats", "masks"] if mode == "training" else []
+    keys += ["upstream", "gradients", "tolerance", "gradient_tolerance", "reference", "notes", "seed",
+             "generator", "versions"]
+    return tuple(keys)
+
+
+def graph_param_uses(graph: dict[str, Any]) -> list[tuple[str, str, str, str]]:
+    """Every (node path, op, op param, graph param) of a graph after expanding repeats, in document
+    order, iterations in order."""
+    out: list[tuple[str, str, str, str]] = []
+
+    def walk(nodes: Any, path: str, prefix: str) -> None:
+        for node in nodes if isinstance(nodes, list) else []:
+            if not isinstance(node, dict):
+                continue
+            if node.get("op") == "repeat":
+                body = node.get("body") or {}
+                count = node.get("count")
+                for i in range(count if _is_uint(count) and count <= 65536 else 0):
+                    inner = prefix + str(body.get("params_prefix", "")).replace("{i}", str(i))
+                    walk(body.get("nodes"), f"{path}{node.get('id')}[{i}]/", inner)
+            else:
+                for role, name in (node.get("params") or {}).items():
+                    out.append((f"{path}{node.get('id')}", str(node.get("op")), role, prefix + str(name)))
+
+    walk(graph.get("nodes"), "", "")
+    return out
+
+
+def graph_dropouts(graph: dict[str, Any]) -> list[str]:
+    """The node paths of every `nn.dropout` with `p > 0`, iterations in order (document order)."""
+    out: list[str] = []
+
+    def walk(nodes: Any, path: str) -> None:
+        for node in nodes if isinstance(nodes, list) else []:
+            if not isinstance(node, dict):
+                continue
+            if node.get("op") == "repeat":
+                count = node.get("count")
+                for i in range(count if _is_uint(count) and count <= 65536 else 0):
+                    walk((node.get("body") or {}).get("nodes"), f"{path}{node.get('id')}[{i}]/")
+            elif node.get("op") == "nn.dropout" and (node.get("attrs") or {}).get("p", 0.5) > 0:
+                out.append(f"{path}{node.get('id')}")
+
+    walk(graph.get("nodes"), "")
+    return out
+
+
+def trainable_params(graph: dict[str, Any]) -> list[str]:
+    """Trainable params in declaration order (training.md §1.1): `trainable` true (the default) and
+    not used as a batch_norm running statistic."""
+    stats = {name for _, op, role, name in graph_param_uses(graph) if op == "nn.batch_norm" and role in RUNNING_STATS}
+    return [p["name"] for p in graph["params"] if p.get("trainable", True) and p["name"] not in stats]
+
+
+def validate_training_case(json_path: str, graph: dict[str, Any]) -> list[str]:
+    """Checks a training-mode model case (schema version 2, docs/testing-strategy.md §3.10) against
+    the schema, the model's graph and its safetensors file. Returns problems."""
+    sidecar, text = read_sidecar(json_path)
+    if sidecar is None:
+        return [text or f"{json_path}: cannot read"]
+    if not isinstance(sidecar, dict):
+        return [f"{json_path}: sidecar is not a JSON object"]
+    mode = sidecar.get("mode")
+    want = training_sidecar_keys(mode)
+    if tuple(sidecar.keys()) != want:
+        return [f"{json_path}: keys {list(sidecar.keys())} differ from schema 2 for mode {mode!r} {list(want)}"]
+    problems: list[str] = []
+    if sidecar["schema_version"] != TRAINING_SCHEMA_VERSION:
+        problems.append(f"{json_path}: schema_version {sidecar['schema_version']!r} is not {TRAINING_SCHEMA_VERSION}")
+    if text != canonical_json(sidecar):
+        problems.append(f"{json_path}: not in canonical form (rerun the generator)")
+    stem = os.path.splitext(os.path.basename(json_path))[0]
+    if sidecar["case"] != stem:
+        problems.append(f"{json_path}: case {sidecar['case']!r} does not match the file name")
+    if sidecar["model"] != os.path.basename(os.path.dirname(json_path)):
+        problems.append(f"{json_path}: model {sidecar['model']!r} does not match the directory name")
+    if mode not in GRAD_MODES:
+        problems.append(f"{json_path}: mode {mode!r} is not one of {list(GRAD_MODES)}")
+    if sidecar["compute_dtype"] != "f32":
+        problems.append(f"{json_path}: compute_dtype must be f32 (gradients and training mode are f32 only in M2)")
+    if mode == "training":
+        t = sidecar["training"]
+        if not (isinstance(t, dict) and list(t) == ["seed", "step"] and all(_is_uint(v) and v < 1 << 64 for v in t.values())):
+            problems.append(f"{json_path}: training must be {{\"seed\", \"step\"}}, both u64")
+    problems += tolerance_problems(json_path, sidecar["tolerance"])
+    problems += tolerance_problems(json_path, sidecar["gradient_tolerance"])
+    lists = {
+        "inputs": _named_entries(sidecar["inputs"]),
+        "outputs": _named_entries(sidecar["outputs"]),
+        "running_stats": _named_entries(sidecar.get("running_stats", []), ("param",)),
+        "masks": _named_entries(sidecar.get("masks", []), ("node",)),
+        "upstream": _named_entries(sidecar["upstream"], ("output",)),
+        "gradients": _named_entries(sidecar["gradients"], ("param",)),
+    }
+    bad = [k for k, v in lists.items() if v is None]
+    if bad:
+        return problems + [f"{json_path}: malformed {', '.join(bad)} (entries are {{\"name\", …, \"dtype\", \"shape\"}})"]
+    ins, outs = lists["inputs"], lists["outputs"]
+    assert all(v is not None for v in lists.values())  # checked just above
+    for role, key in (("inputs", "inputs"), ("outputs", "outputs")):
+        names, want_names = [e["name"] for e in lists[role]], [e["name"] for e in graph[key]]
+        if names != want_names:
+            problems.append(f"{json_path}: {role} {names} differ from the graph's {key} {want_names}")
+    for e in ins + outs:
+        if e["dtype"] in ("f16", "bf16"):
+            problems.append(f"{json_path}: tensor {e['name']!r} is {e['dtype']}; training fixtures are f32")
+    declared = {p["name"]: p["shape"] for p in graph["params"]}
+    # Running statistics: those of every batch_norm node in document order, mean before var.
+    uses = graph_param_uses(graph)
+    # The order is the order the nodes run in (runtime.md §3.3), which the runtime test checks.
+    want_stats = [name for _, op, role, name in uses if op == "nn.batch_norm" and role in RUNNING_STATS] if mode == "training" else []
+    if sorted((r["name"], r["param"]) for r in lists["running_stats"]) != sorted(("new/" + p, p) for p in want_stats):
+        problems.append(f"{json_path}: running_stats must be new/<param> of every running statistic {want_stats}")
+    for r in lists["running_stats"]:
+        if r["dtype"] != "f32" or r["shape"] != declared.get(r["param"]):
+            problems.append(f"{json_path}: running statistic {r['name']!r} must be f32 with its param's shape")
+    # Masks: one bool mask per dropout node path with p > 0.
+    want_masks = graph_dropouts(graph) if mode == "training" else []
+    if [(m["name"], m["node"]) for m in lists["masks"]] != [("mask/" + p, p) for p in want_masks]:
+        problems.append(f"{json_path}: masks must be mask/<node path> of {want_masks}, in order")
+    for m in lists["masks"]:
+        if m["dtype"] != "bool":
+            problems.append(f"{json_path}: mask {m['name']!r} must be bool")
+    # Upstream: one per float graph output, named grad/<output>, with its shape.
+    floats = [o for o in outs if o["dtype"] == "f32"]
+    if [(u["name"], u["output"], u["shape"]) for u in lists["upstream"]] != [("grad/" + o["name"], o["name"], o["shape"]) for o in floats]:
+        problems.append(f"{json_path}: upstream must be grad/<output> for every float output, with its shape")
+    # Gradients: trainable params only, in declaration order, with their shapes.
+    trainable = trainable_params(graph)
+    grads = [(g["param"], g["name"]) for g in lists["gradients"]]
+    if any(p not in trainable or n != "grad/" + p for p, n in grads) or [p for p, _ in grads] != [p for p in trainable if p in dict(grads)]:
+        problems.append(f"{json_path}: gradients must be grad/<param> of trainable params {trainable}, in declaration order")
+    for g in lists["gradients"]:
+        if g["dtype"] != "f32" or g["shape"] != declared.get(g["param"]):
+            problems.append(f"{json_path}: gradient {g['name']!r} must be f32 with its param's shape")
+    st_path = os.path.splitext(json_path)[0] + ".safetensors"
+    try:
+        header = read_safetensors_header(st_path)
+    except (OSError, FixtureError) as e:
+        return problems + [str(e)]
+    plain = {role: [{"name": e["name"], "dtype": e["dtype"], "shape": e["shape"]} for e in entries]
+             for role, entries in lists.items()}
+    problems += entry_problems(json_path, st_path, plain, header,
+                               ("inputs", "outputs", "running_stats", "masks", "upstream", "gradients"))
+    return problems + subnormal_problems(st_path, header)
+
+
+def validate_training_dir(model_dir: str) -> list[str]:
+    """Checks one `training/<model>/` directory: graph, weights (as in §3.5) and every case."""
+    if not os.path.isfile(os.path.join(model_dir, MODEL_GRAPH)):
+        return [f"{model_dir}: no {MODEL_GRAPH}"]
+    graph, problems = read_model_graph(model_dir)
+    if graph is None:
+        return problems
+    problems += validate_model_weights(model_dir, graph)
+    names = sorted(os.listdir(model_dir))
+    cases = 0
+    for name in names:
+        path = os.path.join(model_dir, name)
+        stem, ext = os.path.splitext(name)
+        if name in (MODEL_GRAPH, MODEL_WEIGHTS):
+            continue
+        if os.path.isdir(path) or ext not in (".json", ".safetensors") or "." in stem:
+            problems.append(f"{path}: unexpected file in a training model directory")
+        elif ext == ".json":
+            cases += 1
+            problems += validate_training_case(path, graph)
+        elif stem + ".json" not in names:
+            problems.append(f"{path}: no JSON sidecar")
+    if cases == 0:
+        problems.append(f"{model_dir}: no cases")
+    return problems
