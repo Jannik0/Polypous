@@ -30,6 +30,9 @@ detail; this register is the numbered list behind them. How findings are handled
   2026-11-23, an update to the full report of 2026-11-21 on every M0 and M1 hand-off); where a row has none, they are still to be added.
   "Merged" means merged to the upstream `main`; Polypous gets it only with the next Burn upgrade.
   The agent's runs were on Windows on the reference machine; it tested nothing on Linux or lavapipe.
+- **On GitHub, findings are named by ID only.** This file links upstream, but commits, PRs, issues and
+  comments never do: no upstream links or `owner/repo#N` references (CLAUDE.md, "Nothing outside
+  Polypous on GitHub"). A PR that updates this file says "M1-13: fix PR open upstream", not the link.
 
 ## Burn, CubeCL and cubek
 

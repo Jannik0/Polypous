@@ -66,5 +66,60 @@ class CheckPrText(unittest.TestCase):
         self.assertTrue(any("must end with" in e for e in cpt.check(TITLE, body)))
 
 
+    def test_own_links_and_references_are_fine(self) -> None:
+        body = (
+            "Closes #77. See https://github.com/Jannik0/Polypous/pull/96, "
+            "https://github.com/jannik0/polypous/issues/64#issuecomment-1 and "
+            "Jannik0/Polypous#64 (register IDs M1-13, M2-12). Asked @Jannik0.\n"
+            "Owner address: 38440534+Jannik0@users.noreply.github.com\n\n"
+            f"{FOOTER}"
+        )
+        self.assertEqual(cpt.check(TITLE, body), [])
+
+    def test_outside_links(self) -> None:
+        for text in (
+            "fix [cubek#1257](https://github.com/tracel-ai/cubek/pull/1257)",
+            "see https://github.com/tracel-ai/burn/issues/6448",
+            "the fork https://github.com/Jannik0/burn/tree/x",
+            "look-alike https://github.com/Jannik0/Polypous-x/pull/1",
+            "Fixes http://example.com/a",
+            "docs at www.example.com",
+            "a second [Claude Code](https://claude.com/claude-code) link in the text",
+        ):
+            with self.subTest(text=text):
+                errors = cpt.check(TITLE, f"{text}\n\n{FOOTER}")
+                self.assertTrue(any("link outside Polypous" in e for e in errors), errors)
+
+    def test_outside_references(self) -> None:
+        for text in (
+            "fixes tracel-ai/burn#6448",
+            "see cubecl#2271",
+            "Fix burn#6481.",
+            "pinned actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "Jannik0/burn#3",
+        ):
+            with self.subTest(text=text):
+                errors = cpt.check(TITLE, f"{text}\n\n{FOOTER}")
+                self.assertTrue(any("reference outside Polypous" in e for e in errors), errors)
+
+    def test_outside_reference_in_title(self) -> None:
+        errors = cpt.check("backend: work around burn#6448", f"Body.\n\n{FOOTER}")
+        self.assertTrue(any(e.startswith("PR title") for e in errors), errors)
+
+    def test_outside_mentions(self) -> None:
+        for text in ("thanks @laggui", "cc @tracel-ai/maintainers", "`@types/node`"):
+            with self.subTest(text=text):
+                errors = cpt.check(TITLE, f"{text}\n\n{FOOTER}")
+                self.assertTrue(any("mention outside Polypous" in e for e in errors), errors)
+
+    def test_upstream_named_by_register_id_is_fine(self) -> None:
+        body = (
+            "Updates the register: M1-13 (a fix for the pool kernel is open upstream) and M1-14. "
+            "Burn, CubeCL and cubek are named, nothing is linked. `#[ignore = \"gpu\"]`, "
+            "item #3, issues #64 and #77.\n\n"
+            f"{FOOTER}"
+        )
+        self.assertEqual(cpt.check(TITLE, body), [])
+
 if __name__ == "__main__":
     unittest.main()
