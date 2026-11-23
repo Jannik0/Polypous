@@ -141,3 +141,48 @@ fn dropout_is_the_identity_and_checks_p() {
         Err(TensorError::UnsupportedOperation { .. })
     ));
 }
+
+#[test]
+fn dropout_training_scales_kept_elements_and_checks_its_arguments() {
+    let x = || floats(&[2, 2], &[1.5, -3.0, f32::INFINITY, 0.1]);
+    let keep = || {
+        ints(DType::I64, &[2, 2], &[1, 0, 0, 1])
+            .cast(DType::Bool)
+            .unwrap()
+    };
+    // s = 1 / f32(1 - 0.3), and x · s exactly; inf at a dropped element gives NaN.
+    let s = 1.0f32 / 0.7f32;
+    let out = read_f32(x().dropout_training(0.3, keep()).unwrap());
+    assert_eq!(out[0].to_bits(), (1.5f32 * s).to_bits());
+    assert_eq!(out[1].to_bits(), (-0.0f32).to_bits());
+    assert!(out[2].is_nan());
+    assert_eq!(out[3].to_bits(), (0.1f32 * s).to_bits());
+    // The scale is PyTorch's f32 formula, not 1 / (1 - p) rounded once from f64.
+    assert_eq!(dropout_scale(0.3), 1.0f32 / 0.7f32);
+    assert_eq!(dropout_scale(0.5), 2.0);
+    // p = 0: the identity, the mask isn't read.
+    let out = read_f32(x().dropout_training(0.0, keep()).unwrap());
+    assert_eq!(out, [1.5, -3.0, f32::INFINITY, 0.1]);
+    // f16 keeps its dtype.
+    let half = x().cast(DType::F16).unwrap();
+    assert_eq!(
+        half.dropout_training(0.5, keep()).unwrap().dtype(),
+        DType::F16
+    );
+
+    for p in [-0.1, 1.0, f64::NAN] {
+        invalid(x().dropout_training(p, keep()), "dropout");
+    }
+    assert!(matches!(
+        x().dropout_training(0.5, ints(DType::I64, &[2, 2], &[1, 0, 0, 1])),
+        Err(TensorError::DTypeMismatch { op: "dropout", .. })
+    ));
+    assert!(matches!(
+        x().dropout_training(0.5, keep().reshape(&[4]).unwrap()),
+        Err(TensorError::ShapeMismatch { op: "dropout", .. })
+    ));
+    assert!(matches!(
+        ints(DType::I32, &[2, 2], &[1, 2, 3, 4]).dropout_training(0.5, keep()),
+        Err(TensorError::UnsupportedOperation { .. })
+    ));
+}

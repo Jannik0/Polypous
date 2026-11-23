@@ -25,10 +25,10 @@
 //! | `linalg.rs` | `core.matmul` |
 //! | `softmax.rs` | `core.softmax log_softmax` |
 //! | `topk.rs` | `core.top_k` |
-//! | `nn_layers.rs` | `nn.linear embedding dropout`, and the param checks shared by the `nn` ops |
+//! | `nn_layers.rs` | `nn.linear embedding dropout` (both modes), and the param checks shared by the `nn` ops |
 //! | `conv.rs` | `nn.conv1d conv2d`, and the window output size shared with the pools |
 //! | `pool.rs` | `nn.max_pool2d avg_pool2d adaptive_avg_pool2d` |
-//! | `norm.rs` | `nn.batch_norm layer_norm group_norm rms_norm` |
+//! | `norm.rs` | `nn.batch_norm` (both modes) `layer_norm group_norm rms_norm` |
 //! | `activation.rs` | `nn.relu leaky_relu gelu gelu_tanh silu sigmoid softplus mish` |
 //!
 //! Reference tests live in `tests/reference_*.rs`, one test binary per op family, and share the
@@ -64,6 +64,7 @@
 //! | `nn.linear`, `conv1d`, `conv2d`, `max_pool2d`, `avg_pool2d`, `adaptive_avg_pool2d`, `dropout` | The same names: [`linear`](DynTensor::linear), [`conv1d`](DynTensor::conv1d), [`conv2d`](DynTensor::conv2d), [`max_pool2d`](DynTensor::max_pool2d), [`avg_pool2d`](DynTensor::avg_pool2d), [`adaptive_avg_pool2d`](DynTensor::adaptive_avg_pool2d), [`dropout`](DynTensor::dropout) |
 //! | `nn.embedding` | [`DynTensor::embedding`], called on `ids` with the `weight` param |
 //! | `nn.batch_norm`, `layer_norm`, `group_norm`, `rms_norm` | The same names: [`batch_norm`](DynTensor::batch_norm), [`layer_norm`](DynTensor::layer_norm), [`group_norm`](DynTensor::group_norm), [`rms_norm`](DynTensor::rms_norm) |
+//! | `nn.batch_norm`, `nn.dropout` in training mode (graph-ir.md §3.1.10) | [`batch_norm_training`](DynTensor::batch_norm_training), returning `(out, new_running_mean, new_running_var)`; [`dropout_training`](DynTensor::dropout_training), with the caller's `bool` keep mask |
 //! | `nn.relu`, `leaky_relu`, `gelu`, `gelu_tanh`, `silu`, `sigmoid`, `softplus`, `mish` | The same names |
 //!
 //! # Arguments of the shape, indexing and creation ops
@@ -258,9 +259,48 @@
 //!   untracked tensor.
 //! - **Non-finite inputs** (§3.1.11: gradient unspecified): every fix completes the backward pass
 //!   without a panic, and keeps the forward value bit for bit except NaN payloads
-//!   (`tests/autodiff.rs`; for `max`/`min` over every dim, some dims and with `keepdim`, and
-//!   `top_k` as well).
-//! - The `nn` ops follow in #77.
+//!   (`tests/autodiff.rs`; for `max`/`min` over every dim, some dims and with `keepdim`,
+//!   `top_k`, the fixed activations, `max_pool2d` with NaN, `±inf` and all-padding windows, and
+//!   both training modes as well).
+//! - **`nn` activations at their kinks and in their tails** (#77): `relu`, `leaky_relu`,
+//!   `sigmoid`, `silu` and `softplus` set PyTorch's derivative on their tracked path
+//!   (`activation.rs`). Their M1 forms are selections and compositions whose Burn gradient
+//!   differs (not a Burn bug: the derivatives of the compositions): `relu`'s `mask_fill` and
+//!   `leaky_relu`'s `mask_where` pass `g` at `±0` (`nn.relu/zero_f32`: `9.520e-1` for `0`;
+//!   `nn.leaky_relu/zero_f32`: `9.911e-1` for `9.911e-3`, `zero_slope_0_25_f32`: `9.129e-1` for
+//!   `2.282e-1`); `softplus`'s `max(z, 0)` term passes `g` at `β·x = 0` (`nn.softplus/zero_f32`:
+//!   `9.294e-1` for `4.647e-1`, `zero_beta2_f32`: `7.178e-1` for `3.589e-1`); and the derivative
+//!   of `1 / (1 + exp(-x))` squares `1 + exp(-x)`, which overflows below `x ≈ -44`
+//!   (`nn.sigmoid/tail_f32`: `-0` for `-4.753e-38`; `nn.silu/tail_f32`: `1.703e-22` for
+//!   `-8.342e-21`). The same on both devices.
+//! - **`batch_norm`'s running statistics** never get a gradient (§3.3): inference mode reads
+//!   tracked ones as constants (before, they got Burn's gradient: every inference case of
+//!   `nn.batch_norm` failed the harness's "no gradient" check), and training mode doesn't read
+//!   them for `out` and returns the new ones without autodiff context.
+//! - **Training modes** (§3.1.10): [`DynTensor::batch_norm_training`] differentiates through
+//!   the batch mean and the biased variance with Burn's autodiff; [`DynTensor::dropout_training`]
+//!   multiplies by a constant `m` built from the caller's keep mask, so output and gradient are
+//!   exact for a given mask. The backend draws no random numbers: the mask comes from
+//!   `polypous_ir::rng` on the host (§3.1.12, ADR-0014).
+//! - **`nn` ops checked, no fix needed** (their fixtures on `flex` and lavapipe, and
+//!   `tests/autodiff.rs`'s formula checks): `linear` (through `matmul`), `embedding` (Burn's
+//!   `select` backward adds up repeated ids; the ids get none), `conv1d`/`conv2d` (`groups`,
+//!   `stride`, `padding`, `dilation`, depthwise; `conv1d` is Burn's own, not built on `conv2d`),
+//!   `avg_pool2d` (with and without `count_include_pad`), `adaptive_avg_pool2d` (uneven,
+//!   overlapping bins), `layer_norm`, `group_norm`, `rms_norm` (also without `weight`, and
+//!   through `eps`), `gelu`, `gelu_tanh` and `mish` (also its own `tanh`, and `softplus`'s own
+//!   `log1p`, in their tails: `nn.mish/tail_f32`, `nn.softplus/tail_f32`). `max_pool2d`: Burn's
+//!   `max_pool2d_with_indices` keeps the first maximum in row-major window order (a strict `>`,
+//!   CubeCL `cubek-pool` `MaxPoolWithIndicesStrategy`; `flex` the same) and its backward adds up
+//!   overlapping windows, as §3.1.11 asks. The M1 code-tensor `mask_fill` (above) sets `-inf` and
+//!   NaN after the pool, so it also gives an all-padding window no gradient (without it, lavapipe
+//!   sent that window's gradient to an element outside it: `1` for `0`, with the forward
+//!   `-3.4028235e38`); the code tensor is built from a `bool` mask and is untracked.
+//! - **`max_pool2d`'s tracked forward** (M2-12): Burn's autodiff runs another kernel
+//!   (`max_pool2d_with_indices`), and on lavapipe the two returned different zeros at a `0`/`-0`
+//!   tie (`[0, -0]`: `+0` tracked, `-0` untracked; SPIR-V `FMax` may return either). The tracked
+//!   path keeps the untracked pool's value bit for bit and takes only the gradient from the
+//!   indexed pool (`pool.rs`, `with_pool_gradient`). Which zero a tie gives is backend-defined.
 //!
 //! # Semantics (graph-ir.md §3.1)
 //!

@@ -1,7 +1,8 @@
 //! Tests of the autodiff API ([`DynTensor::require_grad`], [`DynTensor::backward`],
 //! [`Gradients`], `detach`, `without_autodiff`): every misuse is an error, gradients have the
-//! leaf's dtype, shape and device, the ops that fix Burn's gradients (graph-ir.md §3.1.11)
-//! never panic on non-finite inputs, and `argmax`/`argmin` record nothing. The CPU tests use `flex`; the GPU test is
+//! leaf's dtype, shape and device, the ops that fix Burn's gradients (graph-ir.md §3.1.11) and
+//! the training modes never panic on non-finite inputs, the gradients the fixtures don't cover
+//! match their formulas (`core` and `nn` ops), and `argmax`/`argmin` record nothing. The CPU tests use `flex`; the GPU test is
 //! `#[ignore = "gpu"]` and runs on every GPU device (lavapipe only with
 //! `POLYPOUS_TEST_SOFTWARE_VULKAN=1`).
 //!
@@ -354,6 +355,77 @@ fn fixed_ops_survive_non_finite_inputs(device: DeviceId) -> Vec<String> {
         };
         check(name, run());
     }
+    // The `nn` ops with a gradient fix or a training mode (#77), on rank-4 `[1, 2, 1, 5]` and
+    // `[2, 5]` views of `a`: activations, `max_pool2d` (NaN, `±inf` and padding in its windows),
+    // `dropout` in training mode (NaN and `inf` at dropped elements) and `batch_norm` in training
+    // mode (NaN and `inf` in a channel), whose running statistics must match too.
+    let keep: Vec<i64> = (0..10).map(|i| i64::from(i % 3 != 0)).collect();
+    type Nn = fn(DynTensor, DeviceId, &[i64]) -> Result<Vec<DynTensor>>;
+    let nn_ops: [(&str, Nn); 9] = [
+        ("relu", |x, _, _| Ok(vec![x.relu()?])),
+        ("leaky_relu", |x, _, _| Ok(vec![x.leaky_relu(0.25)?])),
+        ("sigmoid", |x, _, _| Ok(vec![x.sigmoid()?])),
+        ("silu", |x, _, _| Ok(vec![x.silu()?])),
+        ("softplus", |x, _, _| Ok(vec![x.softplus(2.0, 1.0)?])),
+        ("max_pool2d", |x, _, _| {
+            Ok(vec![x.reshape(&[1, 2, 1, 5])?.max_pool2d(
+                [1, 2],
+                [1, 1],
+                [0, 1],
+                [1, 1],
+            )?])
+        }),
+        ("max_pool2d, all-padding windows", |x, _, _| {
+            Ok(vec![x.reshape(&[1, 1, 2, 5])?.max_pool2d(
+                [2, 1],
+                [1, 1],
+                [1, 0],
+                [3, 1],
+            )?])
+        }),
+        ("dropout_training", |x, device, keep| {
+            let mask = i64s(keep, &[2, 5], device).cast(DType::Bool)?;
+            Ok(vec![x.dropout_training(0.3, mask)?])
+        }),
+        ("batch_norm_training", |x, device, _| {
+            let stats = f32s(&[0.5, 2.0], &[2], device);
+            let (out, mean, var) = x.reshape(&[1, 2, 5])?.batch_norm_training(
+                stats.clone(),
+                stats.clone(),
+                Some(stats.clone()),
+                Some(stats),
+                1e-5,
+                0.1,
+            )?;
+            Ok(vec![out, mean, var])
+        }),
+    ];
+    for (name, op) in nn_ops {
+        let run = || -> std::result::Result<(), String> {
+            let x = f32s(&a, &[2, 5], device);
+            let plain = op(x.clone(), device, &keep).map_err(|e| e.to_string())?;
+            let leaf = x.require_grad().unwrap();
+            let outs = op(leaf.clone(), device, &keep).map_err(|e| e.to_string())?;
+            for (p, o) in plain.iter().zip(&outs) {
+                same(p, o).map_err(|e| format!("forward: {e}"))?;
+            }
+            let out = outs.into_iter().next().ok_or("no output")?;
+            if !out.is_tracked() {
+                return Err("the result is not tracked".into());
+            }
+            let grads = total(out).backward().map_err(|e| e.to_string())?;
+            let grad = grads
+                .get(&leaf)
+                .map_err(|e| e.to_string())?
+                .ok_or("no gradient")?;
+            if grad.shape() != [2, 5] {
+                return Err(format!("gradient shape {:?}", grad.shape()));
+            }
+            grad.to_data().map_err(|e| e.to_string())?;
+            Ok(())
+        };
+        check(name, run());
+    }
     failures
 }
 
@@ -545,8 +617,209 @@ fn gradients_match_their_formulas(device: DeviceId) -> Vec<String> {
     failures
 }
 
-/// Tracked `f16` inputs of the reductions, `matmul`, `softmax`, `log_softmax`, `cumsum` and
-/// `top_k` (gradients are `f32` only in M2, graph-ir.md §3.1.11, but a graph that casts may
+/// `Err` unless every element of `got` is within `rtol` of `want` (no `atol`: for gradients far
+/// below `1e-5`), with `0` matching `±0` exactly.
+fn close_rel(name: &str, want: &[f64], got: &[f32], rtol: f64) -> std::result::Result<(), String> {
+    if want.len() != got.len() {
+        return Err(format!(
+            "{name}: {} elements, expected {}",
+            got.len(),
+            want.len()
+        ));
+    }
+    for (i, (&w, &g)) in want.iter().zip(got).enumerate() {
+        if (f64::from(g) - w).abs() > rtol * w.abs() {
+            return Err(format!("{name}[{i}]: expected {w:e}, got {g:e}"));
+        }
+    }
+    Ok(())
+}
+
+/// The `nn` gradients and training modes the fixtures don't cover (graph-ir.md §3.1.11, §3.3),
+/// against their formulas on the host:
+///
+/// - the kinks: `relu'(±0) = 0`, `leaky_relu'(±0) = negative_slope`, `softplus'` at `β·x = 0`
+///   (`1/2`), just below and above `threshold` (`σ(β·x)` and `1`);
+/// - the tails of `sigmoid` and `silu` at `x = -80` and `-60` (gradients near `1e-35` and
+///   `1e-24`, relative tolerance `1e-3` without `atol`);
+/// - `max_pool2d` with windows that lie entirely in the padding: output `-inf`, no gradient; and
+///   at `0`/`-0` ties: the tracked forward equals the untracked one bit for bit, and `g` goes to
+///   the first of the tied elements;
+/// - `dropout` in training mode: kept elements are `x · s` and get `g · s` exactly (bit for bit,
+///   with `s` from the spec's `f32` formula), dropped ones `0` (NaN for NaN and `±inf` inputs);
+///   `p = 0` is the identity.
+fn nn_gradients_match_their_formulas(device: DeviceId) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut check = |result: std::result::Result<(), String>| {
+        if let Err(message) = result {
+            failures.push(format!("{message} on {device}"));
+        }
+    };
+    let x = [-0.0f32, 0.0, -1.5, 2.0, 0.25, -0.125];
+    let g = [0.75f32, -1.25, 0.5, 2.0, -0.5, 1.5];
+    let gradient = |op: &dyn Fn(DynTensor) -> Result<DynTensor>, x: &[f32], g: &[f32]| {
+        let leaf = f32s(x, &[x.len() as u64], device).require_grad().unwrap();
+        let out = op(leaf.clone()).unwrap();
+        let [got]: [Vec<f32>; 1] = grads_of(out, g, &[&leaf]).try_into().unwrap();
+        got
+    };
+    let relu = |v: f32| if v > 0.0 { 1.0 } else { 0.0 };
+    let want: Vec<f64> = x
+        .iter()
+        .zip(&g)
+        .map(|(&v, &g)| f64::from(g) * relu(v))
+        .collect();
+    check(close("relu at ±0", &want, &gradient(&|t| t.relu(), &x, &g)));
+    let want: Vec<f64> = x
+        .iter()
+        .zip(&g)
+        .map(|(&v, &g)| f64::from(g) * if v > 0.0 { 1.0 } else { 0.25 })
+        .collect();
+    check(close(
+        "leaky_relu at ±0",
+        &want,
+        &gradient(&|t| t.leaky_relu(0.25), &x, &g),
+    ));
+    // softplus with beta 2, threshold 1: z = 2x is 0, 0, -3, 4 (> 1), 0.5, -0.25.
+    let sp: Vec<f64> = x
+        .iter()
+        .zip(&g)
+        .map(|(&v, &g)| {
+            let z = 2.0 * f64::from(v);
+            let d = if z > 1.0 {
+                1.0
+            } else {
+                1.0 / (1.0 + (-z).exp())
+            };
+            f64::from(g) * d
+        })
+        .collect();
+    check(close(
+        "softplus at 0 and around the threshold",
+        &sp,
+        &gradient(&|t| t.softplus(2.0, 1.0), &x, &g),
+    ));
+    // Tails: sigmoid'(x) = s(1 - s), silu'(x) = s(1 + x(1 - s)).
+    let tail = [-80.0f32, -60.0, -30.0];
+    let ones = [1.0f32; 3];
+    let sig = |v: f64| 1.0 / (1.0 + (-v).exp());
+    let want: Vec<f64> = tail
+        .iter()
+        .map(|&v| {
+            let s = sig(f64::from(v));
+            s * (1.0 - s)
+        })
+        .collect();
+    check(close_rel(
+        "sigmoid tail",
+        &want,
+        &gradient(&|t| t.sigmoid(), &tail, &ones),
+        1e-3,
+    ));
+    let want: Vec<f64> = tail
+        .iter()
+        .map(|&v| {
+            let (v, s) = (f64::from(v), sig(f64::from(v)));
+            s * (1.0 + v * (1.0 - s))
+        })
+        .collect();
+    check(close_rel(
+        "silu tail",
+        &want,
+        &gradient(&|t| t.silu(), &tail, &ones),
+        1e-3,
+    ));
+
+    // max_pool2d, H = 2, kh = 2, p = 1, dl = 3: each window reads rows -1 and 2, both padding.
+    let xs = values(6, 11);
+    let leaf = f32s(&xs, &[1, 1, 2, 3], device).require_grad().unwrap();
+    let out = leaf
+        .clone()
+        .max_pool2d([2, 1], [1, 1], [1, 0], [3, 1])
+        .unwrap();
+    let forward = read(&out);
+    if forward != [f32::NEG_INFINITY; 3] {
+        check(Err(format!(
+            "max_pool2d all-padding windows: forward {forward:?}"
+        )));
+    }
+    let [got]: [Vec<f32>; 1] = grads_of(out, &[1.0, -2.0, 3.0], &[&leaf])
+        .try_into()
+        .unwrap();
+    check(close("max_pool2d all-padding windows", &[0.0; 6], &got));
+
+    // max_pool2d at 0/-0 ties: the tracked forward is the untracked one bit for bit (lavapipe's
+    // two pool kernels returned different zeros), and g goes to the first of the tied elements.
+    let ties = [0.0f32, -0.0, -0.0, 0.0, 1.0, 1.0, -0.0, -0.0];
+    let run = || -> std::result::Result<(), String> {
+        let x = f32s(&ties, &[1, 1, 2, 4], device);
+        let pool = |t: DynTensor| t.max_pool2d([1, 2], [1, 2], [0, 0], [1, 1]).unwrap();
+        let plain = pool(x.clone());
+        let leaf = x.require_grad().unwrap();
+        let out = pool(leaf.clone());
+        same(&plain, &out).map_err(|e| format!("forward: {e}"))?;
+        let [got]: [Vec<f32>; 1] = grads_of(out, &[1.0, 2.0, 3.0, 4.0], &[&leaf])
+            .try_into()
+            .unwrap();
+        let want = [1.0, 0.0, 2.0, 0.0, 3.0, 0.0, 4.0, 0.0];
+        if got != want {
+            return Err(format!("gradient {got:?}, expected {want:?}"));
+        }
+        Ok(())
+    };
+    check(run().map_err(|e| format!("max_pool2d at 0/-0 ties: {e}")));
+
+    // dropout in training mode, p = 0.3: s = 1 / f32(1 - 0.3).
+    let p = 0.3f64;
+    #[allow(clippy::cast_possible_truncation)]
+    let s = 1.0f32 / ((1.0 - p) as f32);
+    let (inf, nan) = (f32::INFINITY, f32::NAN);
+    let xs = [1.5f32, -0.3, 7.0, inf, nan, -inf, 0.1, 3.3e-3, -2.25, 1e30];
+    let keep = [1i64, 1, 0, 0, 0, 1, 1, 0, 1, 1];
+    let gs = values(10, 12);
+    let run = || -> std::result::Result<(), String> {
+        let mask = i64s(&keep, &[2, 5], device).cast(DType::Bool).unwrap();
+        let leaf = f32s(&xs, &[2, 5], device).require_grad().unwrap();
+        let out = leaf.clone().dropout_training(p, mask.clone()).unwrap();
+        let forward = read(&out);
+        let [got]: [Vec<f32>; 1] = grads_of(out, &gs, &[&leaf]).try_into().unwrap();
+        for i in 0..10 {
+            let (want_out, want_grad) = if keep[i] == 1 {
+                (xs[i] * s, gs[i] * s)
+            } else {
+                (xs[i] * 0.0, gs[i] * 0.0)
+            };
+            let same_bits =
+                |a: f32, b: f32| a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan());
+            if !same_bits(forward[i], want_out) {
+                return Err(format!(
+                    "dropout out[{i}]: expected {want_out:e}, got {:e}",
+                    forward[i]
+                ));
+            }
+            if !same_bits(got[i], want_grad) {
+                return Err(format!(
+                    "dropout grad[{i}]: expected {want_grad:e}, got {:e}",
+                    got[i]
+                ));
+            }
+        }
+        // p = 0: the identity, whatever the mask.
+        let leaf = f32s(&xs, &[2, 5], device).require_grad().unwrap();
+        let out = leaf.clone().dropout_training(0.0, mask).unwrap();
+        same(&leaf, &out)?;
+        let [got]: [Vec<f32>; 1] = grads_of(out, &gs, &[&leaf]).try_into().unwrap();
+        if got != gs {
+            return Err(format!("dropout p = 0: gradient {got:?}"));
+        }
+        Ok(())
+    };
+    check(run().map_err(|e| format!("dropout_training: {e}")));
+    failures
+}
+
+/// Tracked `f16` inputs of the fixed activations, both training modes, the reductions, `matmul`,
+/// `softmax`, `log_softmax`, `cumsum` and `top_k` (gradients are `f32` only in M2, graph-ir.md §3.1.11, but a graph that casts may
 /// reach them): the backward pass completes, without a panic, with an `f16` gradient of the
 /// leaf's shape.
 fn half_precision_backward_completes(device: DeviceId) -> Vec<String> {
@@ -556,7 +829,24 @@ fn half_precision_backward_completes(device: DeviceId) -> Vec<String> {
         return failures;
     }
     type Unary = fn(DynTensor) -> Result<DynTensor>;
-    let ops: [(&str, Unary); 9] = [
+    let ops: [(&str, Unary); 16] = [
+        ("relu", DynTensor::relu),
+        ("leaky_relu", |x| x.leaky_relu(0.1)),
+        ("sigmoid", DynTensor::sigmoid),
+        ("silu", DynTensor::silu),
+        ("softplus", |x| x.softplus(1.0, 20.0)),
+        ("dropout_training", |x| {
+            let keep = x.clone().greater(x.full_like(Scalar::Float(0.0), None)?)?;
+            x.dropout_training(0.5, keep)
+        }),
+        ("batch_norm_training", |x| {
+            let c = x.clone().sum(Some(&[0]), false)?;
+            let x = x.unsqueeze(2)?;
+            Ok(
+                x.batch_norm_training(c.clone(), c.clone(), Some(c.clone()), Some(c), 1e-5, 0.1)?
+                    .0,
+            )
+        }),
         ("sum", |x| x.sum(Some(&[1]), false)),
         ("mean", |x| x.mean(None, false)),
         ("max", |x| x.max(Some(&[0]), true)),
@@ -649,6 +939,11 @@ fn all(device: DeviceId, other: DeviceId) -> Vec<String> {
         formulas = gradients_match_their_formulas(device);
     }));
     failures.extend(formulas);
+    let mut nn = Vec::new();
+    failures.extend(caught("nn_gradients_match_their_formulas", device, || {
+        nn = nn_gradients_match_their_formulas(device);
+    }));
+    failures.extend(nn);
     let mut half = Vec::new();
     failures.extend(caught("half_precision_backward_completes", device, || {
         half = half_precision_backward_completes(device);
@@ -694,6 +989,12 @@ fn non_differentiable_ops_record_nothing_cpu() {
 #[test]
 fn gradients_match_their_formulas_cpu() {
     let failures = gradients_match_their_formulas(DeviceId::Cpu);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn nn_gradients_match_their_formulas_cpu() {
+    let failures = nn_gradients_match_their_formulas(DeviceId::Cpu);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
