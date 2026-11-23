@@ -170,14 +170,14 @@ upstream state in the [upstream findings register](upstream-findings.md); the ID
     Burn's `Bool::float` gives the default float dtype (`f32`), whatever dtype the mask came from,
     which is how a tracked `f16` `max` hit it during #76 (fixed in Polypous: the tie mask is built
     in the input's dtype). Not reachable from Polypous's ops now.
-- **Found with #77 (proposed M2-12; worked around in `polypous-backend`, `ops/pool.rs`).** Re-check when Burn is updated (ADR-0007):
+- **Found with #77 (M2-12; worked around in `polypous-backend`, `ops/pool.rs`).** Re-check when Burn is updated (ADR-0007):
   - On lavapipe, Burn's `max_pool2d` and the `max_pool2d_with_indices` its autodiff runs return
     different zeros at a `0`/`-0` tie in a window: the window `[0, -0]` gave `-0` untracked and
     `+0` tracked (PyTorch's first-maximum rule gives `+0`). Both kernels take SPIR-V's `FMax`,
     which may return either zero. The tracked `max_pool2d` keeps the untracked pool's value and
     takes only the gradient from the indexed pool, so tracked and untracked forwards agree bit for
-    bit. Which zero `max_pool2d` returns at such a tie is still backend-defined (the spec has no
-    rule for it; the forward fixtures have no such tie).
+    bit. Which zero `max_pool2d` returns at such a tie is backend-defined (graph-ir.md §3.3, owner
+    decision; the forward fixtures have no such tie).
 - **The first open of a Vulkan device still enumerates once inside CubeCL** (M0-7; M0-6 is the race it is left over from), and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
   - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work (M0-9).

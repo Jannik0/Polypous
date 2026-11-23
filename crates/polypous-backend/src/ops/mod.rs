@@ -296,7 +296,7 @@
 //!   NaN after the pool, so it also gives an all-padding window no gradient (without it, lavapipe
 //!   sent that window's gradient to an element outside it: `1` for `0`, with the forward
 //!   `-3.4028235e38`); the code tensor is built from a `bool` mask and is untracked.
-//! - **`max_pool2d`'s tracked forward** (proposed M2-12): Burn's autodiff runs another kernel
+//! - **`max_pool2d`'s tracked forward** (M2-12): Burn's autodiff runs another kernel
 //!   (`max_pool2d_with_indices`), and on lavapipe the two returned different zeros at a `0`/`-0`
 //!   tie (`[0, -0]`: `+0` tracked, `-0` untracked; SPIR-V `FMax` may return either). The tracked
 //!   path keeps the untracked pool's value bit for bit and takes only the gradient from the

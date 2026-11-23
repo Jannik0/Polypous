@@ -989,7 +989,9 @@ provably equal to that literal. Optional params are marked `?`.
   `return_indices` and `divisor_override` are not supported (always PyTorch's defaults).
   `max_pool2d` pads with `-inf`, and a NaN in a window gives NaN. With `dilation` > 1 a window can
   lie entirely in the padding (`H = 2`, `kh = 2`, `p = 1`, `dl = 3` reads rows `-1` and `2`); its
-  result is `-inf`, as in PyTorch.
+  result is `-inf`, as in PyTorch. When a window's maximum is a zero and the window holds both
+  `0` and `-0`, which zero `max_pool2d` returns is backend-defined (PyTorch returns the first in
+  the window's row-major order); the gradient rule of §3.1.11 is unaffected.
 - `adaptive_avg_pool2d`: output cell `i` averages input rows `floor(i*H/oh)` to
   `ceil((i+1)*H/oh) - 1`, as in PyTorch.
 - `dropout` in inference mode is the identity (`out = x`), for every `p`. In training mode
