@@ -339,3 +339,157 @@ fn resume_in_another_process_is_bit_exact() {
     assert_eq!(got["best"], want["best"]);
     assert!(!got["best"].is_null());
 }
+
+/// §5.3: only a checkpoint that §5.1's epoch rule writes has a `keep_best` value. 5 epochs of 4
+/// steps; `every_epochs: 2` writes epoch checkpoints after epochs 1, 3 and 4 (the last), and
+/// `every_steps: 5` writes mid-epoch checkpoints at steps 5, 10 and 15. With seed 4 and SGD at
+/// `lr = 3` the loss diverges, so the best value is epoch 0's, which gets no epoch checkpoint.
+fn best_config() -> TrainingConfig {
+    classification_config(json!({
+        "seed": 4, "epochs": 5, "batch_size": 8,
+        "optimizer": { "kind": "sgd", "lr": 3.0, "momentum": 0.9 },
+        "checkpoint": { "dir": "run", "every_epochs": 2, "every_steps": 5, "keep_last": null,
+                        "keep_best": "train.loss" }
+    }))
+}
+
+fn best_data() -> InMemoryDataset {
+    blobs("train", 32, 6)
+}
+
+fn best_trainer(base: &Path) -> Trainer {
+    trainer(
+        &bn_dropout(4, 6, 3),
+        best_config(),
+        options(base, vec![best_data()], None),
+    )
+}
+
+fn best_resume(path: &Path) -> Trainer {
+    let options = ResumeOptions {
+        datasets: vec![best_data()],
+        clock: Some(ticking()),
+        ..ResumeOptions::default()
+    };
+    Trainer::resume(path, options, &cpu, &CancellationToken::new())
+        .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// `best` of `t` as JSON (metric, value, epoch, step, checkpoint name).
+fn best_of(t: &Trainer) -> String {
+    serde_json::to_string(&t.history().unwrap().1).unwrap()
+}
+
+/// Every checkpoint's `state.json` `best`: null, or naming the epoch checkpoint at its step.
+fn assert_every_best_is_an_epoch_checkpoint(run_dir: &Path) {
+    for entry in std::fs::read_dir(run_dir).unwrap() {
+        let path = entry.unwrap().path();
+        let state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("state.json")).unwrap()).unwrap();
+        let best = &state["best"];
+        if !best.is_null() {
+            let step = best["step"].as_u64().unwrap();
+            assert_eq!(
+                best["checkpoint"].as_str().unwrap(),
+                format!("step-{step:012}"),
+                "{}: best names a checkpoint that isn't the epoch checkpoint of its entry",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn best_counts_only_epoch_checkpoints() {
+    // (a) Uninterrupted.
+    let a = TempDir::new("best-a");
+    let t = best_trainer(a.path());
+    let (outcome, _) = run(&t, &CancellationToken::new());
+    let losses: Vec<f64> = outcome
+        .history
+        .iter()
+        .map(|h| h.metrics.get("train.loss").unwrap())
+        .collect();
+    let min_epoch = (0..losses.len())
+        .min_by(|&i, &j| losses[i].total_cmp(&losses[j]))
+        .unwrap();
+    assert_eq!(
+        min_epoch, 0,
+        "the test needs the best value in epoch 0: {losses:?}"
+    );
+    assert!(
+        a.join("run/step-000000000005").is_dir(),
+        "a mid-epoch checkpoint after epoch 0"
+    );
+    let best = outcome.best.clone().unwrap();
+    // Epoch 1's checkpoint, the best among the epoch checkpoints (epochs 1, 3, 4).
+    assert_eq!((best.epoch, best.step), (1, 8), "{losses:?}");
+    assert!(best.checkpoint.ends_with("step-000000000008"));
+    assert_eq!(best.value.to_bits(), losses[1].to_bits());
+    assert!(losses[1] < losses[3] && losses[1] < losses[4]);
+    assert_every_best_is_an_epoch_checkpoint(&a.join("run"));
+    let expected = best_of(&t);
+
+    // (b) Cancelled mid-epoch at step k = 6: the cancel checkpoint (step 7) carries epoch 0's
+    // history entry but has no value. Resumed from it.
+    let b = TempDir::new("best-b");
+    let t = best_trainer(b.path());
+    run_until(&t, |e| matches!(e, TrainingEvent::Step { step: 6, .. }));
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(b.join("run/step-000000000007/state.json")).unwrap())
+            .unwrap();
+    assert_eq!(state["history"].as_array().unwrap().len(), 1);
+    assert!(state["best"].is_null(), "no checkpoint has a value yet");
+    drop(t);
+    let t = best_resume(&b.join("run/step-000000000007"));
+    run(&t, &CancellationToken::new());
+    assert_eq!(best_of(&t), expected, "(b) mid-epoch");
+    assert_every_best_is_an_epoch_checkpoint(&b.join("run"));
+
+    // (c) Cancelled at the boundary after epoch 0, where no epoch checkpoint is due: the token
+    // is next checked after step k = 4 (§4.3), and the cancel checkpoint (step 5, also an
+    // `every_steps` one) carries epoch 0's entry but has no value. Continued with `run`.
+    let c = TempDir::new("best-c");
+    let t = best_trainer(c.path());
+    let outcome = run_until(&t, |e| {
+        matches!(e, TrainingEvent::EpochFinished { epoch: 0, .. })
+    });
+    assert_eq!(outcome.step, 5);
+    assert!(outcome.best.is_none());
+    run(&t, &CancellationToken::new());
+    assert_eq!(best_of(&t), expected, "(c) undue boundary, run again");
+    assert_every_best_is_an_epoch_checkpoint(&c.join("run"));
+
+    // (c') Cancelled at the boundary after epoch 1, where the epoch checkpoint is due: it is
+    // the cancel checkpoint, and has its value. Continued with `run`.
+    let c2 = TempDir::new("best-c2");
+    let t = best_trainer(c2.path());
+    let outcome = run_until(&t, |e| {
+        matches!(e, TrainingEvent::EpochFinished { epoch: 1, .. })
+    });
+    assert_eq!(outcome.step, 8);
+    assert!(
+        outcome
+            .best
+            .unwrap()
+            .checkpoint
+            .ends_with("step-000000000008")
+    );
+    run(&t, &CancellationToken::new());
+    assert_eq!(best_of(&t), expected, "(c') due boundary, run again");
+
+    // (d) Cancelled at the boundary after epoch 2 (not due either; it stops after step 12),
+    // resumed from the run directory in a new trainer, which judges the earlier checkpoints
+    // from their own state.json.
+    let d = TempDir::new("best-d");
+    let t = best_trainer(d.path());
+    run_until(&t, |e| {
+        matches!(e, TrainingEvent::EpochFinished { epoch: 2, .. })
+    });
+    drop(t);
+    let t = best_resume(&d.join("run"));
+    assert_eq!(t.info().step, 13);
+    run(&t, &CancellationToken::new());
+    assert_eq!(best_of(&t), expected, "(d) boundary, resumed");
+    assert_every_best_is_an_epoch_checkpoint(&d.join("run"));
+}

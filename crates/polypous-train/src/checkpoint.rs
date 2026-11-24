@@ -395,12 +395,12 @@ impl State {
                     && entry.is_some_and(|h| h.step == best.step)
                     && value.is_some_and(|v| v.to_bits() == best.value.to_bits())
                     && parse_checkpoint_name(&best.checkpoint)
-                        .is_some_and(|n| n >= best.step && n <= self.step);
+                        .is_some_and(|n| n == best.step && n <= self.step);
                 if !ok {
                     return bad(
                         "/best",
-                        "`best` doesn't name a history entry of `keep_best` and a checkpoint \
-                         written after it"
+                        "`best` doesn't name a history entry of `keep_best` and the epoch \
+                         checkpoint written at its step"
                             .to_owned(),
                     );
                 }
@@ -951,37 +951,68 @@ pub(crate) fn load(dir: &Path) -> Result<Loaded, TrainError> {
     })
 }
 
-/// The value of `metric` in the last `history` entry of checkpoint `dir` (§5.3), with that
-/// entry's epoch and step, or `None` if it has none or its `state.json` can't be read (logged at
-/// `warn`).
+/// The `keep_best` value of a checkpoint with these config and counters (§5.3), with the epoch
+/// and step of the history entry it comes from.
+///
+/// Only a checkpoint that §5.1's first rule writes, after an `epoch_finished`, has a value: its
+/// state is right after epoch `e` (`epoch = e + 1`, `batch = 0`, `step` the step of `history`'s
+/// last entry, which is epoch `e`'s), and that epoch's checkpoint was due: `(e + 1)` is a multiple
+/// of `every_epochs`, a multiple of `every_steps` was reached by the epoch's last step, or `e` is
+/// the last epoch. A checkpoint written in the middle of an epoch (`every_steps`) or on
+/// cancellation has none, even if its last history entry is that of the previous epoch, because
+/// its weights are not the ones that entry measured. A cancel checkpoint at an epoch boundary
+/// where the epoch checkpoint was due holds exactly that checkpoint's state.
+pub(crate) fn epoch_value(
+    config: &TrainingConfig,
+    history: &[HistoryEntry],
+    step: u64,
+    epoch: u64,
+    batch: u64,
+) -> Option<(f64, u64, u64)> {
+    let checkpoint = config.checkpoint.as_ref()?;
+    let metric = checkpoint.keep_best.as_deref()?;
+    let h = history.last()?;
+    if batch != 0 || step != h.step || h.epoch.checked_add(1) != Some(epoch) {
+        return None;
+    }
+    let e = h.epoch;
+    let due = checkpoint
+        .every_epochs
+        .is_some_and(|n| (e + 1).is_multiple_of(n))
+        || checkpoint
+            .every_steps
+            .is_some_and(|n| step.is_multiple_of(n))
+        || e + 1 == config.epochs;
+    if !due {
+        return None;
+    }
+    Some((h.metrics.get(metric)?, h.epoch, h.step))
+}
+
+/// The `keep_best` value of checkpoint `dir` ([`epoch_value`]), judged from its own
+/// `state.json` (config and counters), or `None` if it has none or its `state.json` can't be
+/// read or isn't valid (logged at `warn`). `metric` must be the trainer's `keep_best`.
 pub(crate) fn last_value(dir: &Path, metric: &str) -> Option<(f64, u64, u64)> {
     let path = dir.join(STATE_FILE);
-    let text = match read_bounded(&path, MAX_STATE_BYTES, "state.json") {
-        Ok(t) => t,
+    let state = read_bounded(&path, MAX_STATE_BYTES, "state.json").and_then(|t| State::parse(&t));
+    let state = match state {
+        Ok(s) => s,
         Err(e) => {
             tracing::warn!(path = %path.display(), error = %e, "can't read a checkpoint's state");
             return None;
         }
     };
-    let value = json::parse(&text).ok()?;
-    let Json::Obj(members) = value else {
+    let keep_best = state.config.checkpoint.as_ref()?.keep_best.as_deref()?;
+    if keep_best != metric {
         return None;
-    };
-    let history = members.iter().find(|(k, _)| k == "history")?;
-    let Json::Arr(items) = &history.1 else {
-        return None;
-    };
-    let Json::Obj(entry) = items.last()? else {
-        return None;
-    };
-    let get = |key: &str| entry.iter().find(|(k, _)| k == key).map(|(_, v)| v);
-    let epoch = json::as_u64(get("epoch")?, "", "epoch").ok()?;
-    let step = json::as_u64(get("step")?, "", "step").ok()?;
-    let Json::Obj(metrics) = get("metrics")? else {
-        return None;
-    };
-    let (_, v) = metrics.iter().find(|(k, _)| k == metric)?;
-    Some((as_f64_or_special(v, "", metric).ok()?, epoch, step))
+    }
+    epoch_value(
+        &state.config,
+        &state.history,
+        state.step,
+        state.epoch,
+        state.batch,
+    )
 }
 
 /// Whether `candidate` is better than `current` for `metric` (§5.3): larger for `accuracy`,
@@ -1029,6 +1060,66 @@ mod tests {
         assert!(is_tmp_name(".tmp-step-000000000844"));
         assert!(!is_tmp_name(".tmp-step-5"));
         assert!(!is_tmp_name("tmp-step-000000000844"));
+    }
+
+    #[test]
+    fn only_epoch_checkpoints_have_a_value() {
+        use crate::events::Metrics;
+        let config = |every_epochs: Option<u64>, every_steps: Option<u64>| {
+            let mut c = crate::training_config::TrainingConfig::from_json(
+                r#"{"format": "polypous.training", "format_version": 1, "epochs": 5,
+                    "batch_size": 8, "data": {"train": {"kind": "tensors", "name": "t"}},
+                    "inputs": {"x": "x"},
+                    "loss": {"kind": "mse", "prediction": "y", "target": "y"},
+                    "optimizer": {"kind": "sgd"},
+                    "checkpoint": {"dir": "r", "keep_best": "train.loss"}}"#,
+            )
+            .unwrap();
+            let k = c.checkpoint.as_mut().unwrap();
+            k.every_epochs = every_epochs;
+            k.every_steps = every_steps;
+            c
+        };
+        // 4 steps per epoch; epochs 0 and 1 finished (steps 4 and 8).
+        let history: Vec<HistoryEntry> = (0..2)
+            .map(|e| HistoryEntry {
+                epoch: e,
+                step: 4 * (e + 1),
+                metrics: Metrics(vec![("train.loss".into(), 0.5 + e as f64)]),
+            })
+            .collect();
+        let c = config(Some(2), Some(5));
+        // After epoch 1 (due: 2 is a multiple of every_epochs): the epoch checkpoint.
+        assert_eq!(epoch_value(&c, &history, 8, 2, 0), Some((1.5, 1, 8)));
+        // After epoch 0 (not due): a cancel checkpoint there has no value.
+        assert_eq!(epoch_value(&c, &history[..1], 4, 1, 0), None);
+        // Mid-epoch (every_steps, cancel) and during validation (batch = S).
+        assert_eq!(epoch_value(&c, &history, 10, 2, 2), None);
+        assert_eq!(epoch_value(&c, &history[..1], 8, 1, 4), None);
+        // Due by every_steps reached at the epoch's last step, or by the last epoch.
+        assert_eq!(
+            epoch_value(&config(None, Some(4)), &history[..1], 4, 1, 0),
+            Some((0.5, 0, 4))
+        );
+        let last: Vec<HistoryEntry> = (0..5)
+            .map(|e| HistoryEntry {
+                epoch: e,
+                step: 4 * (e + 1),
+                metrics: Metrics(vec![("train.loss".into(), 1.0)]),
+            })
+            .collect();
+        assert_eq!(
+            epoch_value(&config(Some(2), None), &last, 20, 5, 0),
+            Some((1.0, 4, 20))
+        );
+        assert_eq!(
+            epoch_value(&config(Some(2), None), &last[..3], 12, 3, 0),
+            None
+        );
+        // Without keep_best: no value.
+        let mut none = config(Some(1), None);
+        none.checkpoint.as_mut().unwrap().keep_best = None;
+        assert_eq!(epoch_value(&none, &history, 8, 2, 0), None);
     }
 
     #[test]

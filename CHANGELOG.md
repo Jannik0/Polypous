@@ -83,7 +83,8 @@ All notable changes to Polypous are documented here. The format follows
     continues.
   - Checkpoints (`step-` + 12 digits) written atomically with `fsync` (the directory flushes on
     Unix only), `state.json` as §5.2, `optimizer.safetensors` as `<param>:<state>`,
-    `keep_last`/`keep_best` (NaN never best, a tie keeps the earlier one), deleting only
+    `keep_last`/`keep_best` (only epoch checkpoints have a value, judged from each checkpoint's
+    `state.json`; NaN never best, a tie keeps the earlier one), deleting only
     `step-*` and `.tmp-step-*` entries.
   - `Trainer::resume` loads an untrusted checkpoint with every check of §5.4 before the data
     it protects is read (fuzz-tested with truncated, bit-flipped and edited files), re-reads

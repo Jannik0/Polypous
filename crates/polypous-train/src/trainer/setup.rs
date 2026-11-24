@@ -1171,10 +1171,13 @@ impl Core {
         if newer {
             self.discard_newer_than = Some(state.step);
         }
-        let value = state.history.last().and_then(|h| {
-            let metric = self.config.checkpoint.as_ref()?.keep_best.as_ref()?;
-            Some((h.metrics.get(metric)?, h.epoch, h.step))
-        });
+        let value = checkpoint::epoch_value(
+            &state.config,
+            &state.history,
+            state.step,
+            state.epoch,
+            state.batch,
+        );
         self.values.insert(state.step, value);
         if let Some(best) = &state.best
             && let Some(step) = checkpoint::parse_checkpoint_name(&best.checkpoint)

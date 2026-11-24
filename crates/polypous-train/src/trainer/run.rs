@@ -463,10 +463,16 @@ impl Core {
         }
     }
 
-    /// The `keep_best` value of this trainer's current state: its last history entry's.
-    fn own_value(&self, metric: &str) -> Option<(f64, u64, u64)> {
-        let h = self.history.last()?;
-        Some((h.metrics.get(metric)?, h.epoch, h.step))
+    /// The `keep_best` value of a checkpoint of this trainer's current state (§5.3,
+    /// [`checkpoint::epoch_value`]).
+    fn own_value(&self) -> Option<(f64, u64, u64)> {
+        checkpoint::epoch_value(
+            &self.config,
+            &self.history,
+            self.step,
+            self.epoch,
+            self.batch,
+        )
     }
 
     /// The best checkpoint among `existing` and the one about to be written (§5.3): the best
@@ -484,7 +490,7 @@ impl Core {
             };
             candidates.push((e.step, v));
         }
-        candidates.push((self.step, self.own_value(metric)));
+        candidates.push((self.step, self.own_value()));
         candidates.sort_by_key(|c| c.0);
         let mut best: Option<(u64, (f64, u64, u64))> = None;
         for (step, v) in candidates {
@@ -549,7 +555,7 @@ impl Core {
             },
         )?;
         drop((weights, optimizer));
-        let own = config.keep_best.as_deref().and_then(|m| self.own_value(m));
+        let own = self.own_value();
         self.values.insert(self.step, own);
         self.best = best;
         self.last_checkpoint = Some(path.clone());
