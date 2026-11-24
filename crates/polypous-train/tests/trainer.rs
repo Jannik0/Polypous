@@ -596,6 +596,21 @@ fn rss() -> u64 {
 #[test]
 #[cfg(target_os = "linux")]
 fn memory_does_not_grow_per_step() {
+    // RSS is per process, and the other tests of this binary run in parallel threads (on a GPU
+    // job also the device tests), so the measurement runs alone in a child process: the test
+    // binary runs itself with `POLYPOUS_RSS_CHILD` set.
+    if std::env::var_os("POLYPOUS_RSS_CHILD").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "memory_does_not_grow_per_step", "--nocapture"])
+            .env("POLYPOUS_RSS_CHILD", "1")
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "the measurement failed in the child process"
+        );
+        return;
+    }
     // A 512 × 512 linear layer (1 MiB of params, 2 MiB of AdamW state): after warm-up, 150 more
     // steps must not add memory in proportion to the steps.
     let dir = TempDir::new("memory");
