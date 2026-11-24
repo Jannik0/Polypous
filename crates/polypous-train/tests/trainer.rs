@@ -243,7 +243,7 @@ fn events_come_in_the_specified_order() {
     assert_eq!(&outcome.final_metrics, metrics);
     assert_eq!(
         outcome.last_checkpoint.as_deref(),
-        Some(dir.join("run/step-000000000010").to_str().unwrap())
+        Some(dir.join("run").join("step-000000000010").to_str().unwrap())
     );
     assert!(outcome.best.is_none());
     assert!(t.info().finished);
