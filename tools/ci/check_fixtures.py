@@ -17,8 +17,10 @@
   models, and every case follows model case schema version 2 (running statistics, dropout masks,
   upstream gradients and the gradients of the trainable params) and matches its safetensors header.
 - Every training component sidecar under fixtures/small/train/<component>/ (§3.7): schema, the
-  component and its config's kind, the tensor names of the component (the optimizers' state names
-  of training.md §5.2), the tolerance of §2, and for schedules one value per step and no tensors.
+  component and its config's kind and fields, the tensor names of the component (the optimizers'
+  state names of training.md §5.2), the losses' prediction and target (f32 of the same shape, or
+  logits [B, C] with i64 class indices [B]), the tolerance of §2, and for schedules one value per
+  step and no tensors.
 - No float tensor anywhere holds a subnormal value.
 
 Standard library only (no PyTorch), so it runs in CI without setup. Exit status 0 if clean, 1 otherwise.

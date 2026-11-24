@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Generates the training component fixtures (fixtures/small/train/<component>/): the optimizers,
-gradient clipping and the learning-rate schedules of docs/specs/training.md §3.1 and §3.2.
+gradient clipping, the learning-rate schedules and the losses of docs/specs/training.md §3.1–§3.3.
 
     python tools/reference/gen_train.py            # regenerate fixtures/small/train/
     python tools/reference/gen_train.py --check    # fail if the committed fixtures differ
     python tools/reference/gen_train.py --report   # print the measured errors behind the tolerances
 
 Schema: docs/testing-strategy.md §3.7 (training component fixtures, schema version 1). Tolerances:
-§2 ("Optimizer tolerance", gradient clipping, "Schedule tolerance").
+§2 ("Optimizer tolerance", gradient clipping, "Schedule tolerance", loss values and gradients).
 
 - **Optimizers** (`optimizer.sgd`, `optimizer.adam`, `optimizer.adamw`): 3 steps of
   `torch.optim.SGD`/`Adam`/`AdamW` with `foreach=False` (the single-tensor algorithm) and a
@@ -26,8 +26,18 @@ Schema: docs/testing-strategy.md §3.7 (training component fixtures, schema vers
   `CosineAnnealingLR`'s closed form). The generator checks that §3.2's formulas, evaluated in
   Python floats as written, meet the schedule tolerance (exact, or `1e-14 · lr` for `cosine`).
 
-Losses (`loss.*`) come with #80. Needs the pinned versions from requirements.txt; `--check`
-refuses to compare otherwise.
+- **Losses** (`loss.mse`, `loss.cross_entropy`, `loss.binary_cross_entropy`; the `with_logits`
+  cases are in `loss.binary_cross_entropy` with `"with_logits": true`): `F.mse_loss`,
+  `F.cross_entropy` and `F.binary_cross_entropy(_with_logits)` (reduction `mean`) and their
+  gradient with respect to the prediction (upstream gradient 1, `torch.autograd.grad`), in f64 on
+  the f32 inputs and rounded once to f32 (testing-strategy.md §3.3, §3.7). Class indices are
+  stored as `I64` (§3.7); the Rust test runs every `cross_entropy` case with them as `i64` and
+  converted to `i32`. The generator checks that PyTorch's own f32 result meets the tolerance, and
+  that training.md §3.3's formulas (the loss, and for `binary_cross_entropy` the gradient
+  `(x − y) / max(x · (1 − x), 1e-12) / N`), evaluated in NumPy f64, agree with PyTorch's f64
+  result, so the fixtures and the spec can't drift apart.
+
+Needs the pinned versions from requirements.txt; `--check` refuses to compare otherwise.
 """
 
 from __future__ import annotations
@@ -64,6 +74,8 @@ else:
 # Tolerances (docs/testing-strategy.md §2).
 OPTIMIZER_TOLERANCE = {"exact": False, "atol": 1e-6, "rtol": 1e-6}
 CLIP_TOLERANCE = {"exact": False, "atol": 1e-5, "rtol": 1e-3}
+# Loss values and f32 gradients (testing-strategy.md §2): one tolerance for both outputs.
+LOSS_TOLERANCE = {"exact": False, "atol": 1e-5, "rtol": 1e-3}
 EXACT = {"exact": True, "atol": 0, "rtol": 0}
 COSINE_ATOL_PER_LR = 1e-14
 
@@ -102,8 +114,10 @@ def check_no_subnormals(where: str, tensors: dict[str, Any]) -> None:
 
 
 def entry(name: str, t: Any) -> dict[str, Any]:
+    if t.dtype == torch.int64:
+        return {"name": name, "dtype": "i64", "shape": list(t.shape)}
     if t.dtype != torch.float32:
-        raise SystemExit(f"{name}: training component tensors are f32")
+        raise SystemExit(f"{name}: training component tensors are f32 (class indices i64)")
     return {"name": name, "dtype": "f32", "shape": list(t.shape)}
 
 
@@ -580,6 +594,214 @@ def write_schedule_case(c: ScheduleCase, out_dir: str, versions: dict[str, str],
 
 
 # ---------------------------------------------------------------------------------------------
+# Losses (training.md §3.3; testing-strategy.md §3.7).
+
+
+@dataclasses.dataclass(frozen=True)
+class LossCase:
+    kind: str
+    name: str
+    seed: int
+    # The loss object of the sidecar's `config` as written, without `prediction`/`target`
+    # (left-out fields take training.md §2.6's defaults).
+    config: dict[str, Any]
+    # Draws the f32 prediction and the target (f32, or int64 class indices) from the case's PCG64.
+    make: Callable[[Any], tuple[Any, Any]]
+    description: str
+
+
+def _normal(rng: Any, shape: tuple[int, ...], scale: float) -> Any:
+    return (rng.standard_normal(size=shape) * scale).astype(np.float32)
+
+
+def _classes(c: int, b: int, scale: float) -> Callable[[Any], tuple[Any, Any]]:
+    return lambda rng: (_normal(rng, (b, c), scale), rng.integers(0, c, size=b).astype(np.int64))
+
+
+def _large_logits(rng: Any) -> tuple[Any, Any]:
+    # Differences of 0, 500, 1000 or 2000: every probability is 0, 1/2 or 1 in f64 (no subnormal
+    # gradients), and a naive exp overflows.
+    x = np.array([[1000, 0, -1000], [1000, 0, -1000], [-1000, 1000, 0], [500, 500, -500],
+                  [-1000, -1000, -1000], [0, 1000, 1000]], dtype=np.float32)
+    return x, np.array([2, 0, 1, 1, 2, 0], dtype=np.int64)
+
+
+def _probabilities(shape: tuple[int, ...], hard: bool) -> Callable[[Any], tuple[Any, Any]]:
+    def make(rng: Any) -> tuple[Any, Any]:
+        x = rng.uniform(0.02, 0.98, size=shape).astype(np.float32)
+        y = (rng.integers(0, 2, size=shape) if hard else rng.uniform(0, 1, size=shape)).astype(np.float32)
+        return x, y
+    return make
+
+
+def _probability_edges(rng: Any) -> tuple[Any, Any]:
+    # Exactly 0 and 1 (the −100 clamp), x · (1 − x) below 1e-12 (the gradient's bound), and next
+    # to 1 (1 − x exact in f32).
+    x = np.array([0, 1, 0, 1, 0, 1, 1e-13, 1e-13, 1 - 2**-24, 0.5, 1e-30, 0.25], dtype=np.float32)
+    y = np.array([0, 1, 1, 0, 0.5, 0.25, 0, 0.3, 1, 0.5, 1, 0], dtype=np.float32)
+    return x.reshape(3, 4), y.reshape(3, 4)
+
+
+def _logits(shape: tuple[int, ...], scale: float) -> Callable[[Any], tuple[Any, Any]]:
+    return lambda rng: (_normal(rng, shape, scale), rng.uniform(0, 1, size=shape).astype(np.float32))
+
+
+def _large_binary_logits(rng: Any) -> tuple[Any, Any]:
+    # ±200 with hard targets (losses 200 and 0); 0 (softplus' kink); ±20 (softplus' threshold);
+    # ±30 and 100 with soft targets. No case has σ(x) − y in f32's subnormal range.
+    x = np.array([200, -200, 200, -200, 0, 20, -20, 30, -30, 100, -0.5, 3], dtype=np.float32)
+    y = np.array([0, 1, 1, 0, 1, 0, 1, 0.5, 0.5, 0.25, 0, 1], dtype=np.float32)
+    return x.reshape(2, 6), y.reshape(2, 6)
+
+
+LOSS_CASES = [
+    LossCase("mse", "random", 41, {"kind": "mse"}, lambda rng: (_normal(rng, (8, 5), 2.0), _normal(rng, (8, 5), 2.0)),
+             "Prediction and target from N(0, 2²), [8, 5]"),
+    LossCase("mse", "rank3", 42, {"kind": "mse"}, lambda rng: (_normal(rng, (4, 3, 2), 1.0), _normal(rng, (4, 3, 2), 1.0)),
+             "A rank-3 prediction, [4, 3, 2]: the mean is over every element"),
+    LossCase("mse", "batch1", 43, {"kind": "mse"}, lambda rng: (_normal(rng, (1,), 1.0), _normal(rng, (1,), 1.0)),
+             "A batch of 1, shape [1]"),
+    LossCase("cross_entropy", "random", 51, {"kind": "cross_entropy"}, _classes(10, 16, 3.0),
+             "Logits from N(0, 3²), [16, 10], no label smoothing"),
+    LossCase("cross_entropy", "smoothing_0_1", 52, {"kind": "cross_entropy", "label_smoothing": 0.1}, _classes(10, 16, 3.0),
+             "Label smoothing 0.1, [16, 10]"),
+    LossCase("cross_entropy", "smoothing_1", 53, {"kind": "cross_entropy", "label_smoothing": 1.0}, _classes(7, 8, 3.0),
+             "Label smoothing 1: the target class has the same weight as every other, [8, 7]"),
+    LossCase("cross_entropy", "large_logits", 54, {"kind": "cross_entropy"}, _large_logits,
+             "Logits up to ±1000, [6, 3] (the stable log-sum-exp; [1000, 0, −1000] with class 2 gives 2000)"),
+    LossCase("cross_entropy", "large_logits_smoothing", 55, {"kind": "cross_entropy", "label_smoothing": 0.1}, _large_logits,
+             "Logits up to ±1000 with label smoothing 0.1, [6, 3]"),
+    LossCase("cross_entropy", "one_class", 56, {"kind": "cross_entropy", "label_smoothing": 0.3}, _classes(1, 4, 3.0),
+             "C = 1 with label smoothing 0.3: the loss and its gradient are 0, [4, 1]"),
+    LossCase("cross_entropy", "batch1", 57, {"kind": "cross_entropy"}, _classes(5, 1, 2.0), "A batch of 1, [1, 5]"),
+    LossCase("binary_cross_entropy", "random", 61, {"kind": "binary_cross_entropy"}, _probabilities((8, 4), hard=False),
+             "Probabilities in [0.02, 0.98] and soft targets in [0, 1), [8, 4]"),
+    LossCase("binary_cross_entropy", "hard_targets", 62, {"kind": "binary_cross_entropy"}, _probabilities((16,), hard=True),
+             "Probabilities in [0.02, 0.98] and targets 0 or 1, [16]"),
+    LossCase("binary_cross_entropy", "edges", 63, {"kind": "binary_cross_entropy"}, _probability_edges,
+             "Probabilities of exactly 0 and 1 (the −100 clamp), 1e-13 (x · (1 − x) below 1e-12) and 1 − 2^-24, [3, 4]"),
+    LossCase("binary_cross_entropy", "batch1", 64, {"kind": "binary_cross_entropy"}, _probabilities((1,), hard=False),
+             "A batch of 1, shape [1]"),
+    LossCase("binary_cross_entropy", "logits_random", 65, {"kind": "binary_cross_entropy", "with_logits": True},
+             _logits((8, 4), 3.0), "Logits from N(0, 3²) and soft targets, [8, 4]"),
+    LossCase("binary_cross_entropy", "logits_large", 66, {"kind": "binary_cross_entropy", "with_logits": True},
+             _large_binary_logits, "Logits of ±200 (losses 200 and 0), 0, ±20, ±30 and 100, [2, 6]"),
+    LossCase("binary_cross_entropy", "logits_batch1", 67, {"kind": "binary_cross_entropy", "with_logits": True},
+             _logits((1, 1), 2.0), "A batch of 1, shape [1, 1]"),
+]
+
+
+def torch_loss(c: LossCase, x: Any, y: Any) -> tuple[Any, str]:
+    """The reference call on tensors of any float dtype, and its text (the sidecar's `reference`)."""
+    F = torch.nn.functional
+    if c.kind == "mse":
+        return F.mse_loss(x, y), "F.mse_loss(prediction, target)"
+    if c.kind == "cross_entropy":
+        eps = c.config.get("label_smoothing", 0.0)
+        return F.cross_entropy(x, y, label_smoothing=eps), f"F.cross_entropy(prediction, target, label_smoothing={eps!r})"
+    if c.config.get("with_logits", False):
+        return F.binary_cross_entropy_with_logits(x, y), "F.binary_cross_entropy_with_logits(prediction, target)"
+    return F.binary_cross_entropy(x, y), "F.binary_cross_entropy(prediction, target)"
+
+
+def spec_loss(c: LossCase, x: Any, y: Any) -> tuple[float, Any | None]:
+    """training.md §3.3's formula in NumPy f64 on the f32 inputs, and for `binary_cross_entropy` the
+    spec's gradient formula (None for the others, whose gradient is the formula's derivative)."""
+    x = x.astype(np.float64)
+    if c.kind == "mse":
+        return float(np.mean((x - y.astype(np.float64)) ** 2)), None
+    if c.kind == "cross_entropy":
+        eps = c.config.get("label_smoothing", 0.0)
+        m = x.max(axis=1, keepdims=True)
+        lse = (m + np.log(np.exp(x - m).sum(axis=1, keepdims=True)))[:, 0]
+        n, classes = x.shape
+        picked = x[np.arange(n), y]
+        per = (1 - eps) * (lse - picked) + (eps / classes) * (lse[:, None] - x).sum(axis=1)
+        return float(per.mean()), None
+    y = y.astype(np.float64)
+    if c.config.get("with_logits", False):
+        log_sigmoid = np.minimum(x, 0) - np.log1p(np.exp(-np.abs(x)))
+        return float(np.mean((1 - y) * x - log_sigmoid)), None
+    with np.errstate(divide="ignore"):
+        per = -(y * np.maximum(np.log(x), -100) + (1 - y) * np.maximum(np.log(1 - x), -100))
+    grad = (x - y) / np.maximum(x * (1 - x), 1e-12) / x.size
+    return float(per.mean()), grad
+
+
+def write_loss_case(c: LossCase, out_dir: str, versions: dict[str, str], report: list[str] | None) -> None:
+    component = f"loss.{c.kind}"
+    where = f"{component}/{c.name}"
+    rng = np.random.Generator(np.random.PCG64(c.seed))
+    x, y = c.make(rng)
+    if x.dtype != np.float32 or (y.dtype != np.int64 if c.kind == "cross_entropy" else y.dtype != np.float32):
+        raise SystemExit(f"{where}: the prediction is f32, the target f32 or int64 class indices")
+    target = torch.from_numpy(y)
+
+    def run(dtype: Any) -> tuple[Any, Any, str]:
+        p = torch.from_numpy(x).to(dtype).requires_grad_(True)
+        t = target if c.kind == "cross_entropy" else target.to(dtype)
+        loss, text = torch_loss(c, p, t)
+        (grad,) = torch.autograd.grad(loss, p)
+        return loss.detach().reshape(1), grad, text
+
+    loss64, grad64, call = run(torch.float64)
+    expected = {"loss": loss64.float(), "grad_prediction": grad64.float()}
+    loss32, grad32, _ = run(torch.float32)
+    native = {"loss": loss32, "grad_prediction": grad32}
+    worst = 0.0
+    for key, want in expected.items():
+        m = measure(native[key].numpy(), want.numpy(), LOSS_TOLERANCE)
+        if m.ratio > 1.0:
+            raise SystemExit(f"{where}: PyTorch f32 misses the loss tolerance on {key} (worst/allowed {m.ratio:.3f})")
+        worst = max(worst, m.ratio)
+    # The spec's formulas against PyTorch's f64 result.
+    value, grad = spec_loss(c, x, y)
+    spec = {"loss": np.array([value]), "grad_prediction": grad}
+    spec_worst = 0.0
+    for key, got in spec.items():
+        if got is None:
+            continue
+        want = (loss64 if key == "loss" else grad64).numpy()
+        err = np.abs(got - want)
+        allowed = LOSS_TOLERANCE["atol"] + LOSS_TOLERANCE["rtol"] * np.abs(want)
+        if not (err <= allowed).all():
+            raise SystemExit(f"{where}: training.md §3.3's formula for {key} differs from PyTorch's f64 result "
+                             f"(worst |error| {float(err.max()):.3e})")
+        rel = err / np.maximum(np.abs(want), np.finfo(np.float64).tiny)
+        spec_worst = max(spec_worst, float(np.where(err > 0, rel, 0).max()))
+    if report is not None:
+        report.append(f"{where}: PyTorch f32 vs f64, worst/allowed {worst:.2e}; §3.3 formula in f64 vs PyTorch f64, "
+                      f"worst relative difference {spec_worst:.1e} (loss {float(loss64[0]):.6g})")
+    tensors = {"prediction": torch.from_numpy(x), "target": target} | {k: v.contiguous() for k, v in expected.items()}
+    check_no_subnormals(where, {k: v for k, v in tensors.items() if v.is_floating_point()})
+    d = os.path.join(out_dir, component)
+    os.makedirs(d, exist_ok=True)
+    indices = (" The target holds class indices, stored as I64 (testing-strategy.md §3.7); the Rust test also runs "
+               "the case with them converted to i32, which training.md §3.3 reads as i64.") if c.kind == "cross_entropy" else ""
+    sidecar = {
+        "schema_version": 1,
+        "component": component,
+        "case": c.name,
+        "description": f"{c.description}.",
+        "config": c.config,
+        "inputs": [entry("prediction", tensors["prediction"]), entry("target", target)],
+        "outputs": [entry(k, v) for k, v in expected.items()],
+        "tolerance": LOSS_TOLERANCE,
+        "reference": f"torch.autograd.grad({call}, prediction)",
+        "notes": "loss is the batch mean (reduction \"mean\"), shape [1]; grad_prediction its gradient with respect to "
+        "the prediction, upstream gradient 1. Both computed in f64 on the f32 inputs and rounded once to f32 "
+        "(testing-strategy.md §3.3, §3.7); PyTorch's own f32 result meets the tolerance, and training.md §3.3's "
+        "formulas in f64 agree with PyTorch's f64 result. The config is the loss object without prediction and "
+        "target; left-out fields take training.md §2.6's defaults." + indices,
+        "seed": c.seed,
+        "generator": GENERATOR,
+        "versions": versions,
+    }
+    save_tensors(os.path.join(d, c.name + ".safetensors"), tensors)
+    write_json(os.path.join(d, c.name + ".json"), sidecar)
+
+
+# ---------------------------------------------------------------------------------------------
 
 
 def case_keys() -> list[tuple[str, str]]:
@@ -587,6 +809,7 @@ def case_keys() -> list[tuple[str, str]]:
         [(f"optimizer.{c.kind}", c.name) for c in OPTIMIZER_CASES]
         + [("gradient_clip", c.name) for c in CLIP_CASES]
         + [(f"schedule.{c.schedule['kind']}", c.name) for c in SCHEDULE_CASES]
+        + [(f"loss.{c.kind}", c.name) for c in LOSS_CASES]
     )
 
 
@@ -603,6 +826,8 @@ def generate(out_dir: str, report: list[str] | None = None) -> int:
         write_clip_case(c, out_dir, versions, report)
     for c in SCHEDULE_CASES:
         write_schedule_case(c, out_dir, versions, report)
+    for c in LOSS_CASES:
+        write_loss_case(c, out_dir, versions, report)
     return len(keys)
 
 
