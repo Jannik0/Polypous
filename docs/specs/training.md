@@ -438,7 +438,9 @@ g_i  ← g_i · c                          for every gradient, also when c = 1
 
 This is PyTorch's formula (`error_if_nonfinite=False`), so a non-finite `total` gives `c = 0` or
 NaN, and the gradients follow, as in PyTorch. The norms are reductions; their summation order is
-not specified, and the tolerance is testing-strategy.md §2's.
+not specified, and the tolerance is testing-strategy.md §2's. PyTorch 2.15.0 computes the quotient
+as `reciprocal(total + 1e-6) · max_norm` (`Tensor.__rdiv__`), so its `c` is rounded twice; the
+single division above differs from it by at most about one ulp of `c`, well within that tolerance.
 
 ### 3.2 Schedules
 
@@ -514,8 +516,12 @@ pass (`val.*`). Values are `f64`.
     as for `cross_entropy`. `threshold` must be null.
   - **binary** (target `f32`, the prediction's shape, every value exactly `0` or `1`, checked when
     the trainer is created): each element counts, and is correct if `(x > threshold) = (y = 1)`.
-    `threshold` defaults to `0.5`, for probabilities; with logits use `0`. A NaN prediction is never
-    above the threshold.
+    `threshold` defaults to `0.5`, for probabilities; with logits use `0`. The comparison is in
+    `f32`, with the threshold rounded once to `f32` (`x > f32(threshold)`), as PyTorch's
+    `x > threshold` on an `f32` tensor. A NaN prediction is never above the threshold.
+- **No samples:** a metric over zero samples (an epoch or validation pass without samples) has no
+  value, not the NaN of `0 / 0`, so it can't be mistaken for a non-finite loss. A batch of zero
+  samples adds nothing.
 - Metrics don't take part in the backward pass and never change the params.
 - Unlike the loss, `accuracy` is exact: there is no tolerance (testing-strategy.md §2).
 
