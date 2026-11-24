@@ -892,7 +892,7 @@ def validate_training_dir(model_dir: str) -> list[str]:
 # ---------------------------------------------------------------------------------------------
 # Training component fixtures (docs/testing-strategy.md §3.7), in
 # `fixtures/small/train/<component>/<case>.{json,safetensors}`: the optimizers, gradient clipping
-# and the schedules (#79). The losses (`loss.*`) are added with #80.
+# and the schedules (#79), and the losses (#80).
 
 TRAIN_SCHEMA_VERSION = 1
 TRAIN_SIDECAR_KEYS = (
@@ -924,10 +924,18 @@ TRAIN_SCHEDULE_FIELDS = {
     "cosine": ("warmup_steps", "min_lr"),
     "linear_warmup": ("warmup_steps",),
 }
+# The fields of each loss kind besides `kind` (training.md §2.6; `prediction` and `target` are
+# left out of a fixture's config, §3.7), with their JSON type check.
+TRAIN_LOSS_FIELDS = {
+    "mse": {},
+    "cross_entropy": {"label_smoothing": lambda v: _is_number(v) and 0 <= v <= 1},
+    "binary_cross_entropy": {"with_logits": lambda v: isinstance(v, bool)},
+}
 TRAIN_OPTIMIZER_STEPS = 3
 # testing-strategy.md §2.
 TRAIN_OPTIMIZER_TOLERANCE = {"exact": False, "atol": 1e-6, "rtol": 1e-6}
 TRAIN_CLIP_TOLERANCE = {"exact": False, "atol": 1e-5, "rtol": 1e-3}
+TRAIN_LOSS_TOLERANCE = {"exact": False, "atol": 1e-5, "rtol": 1e-3}
 TRAIN_COSINE_ATOL_PER_LR = 1e-14
 
 
@@ -936,6 +944,7 @@ def train_components() -> tuple[str, ...]:
         tuple(f"optimizer.{k}" for k in TRAIN_OPTIMIZER_FIELDS)
         + ("gradient_clip",)
         + tuple(f"schedule.{k}" for k in TRAIN_SCHEDULE_FIELDS)
+        + tuple(f"loss.{k}" for k in TRAIN_LOSS_FIELDS)
     )
 
 
@@ -963,6 +972,14 @@ def _train_config_problems(json_path: str, component: str, config: Any) -> list[
         lr = config.get("lr", 1e-3)
         if not (_is_number(lr) and lr >= 0):
             return [f"{bad}: lr must be a number >= 0"]
+        return []
+    if component.startswith("loss."):
+        kind = component.split(".", 1)[1]
+        fields = TRAIN_LOSS_FIELDS[kind]
+        if config.get("kind") != kind or not set(config) - {"kind"} <= set(fields):
+            return [f"{bad}: needs kind {kind!r} and only the fields {list(fields)} (no prediction or target)"]
+        if not all(fields[k](v) for k, v in config.items() if k != "kind"):
+            return [f"{bad}: label_smoothing must be a number in [0, 1] and with_logits a bool"]
         return []
     if component == "gradient_clip":
         if list(config) != ["max_norm"] or not (_is_number(config["max_norm"]) and config["max_norm"] > 0):
@@ -1034,12 +1051,29 @@ def validate_train_case(json_path: str) -> list[str]:
     inputs, outputs = _named_entries(sidecar["inputs"]), _named_entries(sidecar["outputs"])
     if inputs is None or outputs is None:
         return problems + [f"{json_path}: inputs and outputs must be lists of {{\"name\", \"dtype\", \"shape\"}}"]
-    if any(e["dtype"] != "f32" for e in inputs + outputs):
-        problems.append(f"{json_path}: training component tensors are f32")
     in_names = [e["name"] for e in inputs]
     out_names = [e["name"] for e in outputs]
     shapes = {e["name"]: e["shape"] for e in inputs + outputs}
-    if component == "gradient_clip":
+    dtypes = {e["name"]: e["dtype"] for e in inputs + outputs}
+    class_indices = component == "loss.cross_entropy"
+    if any(dt != "f32" for name, dt in dtypes.items() if not (class_indices and name == "target")):
+        problems.append(f"{json_path}: training component tensors are f32 (class indices i64)")
+    if component.startswith("loss."):
+        want_tol = TRAIN_LOSS_TOLERANCE
+        if in_names != ["prediction", "target"] or out_names != ["loss", "grad_prediction"]:
+            problems.append(f"{json_path}: inputs must be ['prediction', 'target'] and outputs ['loss', 'grad_prediction']")
+        else:
+            p, t = shapes["prediction"], shapes["target"]
+            if shapes["loss"] != [1] or shapes["grad_prediction"] != p:
+                problems.append(f"{json_path}: loss has shape [1] and grad_prediction the prediction's shape")
+            if not p or 0 in p:
+                problems.append(f"{json_path}: the prediction must be [B, ...] with every dim at least 1")
+            elif class_indices:
+                if dtypes["target"] != "i64" or len(p) != 2 or t != p[:1]:
+                    problems.append(f"{json_path}: cross_entropy needs a prediction [B, C] and i64 class indices [B]")
+            elif t != p:
+                problems.append(f"{json_path}: the target has the prediction's shape (no broadcasting)")
+    elif component == "gradient_clip":
         want_tol = TRAIN_CLIP_TOLERANCE
         n = len(inputs)
         want_in = [f"grad_{i}" for i in range(n)]

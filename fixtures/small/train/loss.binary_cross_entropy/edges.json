@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "component": "loss.binary_cross_entropy",
+  "case": "edges",
+  "description": "Probabilities of exactly 0 and 1 (the \u2212100 clamp), 1e-13 (x \u00b7 (1 \u2212 x) below 1e-12) and 1 \u2212 2^-24, [3, 4].",
+  "config": {
+    "kind": "binary_cross_entropy"
+  },
+  "inputs": [
+    {
+      "name": "prediction",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    },
+    {
+      "name": "target",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "loss",
+      "dtype": "f32",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "grad_prediction",
+      "dtype": "f32",
+      "shape": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(F.binary_cross_entropy(prediction, target), prediction)",
+  "notes": "loss is the batch mean (reduction \"mean\"), shape [1]; grad_prediction its gradient with respect to the prediction, upstream gradient 1. Both computed in f64 on the f32 inputs and rounded once to f32 (testing-strategy.md \u00a73.3, \u00a73.7); PyTorch's own f32 result meets the tolerance, and training.md \u00a73.3's formulas in f64 agree with PyTorch's f64 result. The config is the loss object without prediction and target; left-out fields take training.md \u00a72.6's defaults.",
+  "seed": 63,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

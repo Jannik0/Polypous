@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "component": "loss.cross_entropy",
+  "case": "smoothing_1",
+  "description": "Label smoothing 1: the target class has the same weight as every other, [8, 7].",
+  "config": {
+    "kind": "cross_entropy",
+    "label_smoothing": 1.0
+  },
+  "inputs": [
+    {
+      "name": "prediction",
+      "dtype": "f32",
+      "shape": [
+        8,
+        7
+      ]
+    },
+    {
+      "name": "target",
+      "dtype": "i64",
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "loss",
+      "dtype": "f32",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "grad_prediction",
+      "dtype": "f32",
+      "shape": [
+        8,
+        7
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.autograd.grad(F.cross_entropy(prediction, target, label_smoothing=1.0), prediction)",
+  "notes": "loss is the batch mean (reduction \"mean\"), shape [1]; grad_prediction its gradient with respect to the prediction, upstream gradient 1. Both computed in f64 on the f32 inputs and rounded once to f32 (testing-strategy.md \u00a73.3, \u00a73.7); PyTorch's own f32 result meets the tolerance, and training.md \u00a73.3's formulas in f64 agree with PyTorch's f64 result. The config is the loss object without prediction and target; left-out fields take training.md \u00a72.6's defaults. The target holds class indices, stored as I64 (testing-strategy.md \u00a73.7); the Rust test also runs the case with them converted to i32, which training.md \u00a73.3 reads as i64.",
+  "seed": 53,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

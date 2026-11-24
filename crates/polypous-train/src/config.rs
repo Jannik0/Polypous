@@ -1,5 +1,5 @@
-//! The `optimizer`, `schedule` and `gradient_clip` objects of a training config
-//! (`docs/specs/training.md` §2.1, §2.2, §2.8), as Rust types.
+//! The `loss`, `metrics`, `optimizer`, `schedule` and `gradient_clip` objects of a training
+//! config (`docs/specs/training.md` §2.1, §2.2, §2.6–§2.8), as Rust types.
 //!
 //! The types deserialize directly from the JSON of §2.8 (`serde`, internally tagged by `kind`,
 //! unknown fields rejected, missing optional fields filled with their defaults) and serialize every
@@ -9,8 +9,14 @@
 //! pointer is relative to the object (`/betas/1`). The parser prefixes the object's own pointer
 //! (`/optimizer`), as §2.1 requires.
 //!
-//! [`crate::Optimizer::new`], [`crate::Schedule::new`] and [`crate::clip_gradients`] validate the
-//! config they are given, so an invalid config never reaches the arithmetic.
+//! [`crate::Optimizer::new`], [`crate::Schedule::new`], [`crate::clip_gradients`],
+//! [`crate::Loss::new`] and [`crate::Accuracy::new`] validate the config they are given, so an
+//! invalid config never reaches the arithmetic.
+//!
+//! The checks against the graph and the data (training.md §2.10) are not made here: that
+//! `prediction` is a graph output and `target` a dataset field, their dtypes and shapes
+//! ([`crate::Loss::check_shapes`], [`crate::Accuracy::check_shapes`]) and the target values
+//! ([`crate::targets`]).
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -400,6 +406,271 @@ impl GradientClipConfig {
     }
 }
 
+/// The longest name of a graph output or dataset field (training.md §2.1, "Strings": 1–256 bytes).
+pub const MAX_NAME_BYTES: usize = 256;
+/// The longest metric name (training.md §2.7: 1–64 bytes).
+pub const MAX_METRIC_NAME_BYTES: usize = 64;
+/// The most entries of `metrics` (training.md §2.1, "Limits").
+pub const MAX_METRICS: usize = 16;
+
+/// A `prediction` or `target` name: 1–256 bytes (training.md §2.1).
+fn check_name(pointer: &str, field: &str, name: &str) -> Result<(), ConfigError> {
+    if (1..=MAX_NAME_BYTES).contains(&name.len()) {
+        Ok(())
+    } else {
+        Err(ConfigError::new(
+            pointer,
+            format!(
+                "`{field}` must be 1–{MAX_NAME_BYTES} bytes, got {} bytes",
+                name.len()
+            ),
+        ))
+    }
+}
+
+/// `loss` (training.md §2.6, §3.3). Its JSON form is internally tagged:
+/// `{"kind": "cross_entropy", "prediction": "logits", "target": "label", "label_smoothing": 0.1}`.
+/// A field of another kind is an unknown field (`label_smoothing` on `mse`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LossConfig {
+    /// `mse`: `F.mse_loss`.
+    Mse(MseConfig),
+    /// `cross_entropy{label_smoothing}`: `F.cross_entropy` with class-index targets.
+    CrossEntropy(CrossEntropyConfig),
+    /// `binary_cross_entropy{with_logits}`: `F.binary_cross_entropy(_with_logits)`.
+    BinaryCrossEntropy(BinaryCrossEntropyConfig),
+}
+
+/// The fields of `mse` (training.md §2.6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MseConfig {
+    /// A graph output, required.
+    pub prediction: String,
+    /// A dataset field, required.
+    pub target: String,
+}
+
+/// The fields of `cross_entropy` (training.md §2.6).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossEntropyConfig {
+    /// A graph output (the logits), required.
+    pub prediction: String,
+    /// A dataset field (the class indices), required.
+    pub target: String,
+    /// `0 ≤ label_smoothing ≤ 1`. Default `0`.
+    #[serde(default)]
+    pub label_smoothing: f64,
+}
+
+/// The fields of `binary_cross_entropy` (training.md §2.6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryCrossEntropyConfig {
+    /// A graph output (probabilities, or logits with `with_logits`), required.
+    pub prediction: String,
+    /// A dataset field (values in `[0, 1]`), required.
+    pub target: String,
+    /// The prediction is a logit, not a probability. Default `false`.
+    #[serde(default)]
+    pub with_logits: bool,
+}
+
+impl LossConfig {
+    /// Checks the names (1–256 bytes) and `0 ≤ label_smoothing ≤ 1` (training.md §2.1, §2.6).
+    ///
+    /// # Errors
+    /// The first bad field, in table order (`/prediction`, `/target`, `/label_smoothing`).
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        check_name("/prediction", "prediction", self.prediction())?;
+        check_name("/target", "target", self.target())?;
+        if let Self::CrossEntropy(c) = self {
+            check_closed(
+                "/label_smoothing",
+                "label_smoothing",
+                c.label_smoothing,
+                0.0,
+                1.0,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The `kind` string of the JSON form.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Mse(_) => "mse",
+            Self::CrossEntropy(_) => "cross_entropy",
+            Self::BinaryCrossEntropy(_) => "binary_cross_entropy",
+        }
+    }
+
+    /// The graph output the loss reads.
+    pub fn prediction(&self) -> &str {
+        match self {
+            Self::Mse(c) => &c.prediction,
+            Self::CrossEntropy(c) => &c.prediction,
+            Self::BinaryCrossEntropy(c) => &c.prediction,
+        }
+    }
+
+    /// The dataset field the loss reads.
+    pub fn target(&self) -> &str {
+        match self {
+            Self::Mse(c) => &c.target,
+            Self::CrossEntropy(c) => &c.target,
+            Self::BinaryCrossEntropy(c) => &c.target,
+        }
+    }
+}
+
+/// One entry of `metrics` (training.md §2.7, §3.4). Its JSON form is internally tagged:
+/// `{"kind": "accuracy", "prediction": "logits", "target": "label"}`. `{"kind": "loss"}` is an
+/// unknown kind: the loss is always reported and is never listed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MetricConfig {
+    /// `accuracy` (§3.4): multiclass or binary, chosen by the target's dtype.
+    Accuracy(AccuracyConfig),
+}
+
+/// The fields of `accuracy` (training.md §2.7).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccuracyConfig {
+    /// A graph output, required.
+    pub prediction: String,
+    /// A dataset field, required.
+    pub target: String,
+    /// The name in events and checkpoints: `[a-z0-9_]`, 1–64 bytes, not `loss`, unique in the
+    /// list. Default `"accuracy"` (the kind).
+    #[serde(default = "default_accuracy_name")]
+    pub name: String,
+    /// Binary accuracy only: an element counts as predicted 1 if it is above the threshold. Null
+    /// (`None`) means `0.5`. Must round to a finite `f32`, because it is compared with `f32`
+    /// predictions. Whether the metric is binary depends on the target's dtype, so "given with the
+    /// multiclass form" is checked against the data ([`crate::Accuracy::check_shapes`]).
+    #[serde(default)]
+    pub threshold: Option<f64>,
+}
+
+fn default_accuracy_name() -> String {
+    "accuracy".to_owned()
+}
+
+impl AccuracyConfig {
+    /// Checks the names and the threshold (training.md §2.1, §2.7).
+    ///
+    /// # Errors
+    /// The first bad field, in table order (`/prediction`, `/target`, `/name`, `/threshold`).
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        check_name("/prediction", "prediction", &self.prediction)?;
+        check_name("/target", "target", &self.target)?;
+        check_metric_name("/name", &self.name)?;
+        if let Some(t) = self.threshold {
+            check_f32_finite("/threshold", "threshold", t)?;
+        }
+        Ok(())
+    }
+}
+
+/// A metric name: `[a-z0-9_]`, 1–64 bytes, not `loss` (training.md §2.7).
+fn check_metric_name(pointer: &str, name: &str) -> Result<(), ConfigError> {
+    if !(1..=MAX_METRIC_NAME_BYTES).contains(&name.len()) {
+        return Err(ConfigError::new(
+            pointer,
+            format!(
+                "`name` must be 1–{MAX_METRIC_NAME_BYTES} bytes, got {} bytes",
+                name.len()
+            ),
+        ));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| !matches!(c, 'a'..='z' | '0'..='9' | '_'))
+    {
+        return Err(ConfigError::new(
+            pointer,
+            format!("`name` may only contain a-z, 0-9 and _, got {c:?} in {name:?}"),
+        ));
+    }
+    if name == "loss" {
+        return Err(ConfigError::new(
+            pointer,
+            "`name` must not be `loss`: the loss is always reported under that name",
+        ));
+    }
+    Ok(())
+}
+
+impl MetricConfig {
+    /// Checks the fields of the selected kind (training.md §2.7).
+    ///
+    /// # Errors
+    /// The first bad field.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        match self {
+            Self::Accuracy(c) => c.validate(),
+        }
+    }
+
+    /// The `kind` string of the JSON form.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Accuracy(_) => "accuracy",
+        }
+    }
+
+    /// The metric's name in events and checkpoints (training.md §2.7).
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Accuracy(c) => &c.name,
+        }
+    }
+}
+
+/// Checks the `metrics` array (training.md §2.1, §2.7): at most 16 entries, each valid, the names
+/// unique. Pointers are relative to the array (`/1/name`); the config parser prefixes `/metrics`.
+///
+/// # Errors
+/// More than 16 entries at `""`; the first bad entry; a repeated name at the second use's `/name`.
+pub fn validate_metrics(metrics: &[MetricConfig]) -> Result<(), ConfigError> {
+    if metrics.len() > MAX_METRICS {
+        return Err(ConfigError::new(
+            "",
+            format!(
+                "`metrics` has at most {MAX_METRICS} entries, got {}",
+                metrics.len()
+            ),
+        ));
+    }
+    for (i, m) in metrics.iter().enumerate() {
+        m.validate().map_err(|e| ConfigError {
+            pointer: format!("/{i}{}", e.pointer),
+            message: e.message,
+        })?;
+        if let Some(first) = metrics[..i].iter().position(|o| o.name() == m.name()) {
+            return Err(ConfigError::new(
+                &format!("/{i}/name"),
+                format!(
+                    "metric name `{}` is already used by entry {first}; names must be unique \
+                     (set `name`)",
+                    m.name()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "config_loss_tests.rs"]
+mod loss_tests;

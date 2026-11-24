@@ -598,6 +598,9 @@ class TrainValidationTest(unittest.TestCase):
         "clip": ("gradient_clip", "clipped"),
         "cosine": ("schedule.cosine", "warmup5"),
         "step": ("schedule.step", "every3"),
+        "mse": ("loss.mse", "random"),
+        "ce": ("loss.cross_entropy", "smoothing_0_1"),
+        "bce": ("loss.binary_cross_entropy", "logits_large"),
     }
 
     def setUp(self) -> None:
@@ -735,6 +738,45 @@ class TrainValidationTest(unittest.TestCase):
     def test_safetensors_without_sidecar(self) -> None:
         os.remove(self.path("clip"))
         self.assert_problem("no JSON sidecar")
+
+    def test_loss_config(self) -> None:
+        self.edit("ce", lambda s: s["config"].update(label_smoothing=1.5))
+        self.assert_problem("label_smoothing must be a number in [0, 1]")
+        self.edit("ce", lambda s: s.update(config={"kind": "cross_entropy", "with_logits": True}))
+        self.assert_problem("needs kind 'cross_entropy' and only the fields ['label_smoothing']")
+        self.edit("bce", lambda s: s["config"].update(with_logits=1))
+        self.assert_problem("with_logits a bool")
+        self.edit("mse", lambda s: s["config"].update(prediction="y_hat"))
+        self.assert_problem("(no prediction or target)")
+        self.edit("mse", lambda s: s.update(config={"kind": "l1"}))
+        self.assert_problem("needs kind 'mse'")
+
+    def test_loss_names(self) -> None:
+        self.edit("mse", lambda s: s["outputs"][1].update(name="grad_x"))
+        self.assert_problem("outputs ['loss', 'grad_prediction']")
+
+    def test_loss_shapes(self) -> None:
+        self.edit("mse", lambda s: s["outputs"][0].update(shape=[]))
+        self.assert_problem("loss has shape [1]")
+
+    def test_loss_target_dtypes(self) -> None:
+        # Class indices are i64 (testing-strategy.md §3.7), and only for cross_entropy.
+        self.edit("ce", lambda s: s["inputs"][1].update(dtype="i32"))
+        self.assert_problem("cross_entropy needs a prediction [B, C] and i64 class indices [B]")
+        self.edit("ce", lambda s: s["inputs"][1].update(dtype="f32"))
+        self.assert_problem("cross_entropy needs a prediction [B, C] and i64 class indices [B]")
+        self.edit("mse", lambda s: s["inputs"][1].update(dtype="i64"))
+        self.assert_problem("training component tensors are f32 (class indices i64)")
+
+    def test_loss_target_shape(self) -> None:
+        self.edit("ce", lambda s: s["inputs"][1].update(shape=[16, 1]))
+        self.assert_problem("cross_entropy needs a prediction [B, C]")
+        self.edit("bce", lambda s: s["inputs"][1].update(shape=[12]))
+        self.assert_problem("the target has the prediction's shape (no broadcasting)")
+
+    def test_loss_tolerance(self) -> None:
+        self.edit("bce", lambda s: s.update(tolerance={"exact": False, "atol": 1e-5, "rtol": 1e-2}))
+        self.assert_problem("tolerance must be")
 
     def test_file_directly_in_train(self) -> None:
         write(os.path.join(self.root, "train", "stray.json"), b"{}")

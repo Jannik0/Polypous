@@ -59,6 +59,22 @@ All notable changes to Polypous are documented here. The format follows
   validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
   with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
   `std >= 0`, values that round to a finite f32).
+- Losses and metrics in `polypous-train` (#80, training.md §2.6, §2.7, §3.3, §3.4): `Loss`
+  computes `mse`, `cross_entropy{label_smoothing}` (class indices `i64` or `i32`) and
+  `binary_cross_entropy{with_logits}` as the batch mean, a `[1]` `f32` tensor that is
+  differentiable with respect to the prediction, in public `DynTensor` ops. It is stable at large
+  logits (`[1000, 0, −1000]` gives 2000, logits of ±200 give 200 and 0), finite at probabilities of
+  exactly 0 and 1, and its gradient is PyTorch's, including `binary_cross_entropy`'s own backward
+  formula at the clamp. Shape and dtype mismatches are errors (no broadcasting). `LossMetric` and
+  `Accuracy` are epoch accumulators: the `loss` metric is weighted by batch size and summed in f64,
+  and `accuracy` counts exactly, multiclass (ties to the lowest index, the first NaN wins, as
+  `torch.argmax`) or binary with a `threshold`. `Loss`/`Accuracy::check_shapes` and
+  `check_target_values` check a target field before training (class index outside `[0, C)`, BCE
+  target outside `[0, 1]` or NaN, binary target not 0 or 1), naming the sample and the value. The
+  config types `LossConfig` and `MetricConfig` deserialize from §2.6/§2.7's JSON and validate
+  their rules (`label_smoothing` range, metric names, `{"kind": "loss"}`). 17 loss fixtures
+  (`fixtures/small/train/loss.*`) from `gen_train.py`, f64 references rounded once; on the CPU
+  and lavapipe the worst error is 2.7e-4 of the tolerance.
 - Optimizers, schedules and gradient clipping in `polypous-train` (#79, training.md §3.1, §3.2,
   §5.2): `Optimizer` runs `sgd{momentum, dampening, nesterov, weight_decay}`, `adam` and `adamw`
   as PyTorch 2.15.0's single-tensor algorithm in `DynTensor` ops (scalars in f64, rounded once to

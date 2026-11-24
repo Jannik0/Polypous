@@ -71,6 +71,45 @@ class CoverageTest(unittest.TestCase):
             self.assertTrue(any(c.schedule["warmup_steps"] >= c.total_steps for c in warm), f"{kind}: W >= T")
         self.assertTrue(any(c.schedule["kind"] == "cosine" and c.schedule["warmup_steps"] == 0 for c in cases), "W = 0")
 
+    def test_loss_cases(self) -> None:
+        # testing-strategy.md §3.7: large logits, label smoothing 0, 0.1 and 1, BCE probabilities of
+        # exactly 0 and 1, logits of ±200; plus C = 1 and a batch of 1 (i32 indices: the Rust test).
+        cases = gen_train.LOSS_CASES
+        self.assertEqual({c.kind for c in cases}, set(fixturelib.TRAIN_LOSS_FIELDS))
+        ce = [c for c in cases if c.kind == "cross_entropy"]
+        self.assertEqual({c.config.get("label_smoothing", 0.0) for c in ce} >= {0.0, 0.1, 1.0}, True)
+        bce = [c for c in cases if c.kind == "binary_cross_entropy"]
+        self.assertTrue(any(c.config.get("with_logits") for c in bce), "with_logits")
+        self.assertTrue(any(not c.config.get("with_logits", False) for c in bce), "probabilities")
+        for c in cases:
+            self.assertLessEqual(set(c.config) - {"kind"}, set(fixturelib.TRAIN_LOSS_FIELDS[c.kind]), c.name)
+
+    @unittest.skipUnless(HAVE_NUMPY, "needs NumPy")
+    def test_loss_edge_values(self) -> None:
+        import numpy as np
+
+        def drawn(kind: str, pred) -> list:
+            out = []
+            for c in gen_train.LOSS_CASES:
+                if c.kind == kind and pred(c):
+                    out.append(c.make(np.random.Generator(np.random.PCG64(c.seed))))
+            return out
+
+        ce = drawn("cross_entropy", lambda c: True)
+        self.assertTrue(any(np.abs(x).max() >= 1000 for x, _ in ce), "large logits")
+        self.assertTrue(any(x.shape[1] == 1 for x, _ in ce), "C = 1")
+        self.assertTrue(any(x.shape[0] == 1 for x, _ in ce), "a batch of 1")
+        self.assertTrue(any(((x == 1000).any(axis=1) & (x == -1000).any(axis=1)).any() for x, _ in ce))
+        probs = drawn("binary_cross_entropy", lambda c: not c.config.get("with_logits", False))
+        self.assertTrue(any((x == 0).any() and (x == 1).any() for x, _ in probs), "probabilities 0 and 1")
+        self.assertTrue(any(x.size == 1 for x, _ in probs), "a batch of 1")
+        logits = drawn("binary_cross_entropy", lambda c: c.config.get("with_logits", False))
+        self.assertTrue(any((x == 200).any() and (x == -200).any() for x, _ in logits), "logits of ±200")
+        for x, y in probs + logits:
+            self.assertTrue(((y >= 0) & (y <= 1)).all())
+        for x, y in ce:
+            self.assertTrue(((y >= 0) & (y < x.shape[1])).all())
+
     def test_case_names_are_unique_and_valid(self) -> None:
         keys = gen_train.case_keys()
         self.assertEqual(len(keys), len(set(keys)))
@@ -81,6 +120,7 @@ class CoverageTest(unittest.TestCase):
     def test_tolerances_are_the_documented_ones(self) -> None:
         self.assertEqual(gen_train.OPTIMIZER_TOLERANCE, fixturelib.TRAIN_OPTIMIZER_TOLERANCE)
         self.assertEqual(gen_train.CLIP_TOLERANCE, fixturelib.TRAIN_CLIP_TOLERANCE)
+        self.assertEqual(gen_train.LOSS_TOLERANCE, fixturelib.TRAIN_LOSS_TOLERANCE)
         self.assertEqual(gen_train.COSINE_ATOL_PER_LR, fixturelib.TRAIN_COSINE_ATOL_PER_LR)
 
 
@@ -104,6 +144,35 @@ class ScheduleFormulaTest(unittest.TestCase):
         self.assertEqual(v[:3], [0.5, 1.0, 1.0])
         self.assertGreater(v[-1], 0.0)
         self.assertEqual(self.lr("cosine", {"warmup_steps": 9, "min_lr": 0.0}, 1.0, 3), [1 / 9, 2 / 9, 3 / 9])
+
+
+@unittest.skipUnless(HAVE_NUMPY, "needs NumPy")
+class LossFormulaTest(unittest.TestCase):
+    """training.md §3.3's formulas as `spec_loss` writes them, on hand-computed values."""
+
+    def case(self, kind: str, **config) -> "gen_train.LossCase":
+        return gen_train.LossCase(kind, "x", 0, {"kind": kind} | config, lambda rng: (None, None), "")
+
+    def test_cross_entropy(self) -> None:
+        import numpy as np
+
+        x = np.array([[1000, 0, -1000]], dtype=np.float32)
+        self.assertEqual(gen_train.spec_loss(self.case("cross_entropy"), x, np.array([2]))[0], 2000.0)
+        v, _ = gen_train.spec_loss(self.case("cross_entropy", label_smoothing=0.1), x, np.array([2]))
+        self.assertAlmostEqual(v, 0.9 * 2000 + 0.1 / 3 * 3000, places=9)
+        v, _ = gen_train.spec_loss(self.case("cross_entropy", label_smoothing=0.5), np.array([[3.0]]), np.array([0]))
+        self.assertEqual(v, 0.0)
+
+    def test_binary_cross_entropy(self) -> None:
+        import numpy as np
+
+        x, y = np.array([0.0, 1.0, 0.0, 1.0]), np.array([0.0, 1.0, 1.0, 0.0])
+        v, g = gen_train.spec_loss(self.case("binary_cross_entropy"), x, y)
+        self.assertEqual(v, 50.0)
+        self.assertEqual(list(g), [0.0, 0.0, -0.25e12, 0.25e12])
+        v, _ = gen_train.spec_loss(self.case("binary_cross_entropy", with_logits=True), np.array([200.0, -200.0]),
+                                   np.array([0.0, 0.0]))
+        self.assertAlmostEqual(v, 100.0, places=12)
 
 
 @unittest.skipUnless(HAVE_NUMPY, "needs NumPy")
