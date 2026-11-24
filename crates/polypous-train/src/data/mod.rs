@@ -80,6 +80,7 @@ struct Inner {
     record: Option<u64>,
     column: Option<String>,
     source: Option<std::io::Error>,
+    no_used_fields: bool,
 }
 
 impl fmt::Display for Inner {
@@ -139,6 +140,15 @@ impl DataError {
         self.0.column.as_deref()
     }
 
+    /// Whether the dataset has none of the fields the training uses ([`FieldSelection::Only`]).
+    /// Such a dataset has no sample count, so the reader fails; the trainer reports it as the
+    /// first used field missing from the dataset, with its config pointer (training.md §2.10
+    /// step 5).
+    #[must_use]
+    pub fn has_no_used_fields(&self) -> bool {
+        self.0.no_used_fields
+    }
+
     /// The I/O error behind a [`DataErrorKind::Io`] error.
     #[must_use]
     pub fn io_error(&self) -> Option<&std::io::Error> {
@@ -155,7 +165,16 @@ impl DataError {
             record: None,
             column: None,
             source: None,
+            no_used_fields: false,
         }))
+    }
+
+    /// `InvalidInput`: the dataset has none of the fields the training uses (see
+    /// [`DataError::has_no_used_fields`]).
+    pub(crate) fn no_used_fields(message: impl Into<String>) -> Self {
+        let mut e = Self::invalid(message);
+        e.0.no_used_fields = true;
+        e
     }
 
     pub(crate) fn invalid(message: impl Into<String>) -> Self {

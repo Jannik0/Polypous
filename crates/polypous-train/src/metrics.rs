@@ -79,6 +79,20 @@ impl LossMetric {
         self.samples = self.samples.saturating_add(b);
     }
 
+    /// An epoch restored from a checkpoint's `epoch_sums` (training.md §5.2): `Σ loss_b · B_b`
+    /// and `Σ B_b`, exactly as [`LossMetric::weighted_sum`] and [`LossMetric::samples`] gave them.
+    pub fn from_sums(weighted_sum: f64, samples: u64) -> Self {
+        Self {
+            weighted_sum,
+            samples,
+        }
+    }
+
+    /// `Σ loss_b · B_b` so far, in `f64` (`loss_sum` of a checkpoint's `epoch_sums`).
+    pub fn weighted_sum(&self) -> f64 {
+        self.weighted_sum
+    }
+
     /// The samples added so far.
     pub fn samples(&self) -> u64 {
         self.samples
@@ -273,6 +287,17 @@ impl Accuracy {
             reason = "counts stay far below 2^53, exact in f64"
         )]
         (self.total > 0).then(|| self.correct as f64 / self.total as f64)
+    }
+
+    /// Restores the counts of a checkpoint's `epoch_sums` (training.md §5.2). Returns `false`,
+    /// and changes nothing, if `correct > total`.
+    pub fn restore(&mut self, correct: u64, total: u64) -> bool {
+        if correct > total {
+            return false;
+        }
+        self.correct = correct;
+        self.total = total;
+        true
     }
 
     /// Starts a new epoch (the threshold stays).

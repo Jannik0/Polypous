@@ -82,7 +82,7 @@ pub(crate) fn read(
 
 fn no_used_fields(name: &str, dataset: &InMemoryDataset) -> DataError {
     let names: Vec<&str> = dataset.fields.iter().map(|(f, _)| f.as_str()).collect();
-    DataError::invalid(format!(
+    DataError::no_used_fields(format!(
         "the in-memory dataset `{name}` has none of the fields the training uses (it has {names:?})"
     ))
 }

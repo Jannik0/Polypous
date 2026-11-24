@@ -79,7 +79,7 @@ pub(crate) fn read(
     let want_image = fields.wants(&config.image_field);
     let want_label = fields.wants(&config.label_field);
     if !want_image && !want_label {
-        return Err(DataError::invalid(format!(
+        return Err(DataError::no_used_fields(format!(
             "neither `{}` nor `{}` is used by the training",
             config.image_field, config.label_field
         ))

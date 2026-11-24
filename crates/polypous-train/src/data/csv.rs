@@ -431,7 +431,7 @@ fn read_inner(
         ));
     }
     if used.is_empty() {
-        return Err(DataError::invalid(format!(
+        return Err(DataError::no_used_fields(format!(
             "none of the CSV dataset's fields is used by the training (it has {:?})",
             columns.keys().collect::<Vec<_>>()
         )));
