@@ -59,6 +59,44 @@ All notable changes to Polypous are documented here. The format follows
   validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
   with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
   `std >= 0`, values that round to a finite f32).
+- The trainer of `polypous-train` (#82, training.md §1.2, §2, §4, §5; public-api.md §1.4, for
+  the facade in #83):
+  - `TrainingConfig` with `from_json`, `from_file` (at most 1 MiB) and a canonical `to_json`
+    (every field, defaults filled in; `from_json(to_json(c)) == c`). Unknown fields, a key given
+    twice, missing and mistyped fields and every range of §2.1–§2.9 are `InvalidInput` with the
+    full JSON pointer from the root (`/optimizer/betas/1`, `/data/train/columns/a~1b/from`);
+    `precision` `f16`/`bf16` is `UnsupportedOperation`. Numbers are read as the nearest `f64`
+    (`serde_json` with `float_roundtrip`, now a normal dependency).
+  - `Trainer::new` makes the checks of §2.10 in their order (config, graph without state, the
+    device through a resolver the caller gives, references, the used fields of the data, the
+    bound shapes of every batch size with the target values and the runtime's training-mode
+    checks, the initial weight file with a subset of the params, the run directory) before it
+    uploads anything; the cancellation token is checked between the steps.
+  - The loop of §1.2: one training-mode forward and one backward per step, running statistics
+    written back right after the forward pass, params without a gradient skipped, clipping,
+    `lr(k)`, the optimizer; the validation pass in inference mode; the epoch metrics.
+  - `TrainingEvent` (`started`, `epoch_started`, `step`, `validation_started`,
+    `epoch_finished`, `checkpoint_saved`, `checkpoint_removed`, `finished`) with the JSON of
+    §4.1 (non-finite numbers as `"nan"`, `"inf"`, `"-inf"`), in the order of §4.2, `step`
+    throttled to 100 ms on an injectable monotonic clock; cancellation after every step, before
+    each validation batch and before each checkpoint, with a checkpoint on cancel; `run` again
+    continues.
+  - Checkpoints (`step-` + 12 digits) written atomically with `fsync` (the directory flushes on
+    Unix only), `state.json` as §5.2, `optimizer.safetensors` as `<param>:<state>`,
+    `keep_last`/`keep_best` (only epoch checkpoints have a value, judged from each checkpoint's
+    `state.json`; NaN never best, a tie keeps the earlier one), deleting only
+    `step-*` and `.tmp-step-*` entries.
+  - `Trainer::resume` loads an untrusted checkpoint with every check of §5.4 before the data
+    it protects is read (fuzz-tested with truncated, bit-flipped and edited files), re-reads
+    and fingerprints the data, and refuses or (`discard_newer`) replaces newer checkpoints.
+    Resumed and continued runs are bit-identical to uninterrupted ones on the CPU (params,
+    optimizer state, history, best and the checkpoint files).
+  - `Trainer::export` writes a graph and weights pair that `polypous-runtime` loads, with
+    outputs bit-identical to the trainer's inference-mode outputs on the CPU.
+  - The `Trainer` handle (`Clone + Send + Sync`) with `info`, `run`, `export` and an idempotent
+    `close`; `run` and `export` are `InvalidInput` while running (also from the run's own
+    callback), after a failed run and after `close`. `TrainError` carries the kinds and context
+    of §6.
 - Datasets, shuffling and batching in `polypous-train` (#81, training.md §2.3, §2.4, §3.5, §3.6):
   `read_datasets` reads a config's `train` and `validation` sets into host `Dataset`s (named
   `f32`/`i64`/`i32`/`bool` fields of shape `[n] + sample shape`, in dataset order) from

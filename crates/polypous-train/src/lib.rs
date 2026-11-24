@@ -17,18 +17,30 @@
 //!   config types and limits, and the seeded shuffling and batching (§2.3, §2.4, §3.5, §3.6).
 //! - [`targets`]: the checks of a loss or metric's prediction and target, and of the target
 //!   values, made when the trainer is created (§2.10 step 6).
-//!
-//! The rest (the trainer, checkpoint files) comes with later M2 tasks.
+//! - [`training_config`]: the root of the training config, [`TrainingConfig`] (§2), with its
+//!   JSON form and every range check, with full pointers.
+//! - [`trainer`]: the [`Trainer`] (§1.2, §2.10, §4, §5): creation with the checks of §2.10, the
+//!   loop, events, cancellation, checkpoints, resume and export.
+//! - [`events`]: [`TrainingEvent`], [`TrainingOutcome`], [`TrainerInfo`] and the clock (§4).
+//! - [`checkpoint`]: the run directory, writing checkpoints atomically, `keep_last`/`keep_best`
+//!   and loading an untrusted checkpoint (§5).
+//! - [`error`]: [`TrainError`], with the kinds and context of §6.
 
+pub mod checkpoint;
 pub mod clip;
 pub mod config;
 pub mod data;
+pub mod error;
+pub mod events;
 pub mod init;
+pub(crate) mod json;
 pub mod loss;
 pub mod metrics;
 pub mod optimizer;
 pub mod schedule;
 pub mod targets;
+pub mod trainer;
+pub mod training_config;
 
 pub use clip::clip_gradients;
 pub use config::{
@@ -40,9 +52,17 @@ pub use data::{
     Batcher, DataConfig, DataError, DataErrorKind, DataSources, Dataset, DatasetConfig, Datasets,
     FieldSelection, InMemoryDataset, read_datasets,
 };
+pub use error::{TrainError, TrainErrorKind};
+pub use events::{
+    Best, Clock, HistoryEntry, ManualClock, Metrics, StopReason, SystemClock, TrainableParam,
+    TrainerInfo, TrainingEvent, TrainingOutcome,
+};
 pub use init::{InitError, initial_values};
+pub use json::Number;
 pub use loss::{Loss, LossError};
 pub use metrics::{Accuracy, LossMetric, MetricError};
 pub use optimizer::{Optimizer, OptimizerError, StateTensor, TensorMap};
 pub use schedule::Schedule;
 pub use targets::{TargetError, TargetValue};
+pub use trainer::{DeviceResolver, ResumeOptions, Trainer, TrainerOptions};
+pub use training_config::{CheckpointConfig, TrainingConfig};

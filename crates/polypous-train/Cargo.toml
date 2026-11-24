@@ -30,14 +30,14 @@ png = "0.18.1"
 # The count of ignored files of an image folder is logged at `warn` (§3.5.4). MIT; already a
 # dependency of polypous-formats and the backend.
 tracing = "0.1.44"
-
-# The reference tests read the init and training component fixtures' JSON sidecars and
-# safetensors files (`tests/init_reference.rs`, `tests/train_reference.rs`). Both MIT OR
-# Apache-2.0 or workspace crates; already in the lock file. `float_roundtrip` (a feature of the
-# same crate, no new dependency) parses JSON numbers to the nearest f64, which the schedule
-# fixtures' exact values need: the default parser can be 1 ulp off.
-[dev-dependencies]
+# The training config, events and checkpoint `state.json` are JSON (training.md §2, §4.1, §5.2).
+# MIT OR Apache-2.0; already in the lock file and a dependency of polypous-ir and the facade.
+# `float_roundtrip` (a feature of the same crate, no new dependency) parses JSON numbers to the
+# nearest f64, as §2.1 requires ("read as the nearest f64"); the default parser can be 1 ulp off.
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+
+# The reference tests read the fixtures' JSON sidecars with `serde_json` (a normal dependency,
+# above; `float_roundtrip` is also what the schedule fixtures' exact values need).
 
 [lints]
 workspace = true

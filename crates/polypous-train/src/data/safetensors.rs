@@ -56,7 +56,7 @@ pub(crate) fn read(
     }
     let Some(len) = len else {
         let names: Vec<&str> = file.names().collect();
-        return Err(DataError::invalid(format!(
+        return Err(DataError::no_used_fields(format!(
             "the file has none of the tensors the training uses (it has {names:?})"
         ))
         .with_file(path));

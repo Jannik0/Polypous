@@ -857,7 +857,11 @@ After each checkpoint is written (§5.1 step 5):
 - **`keep_best`**: the best checkpoint is the one whose `state.json` `history` has the best value of
   the metric in its last entry: the largest for `accuracy`, the smallest for `loss`. A NaN is never
   best; on a tie the earlier checkpoint stays best. A checkpoint written before the first epoch
-  finished has no value. The best checkpoint is recorded in `best` and in the outcome.
+  finished has no value. Only a checkpoint that §5.1's first rule writes, after an
+  `epoch_finished`, has a value: one written in the middle of an epoch (`every_steps`) or on
+  cancellation has none, even if its last history entry is that of the previous epoch, because
+  its weights are not the ones that entry measured. The best checkpoint is recorded in `best` and
+  in the outcome.
 - **`keep_last = n`**: every `step-*` checkpoint of the run directory except the `n` with the
   largest step and the best one is deleted, oldest first, each with a `checkpoint_removed` event. A
   failure to delete is logged at `warn` and doesn't stop training.
