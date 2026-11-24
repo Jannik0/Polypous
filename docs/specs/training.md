@@ -231,7 +231,7 @@ Every dataset object has a `kind`. The kinds, their fields and how they read dat
 | `tensors` | `name` (string, *required*) |
 | `safetensors` | `path` (path, *required*) |
 | `csv` | `path` (path, *required*), `columns` (object, *required*) |
-| `image_folder` | `path` (path, *required*), `image_size` (`[H, W]`, *required*, each 1–4,096), `channels` (`1` or `3`, `1`), `image_field` (name, `"image"`), `label_field` (name, `"label"`) |
+| `image_folder` | `path` (path, *required*), `image_size` (`[H, W]`, *required*, each 1–4,096), `channels` (`1` or `3`, `1`), `image_field` (name, `"image"`), `label_field` (name, `"label"`, not equal to `image_field`) |
 | `split` | `from` (string, `"train"`; only `"train"`), `fraction` (float, *required*, `0 < fraction < 1`) |
 
 ### 2.5 `inputs`
@@ -598,7 +598,9 @@ path/
   (ASCII case-insensitive), sorted by the bytes of their names. Other files (`.DS_Store`,
   `Thumbs.db`, `.jpg`) and nested directories are ignored; the number of ignored files is logged at
   `warn`. Entries directly in `path` that aren't directories are ignored too. Symbolic links are
-  followed (there is no recursion, so they can't loop).
+  followed (there is no recursion, so they can't loop); a link that doesn't lead to a regular file
+  or directory is ignored like the other entries. A regular file whose name ends in `.png` but
+  isn't valid UTF-8 is `InvalidInput`, as for class folders.
 - **Dataset order:** class 0's images in name order, then class 1's, and so on.
 - A class folder with no PNG image is `InvalidInput` naming it (a folder of JPEGs fails here, with
   a clear message). There must be at least one class.
@@ -842,8 +844,8 @@ param name, so the names can't collide. The state names are PyTorch's (`optimize
   no state. The **schedule state** is `step` (§3.2). The **data position** is `epoch` and `batch`;
   the epoch's order is recomputed (§3.6).
 - `data_fingerprint` is 16 lowercase hex digits of `fnv1a` (graph-ir.md §3.1.12, over bytes) of the
-  datasets as read (before a split), in role order (`train`, then `validation` if it isn't a
-  `split`), field by field in name order: the field name, `0x00`, the dtype name, `0x00`, the shape
+  datasets as read (before a split), with only their used fields (§3.5), in role order (`train`,
+  then `validation` if it isn't a `split`), field by field in name order: the field name, `0x00`, the dtype name, `0x00`, the shape
   as 8-byte little-endian integers, and the data bytes (little-endian, row-major). It detects data
   that changed between a run and its resume.
 - `epoch_sums` holds the exact accumulators of §3.4 (`f64` sum, integer counts), so a resumed epoch
