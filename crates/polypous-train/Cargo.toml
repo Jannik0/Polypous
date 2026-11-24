@@ -19,6 +19,17 @@ thiserror = "2.0.21"
 # config's JSON (training.md §2.8). MIT OR Apache-2.0; already a dependency of polypous-ir,
 # polypous-backend and the facade.
 serde = { version = "1.0.229", features = ["derive"] }
+# The `safetensors` dataset reads its file through the workspace's safetensors reader
+# (training.md §3.5.2, formats.md §1). Pure Rust, no GPU dependency.
+polypous-formats.workspace = true
+# The `image_folder` dataset decodes PNG files (training.md §3.5.4; #81). MIT OR Apache-2.0, pure
+# Rust, already in the lock file at this version (through `image`), so no second copy. Its own
+# dependencies (bitflags, crc32fast, fdeflate, flate2, miniz_oxide, simd-adler32, adler2) are
+# MIT/Apache-2.0/Zlib and have no GPU dependency.
+png = "0.18.1"
+# The count of ignored files of an image folder is logged at `warn` (§3.5.4). MIT; already a
+# dependency of polypous-formats and the backend.
+tracing = "0.1.44"
 
 # The reference tests read the init and training component fixtures' JSON sidecars and
 # safetensors files (`tests/init_reference.rs`, `tests/train_reference.rs`). Both MIT OR
@@ -27,7 +38,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 # fixtures' exact values need: the default parser can be 1 ulp off.
 [dev-dependencies]
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
-polypous-formats.workspace = true
 
 [lints]
 workspace = true

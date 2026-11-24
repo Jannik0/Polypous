@@ -59,6 +59,22 @@ All notable changes to Polypous are documented here. The format follows
   validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
   with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
   `std >= 0`, values that round to a finite f32).
+- Datasets, shuffling and batching in `polypous-train` (#81, training.md §2.3, §2.4, §3.5, §3.6):
+  `read_datasets` reads a config's `train` and `validation` sets into host `Dataset`s (named
+  `f32`/`i64`/`i32`/`bool` fields of shape `[n] + sample shape`, in dataset order) from
+  `tensors` (in-memory `TensorData`, `f16`/`bf16` widened exactly), `safetensors` (through
+  `polypous-formats`, only the used tensors read), `csv{columns}` (an own RFC 4180 parser: quotes,
+  CRLF, BOM, finite `f32` and range-checked integers, errors naming the record and column) and
+  `image_folder` (classes and files in byte order, PNG of every color type and bit depth with the
+  `png` crate, palette expanded, alpha dropped, `v / (2^d − 1)`), then a seeded `split`. Every size
+  is checked before memory is reserved, and reservations are fallible: `data.max_bytes` covers
+  both sets (checked from metadata before decoding), with the file, record, class and image
+  limits of §3.5. `Batcher` gives epoch `e`'s order (Fisher–Yates on the Polypous generator,
+  `stream_key(seed, e, "shuffle:train")`) and batch `b` of it directly, with the smaller last
+  batch kept, so a resume needs no saved data state; the `data_fingerprint` of §5.2 is computed
+  too. The `data` config types (`DataConfig`, `DatasetConfig`) deserialize from §2.3/§2.4's JSON
+  and validate their ranges. New dependency: `png` 0.18.1 (MIT OR Apache-2.0, already in the lock
+  file).
 - Losses and metrics in `polypous-train` (#80, training.md §2.6, §2.7, §3.3, §3.4): `Loss`
   computes `mse`, `cross_entropy{label_smoothing}` (class indices `i64` or `i32`) and
   `binary_cross_entropy{with_logits}` as the batch mean, a `[1]` `f32` tensor that is

@@ -4565,6 +4565,7 @@ dependencies = [
 name = "polypous-train"
 version = "0.0.0"
 dependencies = [
+ "png",
  "polypous-backend",
  "polypous-formats",
  "polypous-ir",
@@ -4572,6 +4573,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
