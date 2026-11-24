@@ -319,13 +319,15 @@ No param is uploaded and nothing runs on the device before steps 1–8 have pass
      set and, with a validation set, in it too, with the same dtype and sample shape;
    - each field's dtype fits its use: a field fed to a graph input has the input's dtype (`float`
      inputs take `f32` fields); targets follow §3.3 and §3.4.
-6. **Shapes.** Bind the graph (graph-ir.md §2.3.4) with the shapes of a full batch (`batch_size`
-   samples) and, if a set's last batch is smaller, with that size too. A binding error is
-   `InvalidInput` naming the input. Then check each loss and metric's prediction dtype and shape,
+6. **Shapes.** Bind the graph (graph-ir.md §2.3.4) with the batch sizes that occur in each set: a
+   full batch of `min(batch_size, n)` samples (`n` the set's sample count; a set smaller than
+   `batch_size` never has a batch of `batch_size`) and, if the set's last batch is smaller, that
+   size too. A binding error is `InvalidInput` naming the input. Then check each loss and metric's prediction dtype and shape,
    as binding gives them, against its target (§3.3, §3.4): `InvalidInput` naming the output and the field.
    Then the target values (§3.3, §3.4: class indices below `C`, binary targets 0 or 1, …), on every
    sample of both sets: `InvalidInput` naming the field, the sample and the value.
-   Then the runtime's training-mode checks (runtime.md §3.1) on the same shapes: a running
+   Then the runtime's training-mode checks (runtime.md §3.1) on the training set's shapes (the
+   validation pass runs in inference mode, so a validation batch of one sample is fine): a running
    statistic with more than one use is `UnsupportedOperation`, a `batch_norm` with one value per
    channel is `InvalidInput` naming the node. So a last batch of one sample fails here, not in the
    middle of an epoch.
@@ -521,7 +523,8 @@ pass (`val.*`). Values are `f64`.
     `x > threshold` on an `f32` tensor. A NaN prediction is never above the threshold.
 - **No samples:** a metric over zero samples (an epoch or validation pass without samples) has no
   value, not the NaN of `0 / 0`, so it can't be mistaken for a non-finite loss. A batch of zero
-  samples adds nothing.
+  samples adds nothing. An accepted training run never has an epoch or validation pass without
+  samples (every set has at least one sample, §3.5), so every reported metric has a value.
 - Metrics don't take part in the backward pass and never change the params.
 - Unlike the loss, `accuracy` is exact: there is no tolerance (testing-strategy.md §2).
 
@@ -706,8 +709,9 @@ The validation set is batched the same way, in its dataset order.
 | `checkpoint_removed` | `path`: a checkpoint deleted by `keep_last` (§5.3) |
 | `finished` | `outcome`: the `TrainingOutcome` that `run` returns |
 
-- **Numbers.** Integers are JSON integers. `loss`, `lr` and metric values are `f64` written in the
-  shortest form that reads back as the same `f64`. A non-finite value is the string `"nan"`, `"inf"`
+- **Numbers.** Integers are JSON integers. `loss`, `lr` and metric values are `f64` written with
+  the shortest digits that read back as the same `f64`; the notation (`0.00001` or `1e-5`) is any
+  valid JSON number, and readers must accept both. A non-finite value is the string `"nan"`, `"inf"`
   or `"-inf"` (JSON has no such numbers). The same rule holds in `state.json` (§5.2).
 - Readers must accept new fields and new event kinds (public-api.md §1.2).
 
