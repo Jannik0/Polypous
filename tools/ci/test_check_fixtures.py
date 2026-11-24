@@ -25,6 +25,7 @@ MODEL_SAMPLE = os.path.join(REPO, "fixtures", "small", "models", "cnn")
 GRADS = os.path.join(REPO, "fixtures", "small", "grads")
 INIT = os.path.join(REPO, "fixtures", "small", "init")
 TRAINING_SAMPLE = os.path.join(REPO, "fixtures", "small", "training", "bn_dropout")
+TRAIN = os.path.join(REPO, "fixtures", "small", "train")
 
 
 def write(path: str, data: bytes) -> None:
@@ -585,6 +586,159 @@ class TrainingValidationTest(unittest.TestCase):
     def test_file_directly_in_training(self) -> None:
         write(os.path.join(self.root, "training", "stray.json"), b"{}")
         self.assert_problem("a file directly in training/")
+
+
+class TrainValidationTest(unittest.TestCase):
+    """Copies committed training component fixtures (testing-strategy.md §3.7) and breaks them."""
+
+    CASES = {
+        "sgd": ("optimizer.sgd", "momentum"),
+        "plain": ("optimizer.sgd", "weight_decay"),
+        "adam": ("optimizer.adam", "defaults"),
+        "clip": ("gradient_clip", "clipped"),
+        "cosine": ("schedule.cosine", "warmup5"),
+        "step": ("schedule.step", "every3"),
+    }
+
+    def setUp(self) -> None:
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        for component, name in self.CASES.values():
+            os.makedirs(os.path.join(self.root, "train", component), exist_ok=True)
+            for ext in (".json", ".safetensors"):
+                src = os.path.join(TRAIN, component, name + ext)
+                if os.path.exists(src):
+                    shutil.copy(src, os.path.join(self.root, "train", component, name + ext))
+
+    def path(self, key: str, ext: str = ".json") -> str:
+        component, name = self.CASES[key]
+        return os.path.join(self.root, "train", component, name + ext)
+
+    def edit(self, key: str, change) -> None:
+        with open(self.path(key), encoding="utf-8") as f:
+            sidecar = json.load(f)
+        change(sidecar)
+        with open(self.path(key), "w", encoding="utf-8", newline="\n") as f:
+            f.write(fixturelib.canonical_json(sidecar))
+
+    def assert_problem(self, text: str) -> None:
+        problems = check_fixtures.check(self.root)
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def test_copy_is_clean(self) -> None:
+        self.assertEqual(check_fixtures.check(self.root), [])
+
+    def test_schema_version(self) -> None:
+        self.edit("adam", lambda s: s.update(schema_version=2))
+        self.assert_problem("schema_version 2 is not 1")
+
+    def test_keys_in_order(self) -> None:
+        def swap(s: dict) -> None:
+            items = list(s.items())
+            items[4], items[5] = items[5], items[4]
+            s.clear()
+            s.update(items)
+
+        self.edit("adam", swap)
+        self.assert_problem("differ from the schema")
+
+    def test_values_only_for_schedules(self) -> None:
+        self.edit("adam", lambda s: s.update(values=[]))
+        self.assert_problem("differ from the schema")
+
+    def test_unknown_component(self) -> None:
+        self.edit("adam", lambda s: s.update(component="optimizer.rmsprop"))
+        self.assert_problem("component 'optimizer.rmsprop' is not one of")
+
+    def test_component_must_match_the_directory(self) -> None:
+        self.edit("adam", lambda s: s.update(component="optimizer.adamw", config={"kind": "adamw"}))
+        self.assert_problem("does not match the directory name")
+
+    def test_case_name_must_match_file(self) -> None:
+        self.edit("clip", lambda s: s.update(case="other"))
+        self.assert_problem("does not match the file name")
+
+    def test_config_kind_and_fields(self) -> None:
+        self.edit("adam", lambda s: s.update(config={"kind": "sgd"}))
+        self.assert_problem("needs kind 'adam'")
+        self.edit("adam", lambda s: s.update(config={"kind": "adam", "momentum": 0.9}))
+        self.assert_problem("needs kind 'adam'")
+
+    def test_optimizer_state_outputs(self) -> None:
+        # momentum ≠ 0 has a momentum_buffer per step.
+        self.edit("sgd", lambda s: s["config"].pop("momentum"))
+        self.assert_problem("outputs ['param_1', 'param_2', 'param_3']")
+        self.edit("plain", lambda s: s["config"].update(momentum=0.5))
+        self.assert_problem("'momentum_buffer_1'")
+
+    def test_optimizer_tolerance(self) -> None:
+        self.edit("adam", lambda s: s.update(tolerance={"exact": False, "atol": 1e-5, "rtol": 1e-6}))
+        self.assert_problem("tolerance must be")
+
+    def test_optimizer_shapes(self) -> None:
+        self.edit("adam", lambda s: s["outputs"][0].update(shape=[8, 4]))
+        self.assert_problem("every tensor has the param's shape")
+
+    def test_sidecar_against_the_file(self) -> None:
+        def reshape(s: dict) -> None:
+            for e in s["inputs"] + s["outputs"]:
+                e["shape"] = [32]
+
+        self.edit("adam", reshape)
+        self.assert_problem("is f32 [32] in the sidecar, F32 [4, 8] in the file")
+
+    def test_clip_names_and_shapes(self) -> None:
+        self.edit("clip", lambda s: s["outputs"][0].update(name="total"))
+        self.assert_problem("outputs ['total_norm'")
+        self.edit("clip", lambda s: s["outputs"][0].update(name="total_norm", shape=[]))
+        self.assert_problem("total_norm has shape [1]")
+
+    def test_clip_config(self) -> None:
+        self.edit("clip", lambda s: s.update(config={"max_norm": 0}))
+        self.assert_problem("max_norm")
+
+    def test_clip_tolerance(self) -> None:
+        self.edit("clip", lambda s: s.update(tolerance={"exact": False, "atol": 1e-6, "rtol": 1e-6}))
+        self.assert_problem("tolerance must be")
+
+    def test_schedule_values_per_step(self) -> None:
+        self.edit("step", lambda s: s.update(values=s["values"][:-1]))
+        self.assert_problem("values must be total_steps (10) finite numbers")
+
+    def test_schedule_tolerances(self) -> None:
+        self.edit("step", lambda s: s.update(tolerance={"exact": False, "atol": 1e-15, "rtol": 0}))
+        self.assert_problem("tolerance must be {'exact': True")
+        self.edit("cosine", lambda s: s.update(tolerance={"exact": False, "atol": 1e-14, "rtol": 0}))
+        self.assert_problem("tolerance must be {'exact': False, 'atol': 1e-15")
+
+    def test_schedule_config(self) -> None:
+        self.edit("cosine", lambda s: s["config"]["schedule"].update(gamma=0.1))
+        self.assert_problem("schedule needs kind 'cosine'")
+        self.edit("cosine", lambda s: s["config"].pop("total_steps"))
+        self.assert_problem("must have exactly the keys lr, total_steps, schedule")
+
+    def test_schedule_has_no_tensors(self) -> None:
+        shutil.copy(self.path("clip", ".safetensors"), self.path("step", ".safetensors"))
+        self.assert_problem("a schedule case has no safetensors file")
+        self.edit("step", lambda s: s.update(inputs=[{"name": "x", "dtype": "f32", "shape": [1]}]))
+        self.assert_problem("a schedule case has no inputs and no outputs")
+
+    def test_subnormal_state(self) -> None:
+        header = fixturelib.read_safetensors_header(self.path("adam", ".safetensors"))
+        start = header["exp_avg_2"]["data_offsets"][0]
+        with open(self.path("adam", ".safetensors"), "r+b") as f:
+            (n,) = struct.unpack("<Q", f.read(8))
+            f.seek(8 + n + start)
+            f.write(struct.pack("<I", 1))
+        self.assert_problem("tensor 'exp_avg_2' has subnormal values at flat indices [0]")
+
+    def test_safetensors_without_sidecar(self) -> None:
+        os.remove(self.path("clip"))
+        self.assert_problem("no JSON sidecar")
+
+    def test_file_directly_in_train(self) -> None:
+        write(os.path.join(self.root, "train", "stray.json"), b"{}")
+        self.assert_problem("train/stray.json: not in train/<component>/")
 
 
 if __name__ == "__main__":

@@ -4569,6 +4569,7 @@ dependencies = [
  "polypous-formats",
  "polypous-ir",
  "polypous-runtime",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
 ]

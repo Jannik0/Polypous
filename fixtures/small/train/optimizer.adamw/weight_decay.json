@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "component": "optimizer.adamw",
+  "case": "weight_decay",
+  "description": "AdamW with a large decoupled weight decay. Shape [16], 3 steps with a constant lr.",
+  "config": {
+    "kind": "adamw",
+    "lr": 0.01,
+    "weight_decay": 0.1
+  },
+  "inputs": [
+    {
+      "name": "param",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "grad_1",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "grad_2",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "grad_3",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "param_1",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "exp_avg_1",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "exp_avg_sq_1",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "param_2",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "exp_avg_2",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "exp_avg_sq_2",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "param_3",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "exp_avg_3",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "exp_avg_sq_3",
+      "dtype": "f32",
+      "shape": [
+        16
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-06,
+    "rtol": 1e-06
+  },
+  "reference": "torch.optim.AdamW([p], lr=0.01, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.1, foreach=False)",
+  "notes": "Step s gives the gradient grad_s to the param; param_s and the state after it (training.md \u00a75.2's names) are PyTorch's own f32 results (testing-strategy.md \u00a72, \"Optimizer tolerance\"). Config fields left out take training.md \u00a72.8's defaults. The global step counter k is s - 1, and lr(k) is the config's lr.",
+  "seed": 22,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

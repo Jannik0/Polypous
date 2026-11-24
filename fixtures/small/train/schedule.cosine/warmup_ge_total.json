@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "component": "schedule.cosine",
+  "case": "warmup_ge_total",
+  "description": "W >= T: every step is a warmup step (T - W is never used). lr 0.1, T = 6.",
+  "config": {
+    "lr": 0.1,
+    "total_steps": 6,
+    "schedule": {
+      "kind": "cosine",
+      "warmup_steps": 10,
+      "min_lr": 0.01
+    }
+  },
+  "inputs": [],
+  "outputs": [],
+  "values": [
+    0.010000000000000002,
+    0.020000000000000004,
+    0.03,
+    0.04000000000000001,
+    0.05,
+    0.06
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-15,
+    "rtol": 0
+  },
+  "reference": "k < 10: LambdaLR(optimizer, lambda k: min(1, (k + 1) / 10)); k >= 10: CosineAnnealingLR(optimizer, T_max=-4, eta_min=0.01)._get_closed_form_lr() at last_epoch = k - 10",
+  "notes": "values[k] is the learning rate of optimizer step k (training.md \u00a73.2): the optimizer's lr after k scheduler steps, the scheduler stepped once after every optimizer.step(). `lr` is the optimizer's lr and `total_steps` is T.",
+  "seed": 0,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

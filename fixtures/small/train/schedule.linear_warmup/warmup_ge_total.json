@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "component": "schedule.linear_warmup",
+  "case": "warmup_ge_total",
+  "description": "W > T: lr is never reached. lr 0.1, T = 4.",
+  "config": {
+    "lr": 0.1,
+    "total_steps": 4,
+    "schedule": {
+      "kind": "linear_warmup",
+      "warmup_steps": 7
+    }
+  },
+  "inputs": [],
+  "outputs": [],
+  "values": [
+    0.014285714285714285,
+    0.02857142857142857,
+    0.04285714285714286,
+    0.05714285714285714
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0,
+    "rtol": 0
+  },
+  "reference": "LambdaLR(optimizer, lambda k: min(1, (k + 1) / 7)), stepped once per optimizer step",
+  "notes": "values[k] is the learning rate of optimizer step k (training.md \u00a73.2): the optimizer's lr after k scheduler steps, the scheduler stepped once after every optimizer.step(). `lr` is the optimizer's lr and `total_steps` is T.",
+  "seed": 0,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

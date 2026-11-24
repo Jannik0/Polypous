@@ -887,3 +887,181 @@ def validate_training_dir(model_dir: str) -> list[str]:
     if cases == 0:
         problems.append(f"{model_dir}: no cases")
     return problems
+
+
+# ---------------------------------------------------------------------------------------------
+# Training component fixtures (docs/testing-strategy.md §3.7), in
+# `fixtures/small/train/<component>/<case>.{json,safetensors}`: the optimizers, gradient clipping
+# and the schedules (#79). The losses (`loss.*`) are added with #80.
+
+TRAIN_SCHEMA_VERSION = 1
+TRAIN_SIDECAR_KEYS = (
+    "schema_version",
+    "component",
+    "case",
+    "description",
+    "config",
+    "inputs",
+    "outputs",
+    "tolerance",
+    "reference",
+    "notes",
+    "seed",
+    "generator",
+    "versions",
+)
+# Schedule sidecars add `values` after `outputs`.
+TRAIN_SCHEDULE_KEYS = TRAIN_SIDECAR_KEYS[:7] + ("values",) + TRAIN_SIDECAR_KEYS[7:]
+# The fields of each optimizer kind (training.md §2.8) and its state names (§5.2).
+TRAIN_OPTIMIZER_FIELDS = {
+    "sgd": ("lr", "momentum", "dampening", "nesterov", "weight_decay"),
+    "adam": ("lr", "betas", "eps", "weight_decay"),
+    "adamw": ("lr", "betas", "eps", "weight_decay"),
+}
+TRAIN_SCHEDULE_FIELDS = {
+    "constant": (),
+    "step": ("every", "gamma"),
+    "cosine": ("warmup_steps", "min_lr"),
+    "linear_warmup": ("warmup_steps",),
+}
+TRAIN_OPTIMIZER_STEPS = 3
+# testing-strategy.md §2.
+TRAIN_OPTIMIZER_TOLERANCE = {"exact": False, "atol": 1e-6, "rtol": 1e-6}
+TRAIN_CLIP_TOLERANCE = {"exact": False, "atol": 1e-5, "rtol": 1e-3}
+TRAIN_COSINE_ATOL_PER_LR = 1e-14
+
+
+def train_components() -> tuple[str, ...]:
+    return (
+        tuple(f"optimizer.{k}" for k in TRAIN_OPTIMIZER_FIELDS)
+        + ("gradient_clip",)
+        + tuple(f"schedule.{k}" for k in TRAIN_SCHEDULE_FIELDS)
+    )
+
+
+def optimizer_state_names(kind: str, config: dict[str, Any]) -> tuple[str, ...]:
+    if kind == "sgd":
+        return ("momentum_buffer",) if config.get("momentum", 0) != 0 else ()
+    return ("exp_avg", "exp_avg_sq")
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _train_config_problems(json_path: str, component: str, config: Any) -> list[str]:
+    """The `config` object of a training component sidecar: the kind and the field names of
+    training.md §2.8 (the ranges are the Rust config types' business; their tests check them)."""
+    bad = f"{json_path}: bad config {config!r}"
+    if not isinstance(config, dict):
+        return [bad]
+    if component.startswith("optimizer."):
+        kind = component.split(".", 1)[1]
+        fields = set(config) - {"kind"}
+        if config.get("kind") != kind or not fields <= set(TRAIN_OPTIMIZER_FIELDS[kind]):
+            return [f"{bad}: needs kind {kind!r} and only the fields {list(TRAIN_OPTIMIZER_FIELDS[kind])}"]
+        lr = config.get("lr", 1e-3)
+        if not (_is_number(lr) and lr >= 0):
+            return [f"{bad}: lr must be a number >= 0"]
+        return []
+    if component == "gradient_clip":
+        if list(config) != ["max_norm"] or not (_is_number(config["max_norm"]) and config["max_norm"] > 0):
+            return [f"{bad}: must be {{\"max_norm\": number > 0}}"]
+        return []
+    kind = component.split(".", 1)[1]
+    if list(config) != ["lr", "total_steps", "schedule"]:
+        return [f"{bad}: must have exactly the keys lr, total_steps, schedule"]
+    lr, total, schedule = config["lr"], config["total_steps"], config["schedule"]
+    if not (_is_number(lr) and lr >= 0) or not (_is_uint(total) and total >= 1):
+        return [f"{bad}: lr must be a number >= 0 and total_steps an integer >= 1"]
+    if not (isinstance(schedule, dict) and schedule.get("kind") == kind
+            and set(schedule) - {"kind"} <= set(TRAIN_SCHEDULE_FIELDS[kind])):
+        return [f"{bad}: schedule needs kind {kind!r} and only the fields {list(TRAIN_SCHEDULE_FIELDS[kind])}"]
+    return []
+
+
+def validate_train_case(json_path: str) -> list[str]:
+    """Checks a training component sidecar (docs/testing-strategy.md §3.7) against the schema and,
+    except for schedules, its safetensors file: keys and their order, the component, the config's
+    kind, the tensor names of the component, the tolerance of testing-strategy.md §2 and, for
+    schedules, one value per step and no tensors. Returns problems."""
+    sidecar, text = read_sidecar(json_path)
+    if sidecar is None:
+        return [text or f"{json_path}: cannot read"]
+    if not isinstance(sidecar, dict):
+        return [f"{json_path}: sidecar is not a JSON object"]
+    component = sidecar.get("component")
+    if component not in train_components():
+        return [f"{json_path}: component {component!r} is not one of {list(train_components())}"]
+    schedule = component.startswith("schedule.")
+    want_keys = TRAIN_SCHEDULE_KEYS if schedule else TRAIN_SIDECAR_KEYS
+    if tuple(sidecar.keys()) != want_keys:
+        return [f"{json_path}: keys {list(sidecar.keys())} differ from the schema {list(want_keys)}"]
+    problems: list[str] = []
+    if sidecar["schema_version"] != TRAIN_SCHEMA_VERSION:
+        problems.append(f"{json_path}: schema_version {sidecar['schema_version']!r} is not {TRAIN_SCHEMA_VERSION}")
+    if text != canonical_json(sidecar):
+        problems.append(f"{json_path}: not in canonical form (rerun the generator)")
+    stem = os.path.splitext(os.path.basename(json_path))[0]
+    if sidecar["case"] != stem:
+        problems.append(f"{json_path}: case {sidecar['case']!r} does not match the file name")
+    if component != os.path.basename(os.path.dirname(json_path)):
+        problems.append(f"{json_path}: component {component!r} does not match the directory name")
+    if not _is_uint(sidecar["seed"]) or sidecar["seed"] >= 1 << 64:
+        problems.append(f"{json_path}: seed must be a u64")
+    config = sidecar["config"]
+    config_problems = _train_config_problems(json_path, component, config)
+    problems += config_problems
+    problems += tolerance_problems(json_path, sidecar["tolerance"])
+    st_path = os.path.splitext(json_path)[0] + ".safetensors"
+    if schedule:
+        if sidecar["inputs"] != [] or sidecar["outputs"] != []:
+            problems.append(f"{json_path}: a schedule case has no inputs and no outputs")
+        if os.path.exists(st_path):
+            problems.append(f"{st_path}: a schedule case has no safetensors file")
+        if not config_problems:
+            values = sidecar["values"]
+            if not (isinstance(values, list) and len(values) == config["total_steps"]
+                    and all(_is_number(v) for v in values)):
+                problems.append(f"{json_path}: values must be total_steps ({config['total_steps']}) finite numbers")
+            want_tol = (
+                {"exact": False, "atol": TRAIN_COSINE_ATOL_PER_LR * config["lr"], "rtol": 0}
+                if component == "schedule.cosine" else {"exact": True, "atol": 0, "rtol": 0}
+            )
+            if sidecar["tolerance"] != want_tol:
+                problems.append(f"{json_path}: tolerance must be {want_tol} (testing-strategy.md §2)")
+        return problems
+    inputs, outputs = _named_entries(sidecar["inputs"]), _named_entries(sidecar["outputs"])
+    if inputs is None or outputs is None:
+        return problems + [f"{json_path}: inputs and outputs must be lists of {{\"name\", \"dtype\", \"shape\"}}"]
+    if any(e["dtype"] != "f32" for e in inputs + outputs):
+        problems.append(f"{json_path}: training component tensors are f32")
+    in_names = [e["name"] for e in inputs]
+    out_names = [e["name"] for e in outputs]
+    shapes = {e["name"]: e["shape"] for e in inputs + outputs}
+    if component == "gradient_clip":
+        want_tol = TRAIN_CLIP_TOLERANCE
+        n = len(inputs)
+        want_in = [f"grad_{i}" for i in range(n)]
+        want_out = ["total_norm"] + [f"clipped_{i}" for i in range(n)]
+        if n == 0 or in_names != want_in or out_names != want_out:
+            problems.append(f"{json_path}: inputs must be {want_in or ['grad_0', '...']} and outputs {want_out}")
+        elif shapes["total_norm"] != [1] or any(shapes[f"clipped_{i}"] != shapes[f"grad_{i}"] for i in range(n)):
+            problems.append(f"{json_path}: total_norm has shape [1] and clipped_i the shape of grad_i")
+    else:
+        want_tol = TRAIN_OPTIMIZER_TOLERANCE
+        states = optimizer_state_names(component.split(".", 1)[1], config if isinstance(config, dict) else {})
+        want_in = ["param"] + [f"grad_{s}" for s in range(1, TRAIN_OPTIMIZER_STEPS + 1)]
+        want_out = [f"{name}_{s}" for s in range(1, TRAIN_OPTIMIZER_STEPS + 1) for name in ("param",) + states]
+        if in_names != want_in or out_names != want_out:
+            problems.append(f"{json_path}: inputs must be {want_in} and outputs {want_out} (training.md §5.2's state names)")
+        elif any(shape != shapes["param"] for shape in shapes.values()):
+            problems.append(f"{json_path}: every tensor has the param's shape")
+    if sidecar["tolerance"] != want_tol:
+        problems.append(f"{json_path}: tolerance must be {want_tol} (testing-strategy.md §2)")
+    try:
+        header = read_safetensors_header(st_path)
+    except (OSError, FixtureError) as e:
+        return problems + [str(e)]
+    problems += entry_problems(json_path, st_path, sidecar, header, ("inputs", "outputs"))
+    return problems + subnormal_problems(st_path, header)
