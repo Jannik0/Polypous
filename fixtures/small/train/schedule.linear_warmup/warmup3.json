@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "component": "schedule.linear_warmup",
+  "case": "warmup3",
+  "description": "W = T: every step is a warmup step. lr 0.01, T = 3.",
+  "config": {
+    "lr": 0.01,
+    "total_steps": 3,
+    "schedule": {
+      "kind": "linear_warmup",
+      "warmup_steps": 3
+    }
+  },
+  "inputs": [],
+  "outputs": [],
+  "values": [
+    0.003333333333333333,
+    0.006666666666666666,
+    0.01
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0,
+    "rtol": 0
+  },
+  "reference": "LambdaLR(optimizer, lambda k: min(1, (k + 1) / 3)), stepped once per optimizer step",
+  "notes": "values[k] is the learning rate of optimizer step k (training.md \u00a73.2): the optimizer's lr after k scheduler steps, the scheduler stepped once after every optimizer.step(). `lr` is the optimizer's lr and `total_steps` is T.",
+  "seed": 0,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

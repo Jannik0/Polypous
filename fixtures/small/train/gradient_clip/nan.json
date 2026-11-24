@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "component": "gradient_clip",
+  "case": "nan",
+  "description": "A gradient with NaN: the total and every clipped element are NaN; max_norm 1.0, shapes [[4, 5], [7]].",
+  "config": {
+    "max_norm": 1.0
+  },
+  "inputs": [
+    {
+      "name": "grad_0",
+      "dtype": "f32",
+      "shape": [
+        4,
+        5
+      ]
+    },
+    {
+      "name": "grad_1",
+      "dtype": "f32",
+      "shape": [
+        7
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "total_norm",
+      "dtype": "f32",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "clipped_0",
+      "dtype": "f32",
+      "shape": [
+        4,
+        5
+      ]
+    },
+    {
+      "name": "clipped_1",
+      "dtype": "f32",
+      "shape": [
+        7
+      ]
+    }
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-05,
+    "rtol": 0.001
+  },
+  "reference": "torch.nn.utils.clip_grad_norm_(params, max_norm=1.0, norm_type=2.0, error_if_nonfinite=False, foreach=False)",
+  "notes": "grad_i is the gradient of param i; total_norm is the returned total norm and clipped_i the gradient after clipping. Computed in f64 on the f32 gradients and rounded once to f32 (testing-strategy.md \u00a73.3); PyTorch's own f32 result and training.md \u00a73.1.4's formula in f32 meet the tolerance. NaN must be NaN exactly where expected (testing-strategy.md \u00a73.2).",
+  "seed": 35,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

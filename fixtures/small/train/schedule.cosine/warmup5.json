@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "component": "schedule.cosine",
+  "case": "warmup5",
+  "description": "Warmup over 5 steps, then a cosine to min_lr. lr 0.1, T = 20.",
+  "config": {
+    "lr": 0.1,
+    "total_steps": 20,
+    "schedule": {
+      "kind": "cosine",
+      "warmup_steps": 5,
+      "min_lr": 0.0001
+    }
+  },
+  "inputs": [],
+  "outputs": [],
+  "values": [
+    0.020000000000000004,
+    0.04000000000000001,
+    0.06,
+    0.08000000000000002,
+    0.1,
+    0.1,
+    0.0989084726566536,
+    0.09568159560924791,
+    0.09046039886902862,
+    0.08347307378762497,
+    0.07502500000000001,
+    0.06548539886902863,
+    0.0552711967402193,
+    0.04482880325978072,
+    0.03461460113097138,
+    0.02507500000000001,
+    0.01662692621237505,
+    0.00963960113097138,
+    0.004418404390752082,
+    0.001191527343346406
+  ],
+  "tolerance": {
+    "exact": false,
+    "atol": 1e-15,
+    "rtol": 0
+  },
+  "reference": "k < 5: LambdaLR(optimizer, lambda k: min(1, (k + 1) / 5)); k >= 5: CosineAnnealingLR(optimizer, T_max=15, eta_min=0.0001)._get_closed_form_lr() at last_epoch = k - 5",
+  "notes": "values[k] is the learning rate of optimizer step k (training.md \u00a73.2): the optimizer's lr after k scheduler steps, the scheduler stepped once after every optimizer.step(). `lr` is the optimizer's lr and `total_steps` is T.",
+  "seed": 0,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

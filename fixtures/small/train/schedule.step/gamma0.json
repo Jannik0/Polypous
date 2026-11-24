@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "component": "schedule.step",
+  "case": "gamma0",
+  "description": "gamma = 0: the learning rate is 0 from step 4 on. lr 0.1, T = 8.",
+  "config": {
+    "lr": 0.1,
+    "total_steps": 8,
+    "schedule": {
+      "kind": "step",
+      "every": 4,
+      "gamma": 0.0
+    }
+  },
+  "inputs": [],
+  "outputs": [],
+  "values": [
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "tolerance": {
+    "exact": true,
+    "atol": 0,
+    "rtol": 0
+  },
+  "reference": "StepLR(optimizer, step_size=4, gamma=0.0), stepped once per optimizer step",
+  "notes": "values[k] is the learning rate of optimizer step k (training.md \u00a73.2): the optimizer's lr after k scheduler steps, the scheduler stepped once after every optimizer.step(). `lr` is the optimizer's lr and `total_steps` is T.",
+  "seed": 0,
+  "generator": "tools/reference/gen_train.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

@@ -16,6 +16,9 @@
 - Every training-mode model under fixtures/small/training/<model>/ (§3.10): graph and weights as for
   models, and every case follows model case schema version 2 (running statistics, dropout masks,
   upstream gradients and the gradients of the trainable params) and matches its safetensors header.
+- Every training component sidecar under fixtures/small/train/<component>/ (§3.7): schema, the
+  component and its config's kind, the tensor names of the component (the optimizers' state names
+  of training.md §5.2), the tolerance of §2, and for schedules one value per step and no tensors.
 - No float tensor anywhere holds a subnormal value.
 
 Standard library only (no PyTorch), so it runs in CI without setup. Exit status 0 if clean, 1 otherwise.
@@ -48,6 +51,12 @@ def check(root: str) -> list[str]:
         if area in ("models", "training"):
             if rel.count("/") < 2:
                 problems.append(f"{rel}: a file directly in {area}/ (expected {area}/<model>/)")
+            continue
+        if ext == ".json" and area == "train":
+            if rel.count("/") != 2:
+                problems.append(f"{rel}: not in train/<component>/")
+            else:
+                problems += fixturelib.validate_train_case(os.path.join(root, rel))
             continue
         if ext == ".json" and area == "init":
             if rel.count("/") != 2:

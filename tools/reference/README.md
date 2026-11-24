@@ -18,6 +18,7 @@ Setup: [docs/dev-environment.md](../../docs/dev-environment.md#python-reference-
 | `gen_grads.py` | Gradient fixtures in `fixtures/small/grads/<op>/<case>.{safetensors,json}` (op sidecar schema 2), from PyTorch autograd |
 | `gen_models.py` | End-to-end model fixtures in `fixtures/small/models/<model>/` (graph, weights, cases), from PyTorch modules |
 | `gen_training.py` | Initial-value fixtures in `fixtures/small/init/<kind>/<case>` (from `polyrng.py`) and training-mode graph fixtures in `fixtures/small/training/<model>/` (model case schema 2: outputs, running statistics, dropout masks, gradients of the trainable params), from PyTorch in f64 (testing-strategy.md §3.9, §3.10) |
+| `gen_train.py` | Training component fixtures in `fixtures/small/train/<component>/<case>` (testing-strategy.md §3.7): `optimizer.sgd`/`adam`/`adamw` (3 steps, PyTorch's own f32 results, checked against training.md §3.1's op sequence without FMA in NumPy f32), `gradient_clip` (f64 rounded once) and `schedule.<kind>` (`lr(k)` from PyTorch's schedulers, sidecar only) |
 | `polyrng.py` | Standard library only: a Python implementation of the Polypous generator (graph-ir.md §3.1.12: streams, `u24`, `U`, `N`, dropout masks) and of the initial values of every `init` kind (§2.4.1), written from the spec; tested against the spec's known values and testing-strategy.md §3.8's statistics (`test_polyrng.py`) |
 | `fetch_fixtures.py` | Downloads `fixtures/manifest.json` entries into `fixtures/cache/` (size limit, SHA-256) |
 | `fixturelib.py` | Shared, standard library only: sidecar format, safetensors header check, `--check` comparison, size budget |
@@ -36,6 +37,9 @@ python tools/reference/gen_models.py --report  # the measured errors behind the 
 python tools/reference/gen_training.py       # rewrites fixtures/small/init/ and fixtures/small/training/
 python tools/reference/gen_training.py --check
 python tools/reference/gen_training.py --report  # PyTorch f32's errors against the training references
+python tools/reference/gen_train.py          # rewrites fixtures/small/train/
+python tools/reference/gen_train.py --check
+python tools/reference/gen_train.py --report # §3.1's op sequence and PyTorch f32 against the references
 python -m unittest discover -s tools/reference -v
 python tools/ci/check_fixtures.py            # size budget and sidecar schema, what CI runs
 ```

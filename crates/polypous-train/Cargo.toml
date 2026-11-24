@@ -15,11 +15,18 @@ polypous-backend.workspace = true
 polypous-ir.workspace = true
 # Error enums (CLAUDE.md conventions). MIT OR Apache-2.0; already in the lock file.
 thiserror = "2.0.21"
+# The `optimizer`, `schedule` and `gradient_clip` config types deserialize from the training
+# config's JSON (training.md §2.8). MIT OR Apache-2.0; already a dependency of polypous-ir,
+# polypous-backend and the facade.
+serde = { version = "1.0.229", features = ["derive"] }
 
-# The reference tests read the init fixtures' JSON sidecars and safetensors files
-# (`tests/init_reference.rs`). Both MIT OR Apache-2.0 or workspace crates; already in the lock file.
+# The reference tests read the init and training component fixtures' JSON sidecars and
+# safetensors files (`tests/init_reference.rs`, `tests/train_reference.rs`). Both MIT OR
+# Apache-2.0 or workspace crates; already in the lock file. `float_roundtrip` (a feature of the
+# same crate, no new dependency) parses JSON numbers to the nearest f64, which the schedule
+# fixtures' exact values need: the default parser can be 1 ulp off.
 [dev-dependencies]
-serde_json = "1.0.154"
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 polypous-formats.workspace = true
 
 [lints]

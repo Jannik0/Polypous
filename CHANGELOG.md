@@ -59,6 +59,19 @@ All notable changes to Polypous are documented here. The format follows
   validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
   with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
   `std >= 0`, values that round to a finite f32).
+- Optimizers, schedules and gradient clipping in `polypous-train` (#79, training.md §3.1, §3.2,
+  §5.2): `Optimizer` runs `sgd{momentum, dampening, nesterov, weight_decay}`, `adam` and `adamw`
+  as PyTorch 2.15.0's single-tensor algorithm in `DynTensor` ops (scalars in f64, rounded once to
+  f32), with its per-param state (`momentum_buffer`, `exp_avg`, `exp_avg_sq`) exported and
+  imported for checkpoints, with checks (unknown names, shapes, dtypes, partial state);
+  `Schedule` gives `lr(k)` for `constant`, `step`, `cosine` and `linear_warmup`;
+  `clip_gradients` clips by the total L2 norm. The config types `OptimizerConfig`,
+  `ScheduleConfig` and `GradientClipConfig` deserialize from training.md §2.8's JSON with its
+  defaults, and validate its ranges with a JSON pointer per error. 29 reference fixtures
+  (`fixtures/small/train/`, testing-strategy.md §3.7) from `tools/reference/gen_train.py`: 13
+  optimizer cases against PyTorch's own f32 results (worst error 4.8e-7, 0.14 of the tolerance,
+  on the CPU and lavapipe), 5 clipping cases (non-finite totals included) and 11 schedule cases;
+  `tools/ci/check_fixtures.py` checks their schema.
 - Initial values in `polypous-train` (#78, graph-ir.md §2.4.1): `initial_values(seed, name, shape,
   init, fans)` computes every `init` kind on the host in f64, rounded once to f32. Reference
   fixtures from a Python implementation of the spec (`tools/reference/polyrng.py`,
