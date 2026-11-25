@@ -3,8 +3,8 @@
 //!
 //! Steps 1–8 touch no device: the plan is compiled (which checks the device's dtypes) but nothing
 //! is uploaded and nothing runs before step 9. The runtime's training-mode checks (runtime.md
-//! §3.1 checks 2 and 3) run at step 6 on the bound shapes, through the graph analysis, with the
-//! runtime's own error values, so a last batch of one sample with `nn.batch_norm` fails here
+//! §3.1) run at step 6 through the runtime's own `Plan::check_training_mode`, on the bound shapes
+//! of every training batch size, so a last batch of one sample with `nn.batch_norm` fails here
 //! rather than in the middle of an epoch.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,8 +16,8 @@ use polypous_backend::{DType, DynTensor, TensorData};
 use polypous_formats::safetensors::{
     Dtype as StorageDtype, SafetensorsFile, ShardedSafetensors, TensorInfo, bf16_to_f32, f16_to_f32,
 };
-use polypous_ir::{Analysis, BindError, BoundNode, Graph, NodeInfo, TensorDesc, ValidateOptions};
-use polypous_runtime::{CancellationToken, Plan, PlanOptions, RuntimeError};
+use polypous_ir::{Analysis, BindError, Graph, TensorDesc, ValidateOptions};
+use polypous_runtime::{CancellationToken, Plan, PlanOptions};
 
 use super::{Core, DeviceResolver, ResumeOptions, TrainerOptions};
 use crate::checkpoint::{self, Loaded};
@@ -337,64 +337,13 @@ fn bind_error_name(e: &BindError) -> Option<&str> {
     }
 }
 
-/// The runtime's §3.1 check 3 on bound shapes (`exec.rs` `check_values_per_channel`), with its
-/// error value.
-fn check_batch_norm(infos: &[NodeInfo], bound: &[BoundNode], path: &str) -> Result<(), TrainError> {
-    for (info, b) in infos.iter().zip(bound) {
-        match (info, b) {
-            (NodeInfo::Op(op), BoundNode::Op(b)) if op.op.name == "nn.batch_norm" => {
-                let shape = b.outputs.first().map(Vec::as_slice).unwrap_or_default();
-                let total = shape.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d));
-                let values = match (total, shape.get(1)) {
-                    (Some(t), Some(&c)) if c > 0 => t / c,
-                    _ => {
-                        return Err(TrainError::internal(format!(
-                            "node `{path}{}`: batch_norm has the bound shape {shape:?}",
-                            op.id
-                        )));
-                    }
-                };
-                if values < 2 {
-                    return Err(RuntimeError::BatchNormValues {
-                        node: format!("{path}{}", op.id),
-                        shape: shape.to_vec(),
-                        values,
-                    }
-                    .into());
-                }
-            }
-            (NodeInfo::Repeat(r), BoundNode::Repeat(b)) if r.count > 0 => {
-                check_batch_norm(&r.nodes, &b.nodes, &format!("{path}{}[0]/", r.id))?;
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-/// The runtime's §3.1 check 2 (`exec.rs` `check_training`), with its error value.
-fn check_running_stats(analysis: &Analysis) -> Result<(), TrainError> {
-    for p in &analysis.params {
-        if p.running_stat && p.uses != 1 {
-            let uses: Vec<String> = p.first_uses.iter().map(ToString::to_string).collect();
-            return Err(RuntimeError::SharedRunningStat {
-                param: p.name.clone(),
-                uses: p.uses,
-                first: uses.first().cloned().unwrap_or_default(),
-                second: uses.get(1).cloned().unwrap_or_default(),
-            }
-            .into());
-        }
-    }
-    Ok(())
-}
-
 fn target_error(pointer: &str, field: &str, set: &str, e: &TargetError) -> TrainError {
     TrainError::config(pointer, &format!("field `{field}` ({set} set): {e}")).with_tensor(field)
 }
 
 /// Step 6: shapes, target values and the training-mode checks.
 fn check_shapes(
+    plan: &Plan,
     config: &TrainingConfig,
     analysis: &Analysis,
     datasets: &Datasets,
@@ -418,6 +367,7 @@ fn check_shapes(
     };
     let output = |name: &str| analysis.outputs.iter().find(|o| o.name == name);
     let mut pred_shapes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut train_bindings = Vec::new();
     let mut seen = BTreeSet::new();
     for (size, train) in sizes {
         if !seen.insert((size, train)) {
@@ -523,7 +473,7 @@ fn check_shapes(
             pred_shapes.entry(c.prediction.clone()).or_insert(pred.1);
         }
         if train {
-            check_batch_norm(&analysis.nodes, &bindings.nodes, "")?;
+            train_bindings.push(bindings);
         }
     }
     // Target values on every sample of both sets.
@@ -547,7 +497,12 @@ fn check_shapes(
             }
         }
     }
-    check_running_stats(analysis)
+    // The runtime's training-mode checks (runtime.md §3.1), through the runtime's own function,
+    // on the bindings of every training batch size. The validation pass runs in inference mode.
+    for bindings in &train_bindings {
+        plan.check_training_mode(bindings)?;
+    }
+    Ok(())
 }
 
 /// Steps 3–6, shared by a new run and a resume.
@@ -575,7 +530,7 @@ fn prepare(
             Accuracy::new(c).map_err(|e| TrainError::internal(e.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    check_shapes(config, analysis, &datasets, &loss, &metrics)?;
+    check_shapes(&plan, config, analysis, &datasets, &loss, &metrics)?;
     check_cancel(cancel)?;
     let batcher = Batcher::new(
         datasets.train.len(),

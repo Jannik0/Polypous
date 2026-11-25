@@ -645,3 +645,50 @@ fn cancellation_during_creation() {
     .unwrap_err();
     assert_eq!(e.kind(), TrainErrorKind::Cancelled);
 }
+
+#[test]
+fn step_6_runs_the_training_mode_checks_last() {
+    // training.md §2.10 step 6: binding and the prediction checks, then the target values, then
+    // the runtime's training-mode checks (runtime.md §3.1, in its order). 17 samples in batches
+    // of 8 leave a last batch of one sample, which `batch_norm` can't train on.
+    let dir = base();
+    let mut bad_labels = blobs("train", 17, 1);
+    bad_labels.fields[1].1 = i64_data(&[7; 17]);
+    let e = err(
+        &bn_dropout(4, 6, 3),
+        classification_config(json!({})),
+        options(dir.path(), vec![bad_labels], None),
+    );
+    assert_err(
+        &e,
+        TrainErrorKind::InvalidInput,
+        Some("/loss/target"),
+        Some("label"),
+    );
+    // The running statistic shared by two nodes (check 2) before the last batch (check 3).
+    let mut shared = bn_dropout(4, 6, 3);
+    let nodes = shared["nodes"].as_array_mut().unwrap();
+    nodes.insert(
+        2,
+        json!({ "id": "bn2", "op": "nn.batch_norm", "inputs": { "x": "bn" },
+        "params": { "running_mean": "bn.running_mean", "running_var": "bn.running_var" } }),
+    );
+    nodes[3]["inputs"]["x"] = json!("bn2");
+    let e = err(
+        &shared,
+        classification_config(json!({})),
+        options(dir.path(), vec![blobs("train", 17, 1)], None),
+    );
+    assert_eq!(e.kind(), TrainErrorKind::UnsupportedOperation, "{e}");
+    assert_eq!(e.tensor(), Some("bn.running_mean"), "{e}");
+    // The message is the runtime's own.
+    let e = err(
+        &bn_dropout(4, 6, 3),
+        classification_config(json!({})),
+        options(dir.path(), vec![blobs("train", 17, 1)], None),
+    );
+    assert_eq!(
+        e.message(),
+        "node `bn` (nn.batch_norm): training mode needs at least 2 values per channel, but `x` [1, 6] has 1"
+    );
+}

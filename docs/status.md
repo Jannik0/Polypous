@@ -194,13 +194,6 @@ upstream state in the [upstream findings register](upstream-findings.md); the ID
   - Both concern `zip` 0.6.6 (one critical, one moderate). It enters `Cargo.lock` only through Burn's optional LibTorch backend (`burn-tch` → `tch`/`torch-sys`), which Polypous never compiles: `cargo tree --all-features --target all` doesn't list it.
   - There's no fix through an update while Burn is pinned at 0.22.1.
   - If cargo-deny starts failing once RustSec publishes the advisories, add a `deny.toml` ignore entry with this reason. The owner decides whether to dismiss the GitHub alerts.
-- **The trainer repeats the runtime's training-mode checks (#82, PR 106).** `Trainer::new` must run
-  them at training.md §2.10 step 6, before anything is uploaded, but `polypous-runtime`'s
-  `check_training` and `check_values_per_channel` (`exec.rs`) are private and run only inside a call.
-  So `polypous-train` (`trainer/setup.rs`) mirrors their logic over the public IR analysis and
-  returns the runtime's own error values. Make the runtime's checks public, callable without
-  tensors, and use them from the trainer, the next time `polypous-runtime` is touched; until then a
-  change to either copy must be made in both.
 - **`target/` size:** debug test binaries with `cuda` or `vulkan` are about 1.2 GB each. Plan for 20 GB.
 
 ## 5. Where M2 starts

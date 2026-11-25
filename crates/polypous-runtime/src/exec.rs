@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use polypous_backend::DynTensor;
 use polypous_ir::names::expand_prefix;
-use polypous_ir::{BoundNode, ComputeDtype, NodeInfo, TensorDesc};
+use polypous_ir::{Bindings, BoundNode, ComputeDtype, NodeInfo, TensorDesc};
 
 use crate::cancel::CancellationToken;
 use crate::error::{ParamProblem, Result, RuntimeError};
@@ -199,6 +199,37 @@ impl Plan {
     }
 }
 
+impl Plan {
+    /// The checks of a training-mode call (`docs/specs/runtime.md` §3.1), on the shapes of one
+    /// call, without tensors: `bindings` is what
+    /// [`Analysis::bind`](polypous_ir::Analysis::bind) gives for the call's inputs and state
+    /// (`plan.analysis().bind(…)`). In order:
+    ///
+    /// 1. the compute dtype is `f32` ([`RuntimeError::TrainingDtype`]);
+    /// 2. every `nn.batch_norm` running statistic has exactly one use, params in declaration order
+    ///    ([`RuntimeError::SharedRunningStat`]);
+    /// 3. every `nn.batch_norm` has at least 2 values per channel, in plan order, a repeat's body
+    ///    at iteration 0 (`r[0]/bn`; every iteration has the same shapes)
+    ///    ([`RuntimeError::BatchNormValues`]).
+    ///
+    /// A training-mode [`Plan::run`] or [`Model::run_with`] makes exactly these checks, through
+    /// this function, after binding, devices and given params. The trainer calls it before it
+    /// uploads anything (training.md §2.10 step 6).
+    ///
+    /// # Errors
+    /// The first failing check; [`RuntimeError::Internal`] if `bindings` doesn't fit the plan.
+    pub fn check_training_mode(&self, bindings: &Bindings) -> Result<()> {
+        if bindings.nodes.len() != self.analysis.nodes.len() {
+            return Err(RuntimeError::internal(format!(
+                "the bindings have {} root nodes, the plan {}",
+                bindings.nodes.len(),
+                self.analysis.nodes.len()
+            )));
+        }
+        check_training(self, &bindings.nodes)
+    }
+}
+
 /// Where a call's params come from.
 #[derive(Clone, Copy)]
 enum Source<'a> {
@@ -271,7 +302,7 @@ fn execute(
 
     // Mode (§3 step 4, §3.1).
     if mode.is_training() {
-        check_training(plan, &bindings.nodes)?;
+        plan.check_training_mode(&bindings)?;
     }
 
     let mut env: Vec<Option<DynTensor>> = vec![None; program.slots.len()];
