@@ -317,8 +317,8 @@ out of it:
   owner. An empty result is only evidence if kernel logging works on that boot
   (`sudo journalctl -k -b | tail`). `uv` and the pinned Python 3.14 may be missing; then say so.
 - **`target/`:** debug test binaries with `cuda` or `vulkan` are about 1.2 GB each.
-- **GPU tests:** `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored`
-  runs every crate's GPU tests ([dev-environment.md](dev-environment.md#gpu-tests)). `--features polypous/…`
+- **GPU tests:** `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored --skip mnist`
+  runs every crate's GPU tests; the MNIST training tests run on their own with `--release` ([dev-environment.md](dev-environment.md#gpu-tests)). `--features polypous/…`
   or `polypous-backend/…` alone skips some of them. On 16 GB machines add `-j 2` (or set
   `CARGO_BUILD_JOBS=2`): a parallel GPU-feature build of the workspace runs out of memory.
 - **Flag order:** `--no-fail-fast` and `-j` are cargo flags and go **before** `--`; `--include-ignored`

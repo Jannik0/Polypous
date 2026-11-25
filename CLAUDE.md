@@ -53,7 +53,8 @@ cargo fmt --all                                   # format
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --workspace --all-targets --features polypous-cli/cuda,polypous-cli/vulkan -- -D warnings
 cargo test --workspace                            # CPU tests, must pass everywhere
-cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored   # every crate's GPU tests (reference machine)
+cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored --skip mnist   # every crate's GPU tests (reference machine)
+cargo test --release -p polypous -p polypous-cli -- --ignored mnist   # MNIST training tests (data: fetch_fixtures.py mnist-train mnist-test)
 cargo run -p polypous-cli --features cuda,vulkan -- devices   # detected devices, isolated probing
 ```
 
