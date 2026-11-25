@@ -82,7 +82,16 @@ After `cargo test`, run `cargo build -p polypous-cli --features cuda,vulkan` aga
 One command runs every crate's GPU tests (`#[ignore = "gpu"]`) on the reference machine:
 
 ```bash
-cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored
+cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan -- --include-ignored --skip mnist
+```
+
+`--skip mnist` leaves out the `#[ignore = "mnist"]` training tests (testing-strategy.md §3.8). They
+need the MNIST data and minutes of training per run, and a debug build is about 18 times slower, so
+they run on their own, in a release build, after `python tools/reference/fetch_fixtures.py
+mnist-train mnist-test`:
+
+```bash
+cargo test --release -p polypous -p polypous-cli -- --ignored mnist
 ```
 
 Each crate gates its GPU tests on its **own** backend features. They are forwarded down the

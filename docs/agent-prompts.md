@@ -32,7 +32,7 @@ the PR.>
 ```bash
 <exact commands, e.g. the lavapipe run:>
 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json POLYPOUS_TEST_SOFTWARE_VULKAN=1 \
-  cargo test --workspace --features polypous-cli/vulkan --no-fail-fast -- --include-ignored --nocapture
+  cargo test --workspace --features polypous-cli/vulkan --no-fail-fast -- --include-ignored --skip mnist --nocapture
 ```
 <Expected totals per device, e.g. `cpu` 885/0/0, `vulkan:cpu:0` 778/107/0. What to put in the PR body.>
 
@@ -132,7 +132,7 @@ Write every log to a file outside the repository and report each exit code
 go **before** the `--`.
 1. `cargo clippy --workspace --all-targets --features polypous-cli/cuda,polypous-cli/vulkan -- -D warnings`
 2. `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan --no-run -j 2` (prebuild; 16 GB RAM)
-3. `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan --no-fail-fast -- --include-ignored --nocapture`,
+3. `cargo test --workspace --features polypous-cli/cuda,polypous-cli/vulkan --no-fail-fast -- --include-ignored --skip mnist --nocapture`,
    **three times**; check that the failing set is identical.
 4. `cargo test --workspace`
 5. <Task-specific checks: `polyp` commands (rebuild with `cargo build -p polypous-cli --features cuda,vulkan -j 2`

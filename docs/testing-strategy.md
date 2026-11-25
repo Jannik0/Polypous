@@ -418,9 +418,11 @@ converted to safetensors and fetched through the manifest (§3.4; owner decision
   `rtol = 1e-3` leaves a margin of about 60× over the measured difference between f32 implementations
   (10× for the faster-diverging SGD), while a wrong gradient or optimizer formula changes the losses by
   far more after a few steps.
-- **CI.** The run takes about 15 minutes on 4 vCPUs (spike, #71) and needs the downloaded data, so the
-  tests are `#[ignore = "mnist"]`: CI doesn't run them; they run in the M2 exit check (#85) and with
-  `cargo test -- --ignored`. The reference comparison takes 10 steps and may run in CI once the data is
+- **CI.** A 5-epoch run takes about 6 minutes on 4 vCPUs in a release build (#84; about 18 times
+  longer in a debug build) and needs the downloaded data, so the tests are `#[ignore = "mnist"]`: CI
+  doesn't run them, and the GPU-test commands skip them (`--skip mnist`). They run in the M2 exit
+  check (#85) and with `cargo test --release -p polypous -p polypous-cli -- --ignored mnist`, after
+  `python tools/reference/fetch_fixtures.py mnist-train mnist-test`. The reference comparison takes 10 steps and may run in CI once the data is
   available there. GPU runs (CUDA, Vulkan) are part of the exit check: on a GPU the accuracy criterion
   applies, and the reference losses are reported but, for CUDA's f32 `matmul` on TF32 (#64), not
   required to meet the tolerance (owner decision 1 for M2).
