@@ -59,6 +59,21 @@ All notable changes to Polypous are documented here. The format follows
   validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
   with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
   `std >= 0`, values that round to a finite f32).
+- The MNIST training test (#84, testing-strategy.md §3.8, the M2 exit model):
+  - `tools/reference/convert_mnist.py` converts MNIST (CC BY-SA 3.0, Yann LeCun and Corinna
+    Cortes) into two safetensors datasets, `image` F32 `[N, 1, 28, 28]` (byte / 255) and `label`
+    I64 `[N]`, byte-for-byte deterministic. They are the `fixtures/manifest.json` entries
+    `mnist-train` and `mnist-test` (220 MB together), hosted on the Polypous release
+    `fixtures-mnist-v1` and fetched with `fetch_fixtures.py`.
+  - `fixtures/small/mnist/` (written by `tools/reference/gen_mnist.py`): a CNN graph in the
+    layer order of §3.8 (149,466 params) and its training config (AdamW, cross-entropy,
+    accuracy, the test set for validation, 5 epochs, checkpoints), plus the reference graph and
+    config, initial weights and the first 10 training losses from PyTorch in f64.
+  - Tests, `#[ignore = "mnist"]` (they need the data; `cargo test --release -p polypous -p
+    polypous-cli -- --ignored mnist`): `val.accuracy` ≥ 0.98 within 5 epochs through the
+    facade and through `polyp train`, the reference losses within `rtol = 1e-3`, and a run
+    cancelled mid-epoch and resumed bit-identical to an uninterrupted one, all on the CPU. The
+    lavapipe CI job skips them (`--skip mnist`).
 - Training through the facade and the CLI (#83, public-api.md §1.4):
   - `Engine::trainer(&graph, TrainingConfig, TrainerOptions, &cancel)` and
     `Engine::resume_trainer(path, ResumeOptions, &cancel)`, and the `Trainer` handle (`Clone +

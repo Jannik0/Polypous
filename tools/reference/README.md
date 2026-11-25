@@ -20,6 +20,8 @@ Setup: [docs/dev-environment.md](../../docs/dev-environment.md#python-reference-
 | `gen_training.py` | Initial-value fixtures in `fixtures/small/init/<kind>/<case>` (from `polyrng.py`) and training-mode graph fixtures in `fixtures/small/training/<model>/` (model case schema 2: outputs, running statistics, dropout masks, gradients of the trainable params), from PyTorch in f64 (testing-strategy.md §3.9, §3.10) |
 | `gen_train.py` | Training component fixtures in `fixtures/small/train/<component>/<case>` (testing-strategy.md §3.7): `optimizer.sgd`/`adam`/`adamw` (3 steps, PyTorch's own f32 results, checked against training.md §3.1's op sequence without FMA in NumPy f32), `gradient_clip` (f64 rounded once), `schedule.<kind>` (`lr(k)` from PyTorch's schedulers, sidecar only) and `loss.mse`/`cross_entropy`/`binary_cross_entropy` (value and gradient in f64 rounded once, checked against training.md §3.3's formulas; class indices stored as `I64`) |
 | `polyrng.py` | Standard library only: a Python implementation of the Polypous generator (graph-ir.md §3.1.12: streams, `u24`, `U`, `N`, dropout masks) and of the initial values of every `init` kind (§2.4.1), written from the spec; tested against the spec's known values and testing-strategy.md §3.8's statistics (`test_polyrng.py`) |
+| `convert_mnist.py` | Converts MNIST (the four IDX `.gz` files from a public mirror, each checked against a pinned SHA-256) into the `mnist-train` and `mnist-test` safetensors files of `fixtures/manifest.json` (`image` F32 `[N, 1, 28, 28]` = byte / 255, `label` I64 `[N]`), byte-for-byte deterministic; `--check` compares with the manifest. NumPy and safetensors, no PyTorch |
+| `gen_mnist.py` | The MNIST training test's fixtures in `fixtures/small/mnist/` (testing-strategy.md §3.8): the CNN graph and config, the reference graph and config, the reference's initial weights (`polyrng.py`) and the first 10 training losses and an inference loss from PyTorch in f64. Needs the MNIST cache |
 | `fetch_fixtures.py` | Downloads `fixtures/manifest.json` entries into `fixtures/cache/` (size limit, SHA-256) |
 | `fixturelib.py` | Shared, standard library only: sidecar format, safetensors header check, `--check` comparison, size budget |
 | `test_*.py` | Unit tests; the ones that need PyTorch skip without it |
@@ -40,6 +42,11 @@ python tools/reference/gen_training.py --report  # PyTorch f32's errors against 
 python tools/reference/gen_train.py          # rewrites fixtures/small/train/
 python tools/reference/gen_train.py --check
 python tools/reference/gen_train.py --report # §3.1's op sequence, §3.3's formulas and PyTorch f32 against the references
+python tools/reference/convert_mnist.py      # MNIST into fixtures/cache/mnist/ (prints SHA-256 and sizes)
+python tools/reference/convert_mnist.py --check  # converts into a temp dir, compares with fixtures/manifest.json
+python tools/reference/gen_mnist.py          # rewrites fixtures/small/mnist/ (needs fixtures/cache/mnist/)
+python tools/reference/gen_mnist.py --check
+python tools/reference/gen_mnist.py --report # PyTorch f32 against the f64 reference losses
 python -m unittest discover -s tools/reference -v
 python tools/ci/check_fixtures.py            # size budget and sidecar schema, what CI runs
 ```

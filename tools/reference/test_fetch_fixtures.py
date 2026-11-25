@@ -128,7 +128,11 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(self.run_main([])[0], 0)
 
     def test_committed_manifest_is_valid(self) -> None:
-        self.assertEqual(ff.load_manifest(ff.DEFAULT_MANIFEST), [])
+        entries = ff.load_manifest(ff.DEFAULT_MANIFEST)
+        # The MNIST data of the training test (convert_mnist.py), hosted on a Polypous release.
+        self.assertEqual([e["name"] for e in entries], ["mnist-train", "mnist-test"])
+        for e in entries:
+            self.assertTrue(e["url"].startswith("https://github.com/Jannik0/Polypous/releases/download/"), e)
 
     def test_rejects_unsafe_entries(self) -> None:
         bad = [
