@@ -59,6 +59,38 @@ All notable changes to Polypous are documented here. The format follows
   validation error `invalid_init` (a fan-based `init` on an unused param, in a role without fans, or
   with disagreeing fans), and the remaining `invalid_value` checks of `init` values (`low <= high`,
   `std >= 0`, values that round to a finite f32).
+- Training through the facade and the CLI (#83, public-api.md §1.4):
+  - `Engine::trainer(&graph, TrainingConfig, TrainerOptions, &cancel)` and
+    `Engine::resume_trainer(path, ResumeOptions, &cancel)`, and the `Trainer` handle (`Clone +
+    Send + Sync + 'static`) with `info`, `run(&cancel, on_event)`, `export(graph, weights)` and an
+    idempotent `close`. A thin layer over `polypous-train`.
+  - `TrainingConfig` (`from_json`, `from_file`, canonical `to_json`, public fields, serde),
+    `TrainerOptions` and `ResumeOptions` (`Default`, `from_json`/`to_json`, unknown fields
+    rejected, at most 64 datasets with unique names), `InMemoryDataset { name, fields:
+    Vec<NamedTensor> }`, `TrainingEvent` (`#[non_exhaustive]`), `TrainingOutcome` and
+    `TrainerInfo`, each with the JSON of training.md §4.1 and public-api.md §1.4; the device in
+    `started` and `TrainerInfo` is the facade's `DeviceId`. The config's nested types
+    (`DataConfig`, `LossConfig`, `OptimizerConfig`, …) and `Metrics`, `HistoryEntry`, `Best`,
+    `StopReason` are in the new module `polypous::training`. They are plain data: the nested
+    config types' range checks in `polypous-train` are crate-private now (`validate`,
+    `validate_metrics`; `ConfigError` is no longer re-exported at that crate's root), and a
+    config is checked by `TrainingConfig::from_json` or when the trainer is created.
+  - The config's `device`: `"auto"` is the device `load_graph` picks by default (the primary
+    GPU, else the CPU); an id must be listed and available, else `backend_unavailable` with
+    `context.device`.
+  - Errors map 1:1 to `ErrorKind` with every context field, the message
+    `Could not create the trainer: …`, `Could not resume training: …`, `Training failed: …` or
+    `Could not export the model: …`, and `context.operation` `engine_trainer`,
+    `engine_resume_trainer`, `trainer_run` or `trainer_export`. A panic, also one in the
+    `on_event` callback, is `internal` and fails only that trainer.
+  - `polyp train <graph> --config <file> [--weights FILE] [--device ID] [--json]
+    [--export-graph FILE --export-weights FILE]` and `polyp train --resume <dir> [--device ID]
+    [--discard-newer] …`: one line per event (`EVENT key=value …`) or JSON Lines with `--json`;
+    the first Ctrl-C (Ctrl-C or Ctrl-Break on Windows) cancels the run, which writes its
+    checkpoint and export and exits with code 4; a second one ends the process with code 130.
+    Relative paths in the config are resolved against the config file's directory; a `tensors`
+    dataset is an error in the CLI. New dependency of `polypous-cli`: `ctrlc` 3.5 (MIT OR
+    Apache-2.0; brings `nix` 0.32 on Unix).
 - The trainer of `polypous-train` (#82, training.md §1.2, §2, §4, §5; public-api.md §1.4, for
   the facade in #83):
   - `TrainingConfig` with `from_json`, `from_file` (at most 1 MiB) and a canonical `to_json`

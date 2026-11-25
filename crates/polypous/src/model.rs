@@ -152,7 +152,7 @@ fn check_cancel(cancel: &CancellationToken) -> Result<(), Error> {
 }
 
 /// `text`, ending with a full stop.
-fn sentence(text: String) -> String {
+pub(crate) fn sentence(text: String) -> String {
     if text.ends_with(['.', '!', '?']) {
         text
     } else {
@@ -295,29 +295,35 @@ fn model_info(graph: &polypous_ir::Graph, plan: &Plan) -> ModelInfo {
 }
 
 impl Engine {
-    /// The device a load uses: `requested`, else the primary GPU, else the CPU. It must be listed
-    /// and available.
-    fn load_device(&self, requested: Option<DeviceId>) -> Result<DeviceId, Error> {
+    /// The device a load or a trainer uses: `requested`, else the primary GPU, else the CPU. It
+    /// must be listed and available; otherwise the id and why it can't be used.
+    pub(crate) fn pick_device(
+        &self,
+        requested: Option<DeviceId>,
+    ) -> Result<DeviceId, (DeviceId, String)> {
         let id = requested
             .or_else(|| self.primary_gpu().map(|device| device.id))
             .unwrap_or(DeviceId::Cpu);
-        let unavailable = |why: String| {
+        match self.devices().into_iter().find(|device| device.id == id) {
+            None => Err((
+                id,
+                "this engine has no such device (check `polyp devices`; its backend may not be compiled in)"
+                    .to_string(),
+            )),
+            Some(device) if !device.status.is_available() => Err((id, device.status.to_string())),
+            Some(_) => Ok(id),
+        }
+    }
+
+    /// The device a load uses ([`Engine::pick_device`]), as a load error.
+    fn load_device(&self, requested: Option<DeviceId>) -> Result<DeviceId, Error> {
+        self.pick_device(requested).map_err(|(id, why)| {
             Error::new(
                 ErrorKind::BackendUnavailable,
                 format!("Device {id} is not available: {why}."),
             )
             .with_device(id.to_string())
-        };
-        match self.devices().into_iter().find(|device| device.id == id) {
-            None => Err(unavailable(
-                "this engine has no such device (check `polyp devices`; its backend may not be compiled in)"
-                    .to_string(),
-            )),
-            Some(device) if !device.status.is_available() => {
-                Err(unavailable(device.status.to_string()))
-            }
-            Some(_) => Ok(id),
-        }
+        })
     }
 
     /// Loads `graph` with its weights on one device (public-api.md §1.3, runtime.md §1, §2).

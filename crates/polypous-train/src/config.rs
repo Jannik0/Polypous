@@ -193,7 +193,7 @@ impl SgdConfig {
     ///
     /// # Errors
     /// The first out-of-range field, in table order, then the `nesterov` rule.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         check_non_negative("/lr", "lr", self.lr)?;
         check_closed("/momentum", "momentum", self.momentum, 0.0, 1.0)?;
         check_closed("/dampening", "dampening", self.dampening, 0.0, 1.0)?;
@@ -216,7 +216,7 @@ impl AdamConfig {
     ///
     /// # Errors
     /// The first out-of-range field, in table order.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         check_non_negative("/lr", "lr", self.lr)?;
         check_betas(self.betas)?;
         check_non_negative("/eps", "eps", self.eps)?;
@@ -229,7 +229,7 @@ impl AdamWConfig {
     ///
     /// # Errors
     /// The first out-of-range field, in table order.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         self.as_adam().validate()
     }
 
@@ -249,7 +249,7 @@ impl OptimizerConfig {
     ///
     /// # Errors
     /// The first out-of-range field.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         match self {
             Self::Sgd(c) => c.validate(),
             Self::Adam(c) => c.validate(),
@@ -326,7 +326,7 @@ impl ScheduleConfig {
     ///
     /// # Errors
     /// The first out-of-range field; `min_lr > lr` at `/min_lr`.
-    pub fn validate(&self, lr: f64) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self, lr: f64) -> Result<(), ConfigError> {
         let check_steps = |pointer: &str, field: &str, v: u64, min: u64| {
             if (min..=MAX_SCHEDULE_STEPS).contains(&v) {
                 Ok(())
@@ -395,7 +395,7 @@ impl GradientClipConfig {
     ///
     /// # Errors
     /// `max_norm` not finite (in `f32`) or not `> 0`, at `/max_norm`.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if self.max_norm.is_nan() || self.max_norm <= 0.0 {
             return Err(ConfigError::new(
                 "/max_norm",
@@ -484,7 +484,7 @@ impl LossConfig {
     ///
     /// # Errors
     /// The first bad field, in table order (`/prediction`, `/target`, `/label_smoothing`).
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         check_name("/prediction", "prediction", self.prediction())?;
         check_name("/target", "target", self.target())?;
         if let Self::CrossEntropy(c) = self {
@@ -567,7 +567,7 @@ impl AccuracyConfig {
     ///
     /// # Errors
     /// The first bad field, in table order (`/prediction`, `/target`, `/name`, `/threshold`).
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         check_name("/prediction", "prediction", &self.prediction)?;
         check_name("/target", "target", &self.target)?;
         check_metric_name("/name", &self.name)?;
@@ -612,7 +612,7 @@ impl MetricConfig {
     ///
     /// # Errors
     /// The first bad field.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         match self {
             Self::Accuracy(c) => c.validate(),
         }
@@ -638,7 +638,7 @@ impl MetricConfig {
 ///
 /// # Errors
 /// More than 16 entries at `""`; the first bad entry; a repeated name at the second use's `/name`.
-pub fn validate_metrics(metrics: &[MetricConfig]) -> Result<(), ConfigError> {
+pub(crate) fn validate_metrics(metrics: &[MetricConfig]) -> Result<(), ConfigError> {
     if metrics.len() > MAX_METRICS {
         return Err(ConfigError::new(
             "",

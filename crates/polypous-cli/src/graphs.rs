@@ -19,6 +19,8 @@ pub(crate) enum CliError {
         kind: &'static str,
         message: String,
         file: Option<String>,
+        /// A JSON pointer into the file (a training config).
+        pointer: Option<String>,
     },
 }
 
@@ -41,10 +43,11 @@ impl CliError {
                 }
                 out
             }
-            CliError::Cli { message, file, .. } => {
+            CliError::Cli { message, .. } => {
                 let mut out = format!("error: {message}\n");
-                if let Some(file) = file {
-                    out.push_str(&format!("context: {}\n", json!({ "file": file })));
+                let context = self.cli_context();
+                if context != json!({}) {
+                    out.push_str(&format!("context: {context}\n"));
                 }
                 out
             }
@@ -58,18 +61,25 @@ impl CliError {
             CliError::Polypous(error) => {
                 serde_json::to_string(error).unwrap_or_else(|_| "{}".to_string())
             }
-            CliError::Cli {
-                kind,
-                message,
-                file,
-            } => {
-                let context = match file {
-                    Some(file) => json!({ "file": file }),
-                    None => json!({}),
-                };
-                json!({ "kind": kind, "message": message, "context": context }).to_string()
+            CliError::Cli { kind, message, .. } => {
+                json!({ "kind": kind, "message": message, "context": self.cli_context() })
+                    .to_string()
             }
         }
+    }
+
+    /// The context of a [`CliError::Cli`]: `pointer` and `file` when set (in the facade's order).
+    fn cli_context(&self) -> serde_json::Value {
+        let mut context = serde_json::Map::new();
+        if let CliError::Cli { file, pointer, .. } = self {
+            if let Some(pointer) = pointer {
+                context.insert("pointer".into(), json!(pointer));
+            }
+            if let Some(file) = file {
+                context.insert("file".into(), json!(file));
+            }
+        }
+        serde_json::Value::Object(context)
     }
 }
 
@@ -166,6 +176,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<String, CliError> {
                 names.join(", ")
             ),
             file: Some(args.graph.display().to_string()),
+            pointer: None,
         });
     }
 
@@ -181,6 +192,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<String, CliError> {
                     tensors.len()
                 ),
                 file: Some(path.display().to_string()),
+                pointer: None,
             });
         }
         // `tensors` has exactly one element.
