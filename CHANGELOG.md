@@ -71,7 +71,10 @@ All notable changes to Polypous are documented here. The format follows
     `TrainerInfo`, each with the JSON of training.md §4.1 and public-api.md §1.4; the device in
     `started` and `TrainerInfo` is the facade's `DeviceId`. The config's nested types
     (`DataConfig`, `LossConfig`, `OptimizerConfig`, …) and `Metrics`, `HistoryEntry`, `Best`,
-    `StopReason` are in the new module `polypous::training`.
+    `StopReason` are in the new module `polypous::training`. They are plain data: the nested
+    config types' range checks in `polypous-train` are crate-private now (`validate`,
+    `validate_metrics`; `ConfigError` is no longer re-exported at that crate's root), and a
+    config is checked by `TrainingConfig::from_json` or when the trainer is created.
   - The config's `device`: `"auto"` is the device `load_graph` picks by default (the primary
     GPU, else the CPU); an id must be listed and available, else `backend_unavailable` with
     `context.device`.

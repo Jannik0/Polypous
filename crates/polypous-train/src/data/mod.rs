@@ -409,7 +409,7 @@ impl Datasets {
 /// Reads the training and validation sets of `config` (training.md §3.5), under one budget of
 /// `config.max_bytes` for both, then applies a `split` validation set with `seed` (§3.5.5).
 ///
-/// The config is validated first ([`DataConfig::validate`]); an invalid one is `InvalidInput`
+/// The config is validated first (`DataConfig`'s range checks); an invalid one is `InvalidInput`
 /// whose message starts with the pointer relative to `data`. `cancel` is checked before each
 /// dataset and between files.
 ///

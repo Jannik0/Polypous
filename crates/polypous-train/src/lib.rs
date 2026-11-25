@@ -44,9 +44,9 @@ pub mod training_config;
 
 pub use clip::clip_gradients;
 pub use config::{
-    AccuracyConfig, AdamConfig, AdamWConfig, BinaryCrossEntropyConfig, ConfigError,
-    CrossEntropyConfig, GradientClipConfig, LossConfig, MetricConfig, MseConfig, OptimizerConfig,
-    ScheduleConfig, SgdConfig, validate_metrics,
+    AccuracyConfig, AdamConfig, AdamWConfig, BinaryCrossEntropyConfig, CrossEntropyConfig,
+    GradientClipConfig, LossConfig, MetricConfig, MseConfig, OptimizerConfig, ScheduleConfig,
+    SgdConfig,
 };
 pub use data::{
     Batcher, DataConfig, DataError, DataErrorKind, DataSources, Dataset, DatasetConfig, Datasets,

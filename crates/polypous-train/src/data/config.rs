@@ -256,7 +256,7 @@ impl DataConfig {
     ///
     /// # Errors
     /// The first failure: `train` before `validation`, then `max_bytes`.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if matches!(self.train, DatasetConfig::Split(_)) {
             return Err(err(
                 "/train/kind".to_owned(),
@@ -285,7 +285,7 @@ impl DatasetConfig {
     ///
     /// # Errors
     /// The first out-of-range field, in table order.
-    pub fn validate(&self, at: &str) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self, at: &str) -> Result<(), ConfigError> {
         match self {
             Self::Tensors(cfg) => check_len(
                 &format!("{at}/name"),
