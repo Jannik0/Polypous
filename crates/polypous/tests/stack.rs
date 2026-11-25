@@ -3,7 +3,10 @@
 //! `cargo test`. The facade and `polyp` run on the caller's thread, and the main thread of a
 //! Windows program has 1 MB.
 //!
-//! A stack overflow aborts the process, so this test has its own test binary.
+//! The `#[ignore = "gpu"]` test does the same on every available GPU device (lavapipe with
+//! `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, which the CI lavapipe job sets).
+//!
+//! A stack overflow aborts the process, so these tests have their own test binary.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a test failure.
 #![allow(clippy::result_large_err)] // `polypous::Error` is large by design (public-api.md §2 rule 7).
 
@@ -28,7 +31,7 @@ use training_fixtures::*;
 /// | `mlp(4, 16, 1)` | 388 | 352 |
 /// | 8 nested `repeat`s | 388 | 396 |
 ///
-/// On lavapipe the same graphs need up to 476 KiB. 640 KiB leaves room for other compilers and
+/// On lavapipe (the GPU test) the same graphs need up to 476 KiB. 640 KiB leaves room for other compilers and
 /// platforms below Windows' 1 MB main thread, and fails clearly if a large frame comes back.
 const STACK: usize = 640 << 10;
 
@@ -48,6 +51,46 @@ fn training_and_inference_fit_a_640_kib_stack() {
         MAX_REPEAT_DEPTH
     );
 
+    on_small_stack(&cpu_engine(), DeviceId::Cpu);
+}
+
+/// [`training_and_inference_fit_a_640_kib_stack`] on every available GPU device. Software
+/// rasterizers only with `POLYPOUS_TEST_SOFTWARE_VULKAN=1` (the CI lavapipe job sets it). Passes
+/// with a SKIP line if there is no GPU device.
+#[cfg(any(feature = "vulkan", feature = "cuda", feature = "metal"))]
+#[test]
+#[ignore = "gpu"]
+fn training_and_inference_fit_a_640_kib_stack_on_gpus() {
+    let mut config = EngineConfig::default();
+    config.software_rasterizers =
+        std::env::var("POLYPOUS_TEST_SOFTWARE_VULKAN").is_ok_and(|v| v == "1");
+    config.probe_cache_dir =
+        Some(PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("facade-stack-probe-cache"));
+    let engine = Engine::new(config).unwrap();
+    let devices: Vec<DeviceId> = engine
+        .devices()
+        .into_iter()
+        .filter(|d| d.backend != polypous::BackendKind::Cpu)
+        .filter(|d| {
+            let available = d.status.is_available();
+            if !available {
+                eprintln!("SKIP device {}: {:?}", d.id, d.status);
+            }
+            available
+        })
+        .map(|d| d.id)
+        .collect();
+    if devices.is_empty() {
+        eprintln!("SKIP: no available GPU device");
+    }
+    for device in devices {
+        on_small_stack(&engine, device);
+    }
+}
+
+/// [`train_and_infer`] for the MLP and the 8 nested `repeat`s on `device`, each on a thread with
+/// a [`STACK`] stack.
+fn on_small_stack(engine: &Engine, device: DeviceId) {
     let graphs = [
         ("mlp", mlp(4, 16, 1)),
         (
@@ -56,29 +99,35 @@ fn training_and_inference_fit_a_640_kib_stack() {
         ),
     ];
     for (name, graph) in graphs {
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("facade-stack-{name}"));
+        let label = format!("{device}-{name}").replace(':', "-");
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("facade-stack-{label}"));
         let _ = std::fs::remove_dir_all(&dir);
         write_regression(&dir, 64, 5);
-        let engine = cpu_engine();
+        let engine = engine.clone();
         std::thread::Builder::new()
-            .name(format!("stack-{name}"))
+            .name(format!("stack-{label}"))
             .stack_size(STACK)
-            .spawn(move || train_and_infer(&engine, &graph, dir))
+            .spawn(move || train_and_infer(&engine, &graph, device, dir))
             .unwrap()
             .join()
-            .unwrap_or_else(|_| panic!("{name}: the thread panicked"));
+            .unwrap_or_else(|_| panic!("{device}, {name}: the thread panicked"));
+        eprintln!(
+            "{device}: {name} trained and ran on a {} KiB stack",
+            STACK >> 10
+        );
     }
 }
 
-/// `Engine::trainer` and `Trainer::run` (one epoch), then the export with `Engine::load_graph`
-/// and `Model::run`.
-fn train_and_infer(engine: &Engine, graph: &Graph, dir: PathBuf) {
+/// `Engine::trainer` and `Trainer::run` (one epoch) on `device`, then the export with
+/// `Engine::load_graph` and `Model::run` on `device`.
+fn train_and_infer(engine: &Engine, graph: &Graph, device: DeviceId, dir: PathBuf) {
     let cancel = CancellationToken::new();
-    let config = regression_config(json!({ "epochs": 1 }));
+    let config = regression_config(json!({ "epochs": 1, "device": device.to_string() }));
     let config = TrainingConfig::from_json(&config.to_string()).unwrap();
     let mut options = TrainerOptions::default();
     options.base_dir = Some(dir.clone());
     let trainer = engine.trainer(graph, config, options, &cancel).unwrap();
+    assert_eq!(trainer.info().device, device);
     let outcome = trainer.run(&cancel, |_| {}).unwrap();
     assert!(outcome.step > 0);
     let (graph_path, weights_path) = (dir.join("model.graph.json"), dir.join("model.safetensors"));
@@ -86,7 +135,7 @@ fn train_and_infer(engine: &Engine, graph: &Graph, dir: PathBuf) {
 
     let mut options = GraphLoadOptions::default();
     options.weights = Some(weights_path);
-    options.device = Some(DeviceId::Cpu);
+    options.device = Some(device);
     let exported = Graph::from_file(&graph_path).unwrap();
     let model = engine.load_graph(&exported, options, &cancel).unwrap();
     let x = regression_fields(64, 5).remove(0);
