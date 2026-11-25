@@ -15,11 +15,14 @@
 //! - `polyp run <graph> [--weights FILE] --input NAME=FILE … --output FILE [options]`: loads a graph
 //!   with safetensors weights, runs it once on safetensors inputs and writes its outputs
 //!   (public-api.md §1.3).
+//! - `polyp train <graph> --config <file> [options]` and `polyp train --resume <dir> [options]`:
+//!   trains a graph, or continues from a checkpoint, with progress on stdout, Ctrl-C to cancel,
+//!   and an optional export (public-api.md §1.4, "CLI").
 //!
 //! Output goes to stdout; errors and logs go to stderr, logs through `tracing` (filter with
 //! `RUST_LOG`, for example `RUST_LOG=polypous=debug` for probe details; the default shows
 //! warnings). Exit codes: `0` success, `1` an error, `2` a usage error, `3` `graph validate` found
-//! the graph invalid.
+//! the graph invalid, `4` `train` was cancelled, `130` `train` was stopped by a second Ctrl-C.
 
 // `polypous::Error` is large (public-api.md §2 rule 7: optional context strings) and only returned
 // on the error path; see the same allowance in the `polypous` crate.
@@ -27,6 +30,7 @@
 
 mod devices;
 mod graphs;
+mod train;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -45,6 +49,12 @@ Usage:
                                      Validate a graph document and list every error
   polyp run GRAPH [--weights FILE] --input NAME=FILE... --output FILE [OPTIONS]
                                      Run a graph once on safetensors inputs
+  polyp train GRAPH --config FILE [--weights FILE] [--device ID] [--json]
+              [--export-graph FILE --export-weights FILE] [OPTIONS]
+                                     Train a graph with a training config
+  polyp train --resume DIR [--device ID] [--discard-newer] [--json]
+              [--export-graph FILE --export-weights FILE] [OPTIONS]
+                                     Continue training from a checkpoint or run directory
   polyp probe --json [--software-rasterizers] [--request JSON]
                                      Run the device prober here and print its protocol lines
   polyp --help                       Show this help
@@ -77,8 +87,30 @@ Options of `run`:
   --prober-path PATH           Prober executable (default: polyp itself)
   Graphs with state are not supported by `run` yet; use the API.
 
+Options of `train`:
+  --config FILE                The training config (JSON); its relative paths are resolved
+                               against the config file's directory
+  --weights FILE               Initial weights for some or all params (others use their init)
+  --resume DIR                 Continue from a checkpoint directory, or the newest checkpoint of
+                               a run directory (no GRAPH, --config or --weights then)
+  --discard-newer              With --resume: delete the run directory's newer checkpoints when
+                               the first new one is written (otherwise they are an error)
+  --device ID                  Replaces the config's `device` (auto, cpu, cuda:0, ...)
+  --json                       Print each event as JSON on its own line (JSON Lines), and errors
+                               as JSON on stderr
+  --export-graph FILE          With --export-weights: after the run (also a cancelled one), write
+  --export-weights FILE        the model, loadable by `polyp run`
+  --software-rasterizers, --probe-cache-dir DIR, --prober-path PATH: as for `run`
+  Output: one line per event, `EVENT key=value ...`, for example
+    step epoch=0 batch=3 step=3 loss=0.4127 lr=0.001
+    epoch_finished epoch=0 step=844 train.loss=0.2412 val.loss=0.0711 val.accuracy=0.9779
+  Epochs, batches and steps count from 0, as in the JSON. Ctrl-C cancels: the current step
+  finishes, a checkpoint is written if configured, the export too (exit code 4). A second
+  Ctrl-C stops at once (exit code 130).
+
 Exit codes: 0 success, 1 an error (message and context on stderr; the error JSON with --json),
-2 a usage error, 3 `graph validate` found the graph invalid.
+2 a usage error, 3 `graph validate` found the graph invalid, 4 `train` was cancelled,
+130 `train` was stopped by a second Ctrl-C.
 
 Logs go to stderr. Set RUST_LOG to filter them, for example RUST_LOG=polypous=debug.
 ";
@@ -101,6 +133,7 @@ enum Command {
     Devices(DevicesArgs),
     GraphValidate(ValidateArgs),
     Run(RunArgs),
+    Train(train::TrainArgs),
     Probe { request: String },
     Help,
     Version,
@@ -118,6 +151,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             None => Err("`graph` needs a subcommand: validate".into()),
         },
         Some("run") => parse_run(&args[1..]).map(Command::Run),
+        Some("train") => train::parse(&args[1..]).map(Command::Train),
         Some("probe") => parse_probe(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
     }
@@ -310,6 +344,7 @@ fn main() -> ExitCode {
                 Err(error) => report_error(&error, args.json),
             };
         }
+        Command::Train(args) => return train::train(&args),
         Command::Probe { request } => {
             let code = polypous::probe::run_prober(&request);
             return ExitCode::from(u8::try_from(code).unwrap_or(1));
@@ -329,7 +364,7 @@ fn main() -> ExitCode {
 
 /// Prints a failed command's error to stderr: the message and context, or with `json` the error
 /// JSON on one line. Exit code 1.
-fn report_error(error: &CliError, json: bool) -> ExitCode {
+pub(crate) fn report_error(error: &CliError, json: bool) -> ExitCode {
     if json {
         eprintln!("{}", error.to_json());
     } else {
@@ -451,6 +486,7 @@ mod tests {
     #[test]
     fn rejects_unknown_arguments() {
         assert!(parse(&["explode"]).unwrap_err().contains("unknown command"));
+        assert!(parse(&["train"]).unwrap_err().contains("--resume"));
         assert!(
             parse(&["devices", "--yaml"])
                 .unwrap_err()

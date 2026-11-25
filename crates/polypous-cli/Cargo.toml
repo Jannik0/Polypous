@@ -25,6 +25,14 @@ metal = ["polypous/metal"]
 
 [dependencies]
 polypous.workspace = true
+# `polyp train`: the first Ctrl-C cancels the run, the second ends the process (public-api.md
+# §1.4, "CLI"). MIT OR Apache-2.0. The workspace denies `unsafe_code`; this crate keeps the
+# signal handler's unsafe code out of Polypous. It runs the handler on its own thread, and on
+# Windows handles Ctrl-C and Ctrl-Break. New in the lock file: `ctrlc` and `nix` 0.32 (MIT, unix
+# only; its dependencies bitflags, cfg-if, cfg_aliases and libc were already there). On Windows it
+# uses windows-sys 0.61 and on Apple dispatch2 0.3, both already in the lock file. Not the
+# `termination` feature: only SIGINT, not SIGTERM/SIGHUP.
+ctrlc = "3.5.3"
 # `polyp devices --json`. MIT OR Apache-2.0; already in the lock file.
 serde_json = "1.0.154"
 # The CLI installs the log subscriber (`RUST_LOG`, to stderr). MIT; already in the lock file.

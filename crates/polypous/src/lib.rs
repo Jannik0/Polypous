@@ -3,6 +3,9 @@
 //! Responsibility: public facade: `Engine`, `Model`, `Session`, `Pipeline`, `Trainer`, events,
 //! errors.
 //!
+//! Training (public-api.md §1.4): [`Engine::trainer`], [`Engine::resume_trainer`] and
+//! [`Trainer`]; the nested config and result types are in [`training`].
+//!
 //! See `docs/architecture.md` §2 and `docs/specs/public-api.md`. Every public item follows the
 //! wrapper-friendliness rules of public-api.md §2: no generics or lifetimes, handles are cheap
 //! clones, data is plain serde, errors are [`Error`], and panics are caught at the boundary.
@@ -31,6 +34,7 @@ mod model;
 pub mod probe;
 mod tensor;
 pub mod tensor_file;
+pub mod training;
 
 pub use cancel::CancellationToken;
 pub use device::{
@@ -43,3 +47,7 @@ pub use graph::{Diagnostic, Graph, GraphValidateOptions, ValidationReport};
 pub use model::{Dim, GraphLoadOptions, Model, ModelInfo, RunOutput, TensorSpec};
 pub use probe::{Isolation, ProbeEvent, ProbeOptions, ProbeReport};
 pub use tensor::{ComputeDtype, Dtype, NamedTensor, TensorData};
+pub use training::{
+    InMemoryDataset, ResumeOptions, Trainer, TrainerInfo, TrainerOptions, TrainingConfig,
+    TrainingEvent, TrainingOutcome,
+};
