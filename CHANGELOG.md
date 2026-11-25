@@ -7,6 +7,11 @@ All notable changes to Polypous are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `Plan::check_training_mode(&Bindings)` in `polypous-runtime` (#112, runtime.md §3.1): the
+  training-mode checks (compute dtype `f32`, one use per running statistic, at least 2 values per
+  `batch_norm` channel), callable on the bound shapes of a call without tensors, with the same
+  order and `RuntimeError` values as a training-mode `Plan::run`, which now calls this function.
+  The trainer calls it at training.md §2.10 step 6 instead of its own copy of the checks.
 - Autodiff on `DynTensor` in `polypous-backend` (#75, ADR-0014): `DynTensor::require_grad` marks a
   float tensor as a param leaf, `backward` back-propagates from a one-element loss into an opaque
   `Gradients`, and `Gradients::get`/`take` return a leaf's gradient as a plain `DynTensor` (leaf
@@ -426,6 +431,11 @@ All notable changes to Polypous are documented here. The format follows
   budget and sidecars (`tools/ci/check_fixtures.py`) in the "Dependency boundary" job.
 
 ### Changed
+- The trainer's §2.10 step 6 (#112) runs the runtime's training-mode checks after the target
+  values, as training.md orders them, and in the runtime's order (a shared running statistic
+  before a batch with one value per channel). Before, a last batch of one sample with
+  `nn.batch_norm` was reported ahead of a bad target value. Configs with only one of these
+  problems get the same error as before.
 - Op fixtures name their tensors after the op's inputs (`a`, `b`, `x`, `cond`; outputs `out`),
   and `core.add/empty_dim_f32` is gone (zero-size dims are not allowed in M1, graph-ir.md §2.3).
 - `polypous-backend` no longer depends on `polypous-ir`.

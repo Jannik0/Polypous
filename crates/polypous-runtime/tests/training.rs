@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use polypous_backend::device::DeviceId;
 use polypous_backend::{DType, DynTensor};
-use polypous_ir::{ComputeDtype, rng};
+use polypous_ir::{ComputeDtype, TensorDesc, rng};
 use polypous_runtime::{
     ErrorKind, Model, ParamProblem, Params, Plan, PlanOptions, RunMode, RunOptions, RunOutput,
     RuntimeError,
@@ -770,4 +770,148 @@ fn training_gpu() {
             "SUMMARY training {device}: given params, dropout masks, running stats, gradients passed"
         );
     }
+}
+
+/// The public check (`Plan::check_training_mode`, runtime.md §3.1) on the bound shapes alone,
+/// next to a training-mode `Plan::run` with tensors of those shapes: the same result.
+fn check_both(
+    doc: &Value,
+    compute: ComputeDtype,
+    x_shape: &[usize],
+) -> (Result<(), String>, Result<(), String>) {
+    let mut options = PlanOptions::new(CPU);
+    options.compute_dtype = compute;
+    let p = Plan::new(&graph(doc), options).unwrap();
+    let dtype = p.analysis().inputs[0].info.dtype;
+    let bindings = p
+        .analysis()
+        .bind(
+            &[(
+                "x",
+                TensorDesc {
+                    dtype,
+                    shape: x_shape,
+                },
+            )],
+            &[],
+        )
+        .unwrap();
+    let checked = p
+        .check_training_mode(&bindings)
+        .map_err(|e| format!("{e:?}"));
+    let ran = if compute == ComputeDtype::F32 {
+        let n: usize = x_shape.iter().product();
+        run_plan(
+            &p,
+            vec![("x", f32_tensor(x_shape, &values(n, 3), CPU))],
+            &params_for(doc, CPU),
+            TRAIN,
+        )
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"))
+    } else {
+        Err(format!("{:?}", train_error(doc, compute, x_shape)))
+    };
+    (checked, ran)
+}
+
+#[test]
+fn the_public_check_and_a_training_call_agree() {
+    // A repeat whose body's batch_norm has its own statistics per iteration (`{i}`).
+    let mut params = Vec::new();
+    for i in 0..3 {
+        for s in ["running_mean", "running_var"] {
+            params.push(json!({ "name": format!("bn{i}.{s}"), "dtype": "float", "shape": [3] }));
+        }
+    }
+    let repeat = json!({
+        "format": "polypous.graph", "format_version": 1, "opsets": { "nn": 1 },
+        "dims": { "batch": {} },
+        "inputs": [ { "name": "x", "dtype": "float", "shape": ["batch", 3] } ],
+        "outputs": [ { "name": "y", "value": "r:h" } ],
+        "params": params,
+        "nodes": [ { "id": "r", "op": "repeat", "count": 3, "carry": { "h": "x" }, "body": {
+            "params_prefix": "bn{i}.",
+            "nodes": [ { "id": "bn", "op": "nn.batch_norm", "inputs": { "x": "h" },
+                         "params": { "running_mean": "running_mean", "running_var": "running_var" } } ],
+            "carry_out": { "h": "bn" } } } ]
+    });
+    let failures = [
+        (
+            bn_graph(),
+            ComputeDtype::F16,
+            vec![2, 3, 2],
+            "TrainingDtype",
+        ),
+        (
+            bn_graph(),
+            ComputeDtype::Bf16,
+            vec![1, 3, 1],
+            "TrainingDtype",
+        ),
+        (
+            shared_bn("running_var"),
+            ComputeDtype::F32,
+            vec![2, 3, 2],
+            "SharedRunningStat",
+        ),
+        (
+            shared_bn("running_mean"),
+            ComputeDtype::F32,
+            vec![1, 3, 1],
+            "SharedRunningStat",
+        ),
+        (
+            bn_graph(),
+            ComputeDtype::F32,
+            vec![1, 3, 1],
+            "BatchNormValues",
+        ),
+        (
+            repeat.clone(),
+            ComputeDtype::F32,
+            vec![1, 3],
+            "BatchNormValues",
+        ),
+    ];
+    for (doc, compute, shape, kind) in failures {
+        let (checked, ran) = check_both(&doc, compute, &shape);
+        let checked = checked.expect_err("the check fails");
+        assert!(checked.starts_with(kind), "{checked}");
+        assert_eq!(Err(checked), ran, "{kind} {shape:?}");
+    }
+    // The repeat's node path is the runtime's `r[0]/bn`.
+    let (checked, _) = check_both(&repeat, ComputeDtype::F32, &[1, 3]);
+    assert!(checked.unwrap_err().contains("node: \"r[0]/bn\""));
+    // Valid graphs pass both.
+    for (doc, shape) in [
+        (bn_graph(), vec![2, 3, 2]),
+        (repeat, vec![2, 3]),
+        (mlp_graph(), vec![2, 4]),
+    ] {
+        assert_eq!(
+            check_both(&doc, ComputeDtype::F32, &shape),
+            (Ok(()), Ok(())),
+            "{shape:?}"
+        );
+    }
+    // Bindings of another plan don't fit.
+    let p = Plan::new(&graph(&bn_graph()), PlanOptions::new(CPU)).unwrap();
+    let other = Plan::new(&graph(&mlp_graph()), PlanOptions::new(CPU)).unwrap();
+    let dtype = other.analysis().inputs[0].info.dtype;
+    let bindings = other
+        .analysis()
+        .bind(
+            &[(
+                "x",
+                TensorDesc {
+                    dtype,
+                    shape: &[2, 4],
+                },
+            )],
+            &[],
+        )
+        .unwrap();
+    let err = p.check_training_mode(&bindings).unwrap_err();
+    assert!(matches!(err, RuntimeError::Internal { .. }), "{err}");
 }
