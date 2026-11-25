@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "case": "mnist_reference",
+  "description": "The MNIST CNN with every dropout at p = 0, trained from the initial weights in reference.safetensors with reference_train.json: the losses of the first 10 steps (batch 64, shuffle false, constant lr), then the inference-mode loss of the first 64 test images (testing-strategy.md \u00a73.8).",
+  "graph": "reference_cnn.graph.json",
+  "config": "reference_train.json",
+  "weights": {
+    "seed": 84,
+    "params": [
+      {
+        "name": "conv1.weight",
+        "dtype": "f32",
+        "shape": [
+          8,
+          1,
+          3,
+          3
+        ]
+      },
+      {
+        "name": "conv1.bias",
+        "dtype": "f32",
+        "shape": [
+          8
+        ]
+      },
+      {
+        "name": "conv2.weight",
+        "dtype": "f32",
+        "shape": [
+          16,
+          8,
+          3,
+          3
+        ]
+      },
+      {
+        "name": "bn.running_mean",
+        "dtype": "f32",
+        "shape": [
+          16
+        ]
+      },
+      {
+        "name": "bn.running_var",
+        "dtype": "f32",
+        "shape": [
+          16
+        ]
+      },
+      {
+        "name": "bn.weight",
+        "dtype": "f32",
+        "shape": [
+          16
+        ]
+      },
+      {
+        "name": "bn.bias",
+        "dtype": "f32",
+        "shape": [
+          16
+        ]
+      },
+      {
+        "name": "fc1.weight",
+        "dtype": "f32",
+        "shape": [
+          64,
+          2304
+        ]
+      },
+      {
+        "name": "fc1.bias",
+        "dtype": "f32",
+        "shape": [
+          64
+        ]
+      },
+      {
+        "name": "fc2.weight",
+        "dtype": "f32",
+        "shape": [
+          10,
+          64
+        ]
+      },
+      {
+        "name": "fc2.bias",
+        "dtype": "f32",
+        "shape": [
+          10
+        ]
+      }
+    ]
+  },
+  "data": {
+    "train": {
+      "name": "mnist-train",
+      "sha256": "f46ad6f18ebaac006978e503b6ae8fd7a4fb4a7b97558571aeb2e08a11cda521"
+    },
+    "test": {
+      "name": "mnist-test",
+      "sha256": "22b955d170f0e49e7dd87df4da3c6a4e723dc7d1be22323cb8303e1faf1fc489"
+    }
+  },
+  "steps": 10,
+  "losses": [
+    2.325770854949951,
+    2.140814781188965,
+    2.1582417488098145,
+    1.7287429571151733,
+    1.7535053491592407,
+    1.5000786781311035,
+    1.3080471754074097,
+    1.3365323543548584,
+    1.1579409837722778,
+    1.3232249021530151
+  ],
+  "inference": {
+    "dataset": "test",
+    "first": 64,
+    "loss": 2.1587445735931396
+  },
+  "tolerance": {
+    "rtol": 0.001
+  },
+  "reference": "PyTorch in f64 on the f32 weights and data, rounded once to f32: F.conv2d, F.batch_norm (training=True updates the running statistics), F.max_pool2d, F.linear, F.cross_entropy, torch.optim.AdamW(foreach=False); the inference loss with training=False",
+  "notes": "Initial weights: polyrng.initial_values (graph-ir.md \u00a72.4.1) with seed `weights.seed` and each param's init in the graph, so bit-identical on every platform. PyTorch's own f32 run meets the tolerance against the reference (gen_mnist.py --report).",
+  "generator": "tools/reference/gen_mnist.py",
+  "versions": {
+    "python": "3.14",
+    "torch": "2.15.0+cpu",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.4"
+  }
+}

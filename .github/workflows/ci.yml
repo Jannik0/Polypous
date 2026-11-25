@@ -159,12 +159,14 @@ jobs:
       # feature compiled in, the only GPU device they find is lavapipe. Polypous skips software
       # rasterizers unless opted in (placement.md §1, issue #21); the test-only variable
       # POLYPOUS_TEST_SOFTWARE_VULKAN=1 makes the GPU tests open and test lavapipe. `--nocapture`
-      # keeps the device list and the tested devices in the log.
+      # keeps the device list and the tested devices in the log. `--skip mnist` leaves out the
+      # `#[ignore = "mnist"]` tests (testing-strategy.md §3.8): they need the downloaded MNIST
+      # data and minutes of CPU training, and run in the M2 exit check instead.
       - name: cargo test --features polypous-cli/vulkan
         if: steps.features.outputs.available == 'true'
         env:
           POLYPOUS_TEST_SOFTWARE_VULKAN: "1"
-        run: cargo test --workspace --locked ${{ steps.features.outputs.args }} -- --include-ignored --nocapture
+        run: cargo test --workspace --locked ${{ steps.features.outputs.args }} -- --include-ignored --skip mnist --nocapture
 
       - name: Skip Vulkan tests (feature not available yet)
         if: steps.features.outputs.available != 'true'

@@ -1,0 +1,45 @@
+{
+  "format": "polypous.training",
+  "format_version": 1,
+  "seed": 42,
+  "device": "cpu",
+  "precision": "f32",
+  "epochs": 1,
+  "batch_size": 64,
+  "data": {
+    "train": {
+      "kind": "safetensors",
+      "path": "../../cache/mnist/mnist-train.safetensors"
+    },
+    "shuffle": false
+  },
+  "inputs": {
+    "image": "image"
+  },
+  "loss": {
+    "kind": "cross_entropy",
+    "prediction": "logits",
+    "target": "label"
+  },
+  "metrics": [
+    {
+      "kind": "accuracy",
+      "prediction": "logits",
+      "target": "label"
+    }
+  ],
+  "optimizer": {
+    "kind": "adamw",
+    "lr": 0.001,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "eps": 1e-08,
+    "weight_decay": 0.01
+  },
+  "schedule": {
+    "kind": "constant"
+  },
+  "checkpoint": null
+}

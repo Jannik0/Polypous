@@ -1,4 +1,21 @@
 {
   "schema_version": 1,
-  "entries": []
+  "entries": [
+    {
+      "name": "mnist-train",
+      "url": "https://github.com/Jannik0/Polypous/releases/download/fixtures-mnist-v1/mnist-train.safetensors",
+      "sha256": "f46ad6f18ebaac006978e503b6ae8fd7a4fb4a7b97558571aeb2e08a11cda521",
+      "size": 188640160,
+      "license": "CC BY-SA 3.0: the MNIST database by Yann LeCun and Corinna Cortes, converted to safetensors by tools/reference/convert_mnist.py",
+      "path": "mnist/mnist-train.safetensors"
+    },
+    {
+      "name": "mnist-test",
+      "url": "https://github.com/Jannik0/Polypous/releases/download/fixtures-mnist-v1/mnist-test.safetensors",
+      "sha256": "22b955d170f0e49e7dd87df4da3c6a4e723dc7d1be22323cb8303e1faf1fc489",
+      "size": 31440160,
+      "license": "CC BY-SA 3.0: the MNIST database by Yann LeCun and Corinna Cortes, converted to safetensors by tools/reference/convert_mnist.py",
+      "path": "mnist/mnist-test.safetensors"
+    }
+  ]
 }

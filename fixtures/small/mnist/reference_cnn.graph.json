@@ -1,0 +1,288 @@
+{
+  "format": "polypous.graph",
+  "format_version": 1,
+  "name": "mnist_cnn_reference",
+  "opsets": {
+    "core": 1,
+    "nn": 1
+  },
+  "dims": {
+    "batch": {
+      "min": 1
+    }
+  },
+  "inputs": [
+    {
+      "name": "image",
+      "dtype": "float",
+      "shape": [
+        "batch",
+        1,
+        28,
+        28
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "value": "fc2"
+    }
+  ],
+  "params": [
+    {
+      "name": "conv1.weight",
+      "dtype": "float",
+      "shape": [
+        8,
+        1,
+        3,
+        3
+      ],
+      "init": {
+        "kind": "kaiming_uniform",
+        "a": 2.23606797749979
+      }
+    },
+    {
+      "name": "conv1.bias",
+      "dtype": "float",
+      "shape": [
+        8
+      ],
+      "init": {
+        "kind": "uniform",
+        "low": -0.3333333333333333,
+        "high": 0.3333333333333333
+      }
+    },
+    {
+      "name": "conv2.weight",
+      "dtype": "float",
+      "shape": [
+        16,
+        8,
+        3,
+        3
+      ],
+      "init": {
+        "kind": "kaiming_uniform",
+        "a": 2.23606797749979
+      }
+    },
+    {
+      "name": "bn.running_mean",
+      "dtype": "float",
+      "shape": [
+        16
+      ],
+      "init": {
+        "kind": "zeros"
+      }
+    },
+    {
+      "name": "bn.running_var",
+      "dtype": "float",
+      "shape": [
+        16
+      ],
+      "init": {
+        "kind": "ones"
+      }
+    },
+    {
+      "name": "bn.weight",
+      "dtype": "float",
+      "shape": [
+        16
+      ],
+      "init": {
+        "kind": "ones"
+      }
+    },
+    {
+      "name": "bn.bias",
+      "dtype": "float",
+      "shape": [
+        16
+      ],
+      "init": {
+        "kind": "zeros"
+      }
+    },
+    {
+      "name": "fc1.weight",
+      "dtype": "float",
+      "shape": [
+        64,
+        2304
+      ],
+      "init": {
+        "kind": "kaiming_uniform",
+        "a": 2.23606797749979
+      }
+    },
+    {
+      "name": "fc1.bias",
+      "dtype": "float",
+      "shape": [
+        64
+      ],
+      "init": {
+        "kind": "uniform",
+        "low": -0.020833333333333332,
+        "high": 0.020833333333333332
+      }
+    },
+    {
+      "name": "fc2.weight",
+      "dtype": "float",
+      "shape": [
+        10,
+        64
+      ],
+      "init": {
+        "kind": "kaiming_uniform",
+        "a": 2.23606797749979
+      }
+    },
+    {
+      "name": "fc2.bias",
+      "dtype": "float",
+      "shape": [
+        10
+      ],
+      "init": {
+        "kind": "uniform",
+        "low": -0.125,
+        "high": 0.125
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "conv1",
+      "op": "nn.conv2d",
+      "inputs": {
+        "x": "image"
+      },
+      "params": {
+        "weight": "conv1.weight",
+        "bias": "conv1.bias"
+      }
+    },
+    {
+      "id": "relu1",
+      "op": "nn.relu",
+      "inputs": {
+        "x": "conv1"
+      }
+    },
+    {
+      "id": "conv2",
+      "op": "nn.conv2d",
+      "inputs": {
+        "x": "relu1"
+      },
+      "params": {
+        "weight": "conv2.weight"
+      }
+    },
+    {
+      "id": "bn",
+      "op": "nn.batch_norm",
+      "inputs": {
+        "x": "conv2"
+      },
+      "params": {
+        "running_mean": "bn.running_mean",
+        "running_var": "bn.running_var",
+        "weight": "bn.weight",
+        "bias": "bn.bias"
+      },
+      "attrs": {
+        "eps": 1e-05,
+        "momentum": 0.1
+      }
+    },
+    {
+      "id": "relu2",
+      "op": "nn.relu",
+      "inputs": {
+        "x": "bn"
+      }
+    },
+    {
+      "id": "pool",
+      "op": "nn.max_pool2d",
+      "inputs": {
+        "x": "relu2"
+      },
+      "attrs": {
+        "kernel_size": [
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "id": "drop1",
+      "op": "nn.dropout",
+      "inputs": {
+        "x": "pool"
+      },
+      "attrs": {
+        "p": 0.0
+      }
+    },
+    {
+      "id": "flatten",
+      "op": "core.flatten",
+      "inputs": {
+        "x": "drop1"
+      },
+      "attrs": {
+        "start_dim": 1
+      }
+    },
+    {
+      "id": "fc1",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "flatten"
+      },
+      "params": {
+        "weight": "fc1.weight",
+        "bias": "fc1.bias"
+      }
+    },
+    {
+      "id": "relu3",
+      "op": "nn.relu",
+      "inputs": {
+        "x": "fc1"
+      }
+    },
+    {
+      "id": "drop2",
+      "op": "nn.dropout",
+      "inputs": {
+        "x": "relu3"
+      },
+      "attrs": {
+        "p": 0.0
+      }
+    },
+    {
+      "id": "fc2",
+      "op": "nn.linear",
+      "inputs": {
+        "x": "drop2"
+      },
+      "params": {
+        "weight": "fc2.weight",
+        "bias": "fc2.bias"
+      }
+    }
+  ]
+}
