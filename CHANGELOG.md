@@ -457,6 +457,13 @@ All notable changes to Polypous are documented here. The format follows
   instead of `PROCESSOR_IDENTIFIER` (new Windows-only dependency `windows-registry`, MIT OR Apache-2.0).
 
 ### Fixed
+- Training and inference fit a much smaller thread stack in debug builds (#114): `polyp train`
+  overflowed the 1 MB main thread on Windows. The interpreter runs each op family in its own
+  function, and the largest dispatch functions of `polypous-backend` (`reshape`, `broadcast_to`,
+  `linear`, the `f16`/`bf16` path of `matmul`) and the `repeat` loop are split too. With the
+  `vulkan` feature on Linux, a training step needs 388 KiB instead of 992 KiB, inference 352 KiB
+  instead of 964 KiB, and 8 nested `repeat`s at most 396 KiB; a facade test runs both on a
+  640 KiB stack. Results, errors and the API are unchanged.
 - A tracked `nn.max_pool2d` gives the untracked result bit for bit (#77): on lavapipe, a window
   holding `0` and `-0` gave `+0` when the input was tracked and `-0` when it wasn't.
 - `core.max`/`core.min` of floats give a zero result the sign of IEEE 754-2019's order
