@@ -24,6 +24,7 @@ use training_fixtures::*;
 
 const EXIT_ERROR: i32 = 1;
 const EXIT_USAGE: i32 = 2;
+#[cfg(unix)] // Only the Ctrl-C tests (Unix) cancel a run.
 const EXIT_CANCELLED: i32 = 4;
 
 /// A fresh directory for one test's files.
