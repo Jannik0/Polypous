@@ -542,10 +542,12 @@ polyp train --resume <dir> [--device ID] [--discard-newer] [--json]
   also after a cancelled one.
 - The first Ctrl-C (SIGINT; Ctrl-C or Ctrl-Break on Windows) cancels the run (training.md §4.3:
   the current step finishes, and a checkpoint is written if configured); a second one ends the
-  process at once.
+  process at once with exit code 130, without writing a checkpoint. A Ctrl-C while the trainer is
+  still being created makes `Engine::trainer` or `Engine::resume_trainer` return `Cancelled`: an
+  error, exit code 1.
 - Exit codes: `0` training completed, `1` an error (message and context on stderr, the error JSON
-  with `--json`), `2` a usage error, `4` cancelled (the outcome was still printed and the export
-  written).
+  with `--json`; also a cancel during creation), `2` a usage error, `4` cancelled (the outcome was
+  still printed and the export written), `130` a second Ctrl-C.
 
 C ABI (M7): `pp_engine_trainer`, `pp_engine_resume_trainer`, `pp_trainer_run`,
 `pp_trainer_export`, `pp_trainer_info_json`, `pp_trainer_free`.
