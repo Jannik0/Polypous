@@ -729,70 +729,114 @@ impl Run<'_> {
         infos: &[NodeInfo],
         bound: &[BoundNode],
     ) -> Result<()> {
-        let mut carry: Vec<DynTensor> = Vec::with_capacity(r.carry.len());
-        for c in &r.carry {
-            carry.push(self.operand(c.init, id)?);
-        }
-        let (path, params_prefix, state_prefix) = (
+        let mut carry = self.repeat_init(id, r)?;
+        let prefixes = (
             self.path.len(),
             self.params_prefix.len(),
             self.state_prefix.len(),
         );
+        // Only `block` is called from the loop itself; the work before and after the body is in
+        // `#[inline(never)]` methods. `block` → `repeat` → this closure → `block` recurses once
+        // per nesting level (up to 8, graph-ir.md §4.3), and a debug build gives every temporary
+        // its own stack slot: inline, they made this closure's frame about 20 KB with `vulkan`
+        // (#114).
         let result = (|| -> Result<()> {
             for i in 0..r.count {
-                self.path.truncate(path);
-                self.path.push_str(&format!("{id}[{i}]"));
-                self.check_cancel(|| self.path.clone())?;
-                self.path.push('/');
-                self.params_prefix.truncate(params_prefix);
-                self.params_prefix
-                    .push_str(&expand_prefix(&r.params_prefix, i));
-                self.state_prefix.truncate(state_prefix);
-                self.state_prefix
-                    .push_str(&expand_prefix(&r.state_prefix, i));
-
-                for (c, value) in r.carry.iter().zip(carry.drain(..)) {
-                    self.env[c.slot] = Some(value);
-                }
-                for (local, slot) in &r.state {
-                    let name = format!("{}{local}", self.state_prefix);
-                    let value = self
-                        .plan
-                        .state_index
-                        .get(&name)
-                        .and_then(|&k| self.state_in.get(k).cloned().flatten())
-                        .ok_or_else(|| {
-                            RuntimeError::internal(format!("state entry `{name}` has no value"))
-                        })?;
-                    self.env[*slot] = Some(value);
-                }
-                self.free(&r.body.frees_at_start);
+                self.repeat_enter(id, r, i, &mut carry, prefixes)?;
                 self.block(&r.body, infos, bound)?;
-
-                for c in &r.carry {
-                    carry.push(self.read(c.carry_out, "carry_out")?);
-                }
-                for (local, slot) in &r.state_updates {
-                    let name = format!("{}{local}", self.state_prefix);
-                    let value = self.read(*slot, "a state update")?;
-                    let k = *self.plan.state_index.get(&name).ok_or_else(|| {
-                        RuntimeError::internal(format!("state entry `{name}` is unknown"))
-                    })?;
-                    self.state_out[k] = Some(value);
-                }
-                // Every value the body owns, intermediates of nested bodies included, is dropped
-                // at the end of the iteration.
-                self.free(&r.body.owned);
+                self.repeat_leave(r, &mut carry)?;
             }
             Ok(())
         })();
+        let (path, params_prefix, state_prefix) = prefixes;
         self.path.truncate(path);
         self.params_prefix.truncate(params_prefix);
         self.state_prefix.truncate(state_prefix);
         result?;
+        self.repeat_finish(r, carry);
+        Ok(())
+    }
+
+    /// The initial carry values of a `repeat`.
+    // #114: own frame, see `repeat`.
+    #[inline(never)]
+    fn repeat_init(&mut self, id: &str, r: &RepeatStep) -> Result<Vec<DynTensor>> {
+        let mut carry: Vec<DynTensor> = Vec::with_capacity(r.carry.len());
+        for c in &r.carry {
+            carry.push(self.operand(c.init, id)?);
+        }
+        Ok(carry)
+    }
+
+    /// Starts iteration `i` of a `repeat`: node path and prefixes, carry and body state into
+    /// their slots. `prefixes` are the lengths of the path and prefixes outside the `repeat`.
+    // #114: own frame, see `repeat`.
+    #[inline(never)]
+    fn repeat_enter(
+        &mut self,
+        id: &str,
+        r: &RepeatStep,
+        i: u64,
+        carry: &mut Vec<DynTensor>,
+        (path, params_prefix, state_prefix): (usize, usize, usize),
+    ) -> Result<()> {
+        self.path.truncate(path);
+        self.path.push_str(&format!("{id}[{i}]"));
+        self.check_cancel(|| self.path.clone())?;
+        self.path.push('/');
+        self.params_prefix.truncate(params_prefix);
+        self.params_prefix
+            .push_str(&expand_prefix(&r.params_prefix, i));
+        self.state_prefix.truncate(state_prefix);
+        self.state_prefix
+            .push_str(&expand_prefix(&r.state_prefix, i));
+
+        for (c, value) in r.carry.iter().zip(carry.drain(..)) {
+            self.env[c.slot] = Some(value);
+        }
+        for (local, slot) in &r.state {
+            let name = format!("{}{local}", self.state_prefix);
+            let value = self
+                .plan
+                .state_index
+                .get(&name)
+                .and_then(|&k| self.state_in.get(k).cloned().flatten())
+                .ok_or_else(|| {
+                    RuntimeError::internal(format!("state entry `{name}` has no value"))
+                })?;
+            self.env[*slot] = Some(value);
+        }
+        self.free(&r.body.frees_at_start);
+        Ok(())
+    }
+
+    /// Ends an iteration of a `repeat`: the carry out of the body, the state updates.
+    // #114: own frame, see `repeat`.
+    #[inline(never)]
+    fn repeat_leave(&mut self, r: &RepeatStep, carry: &mut Vec<DynTensor>) -> Result<()> {
+        for c in &r.carry {
+            carry.push(self.read(c.carry_out, "carry_out")?);
+        }
+        for (local, slot) in &r.state_updates {
+            let name = format!("{}{local}", self.state_prefix);
+            let value = self.read(*slot, "a state update")?;
+            let k = *self.plan.state_index.get(&name).ok_or_else(|| {
+                RuntimeError::internal(format!("state entry `{name}` is unknown"))
+            })?;
+            self.state_out[k] = Some(value);
+        }
+        // Every value the body owns, intermediates of nested bodies included, is dropped at the
+        // end of the iteration.
+        self.free(&r.body.owned);
+        Ok(())
+    }
+
+    /// The final carry values of a `repeat`, into its output ports.
+    // #114: own frame, see `repeat`.
+    #[inline(never)]
+    fn repeat_finish(&mut self, r: &RepeatStep, carry: Vec<DynTensor>) {
         for (c, value) in r.carry.iter().zip(carry) {
             self.env[c.port] = Some(value);
         }
-        Ok(())
     }
 }

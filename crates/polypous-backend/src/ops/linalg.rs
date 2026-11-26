@@ -59,8 +59,7 @@ impl DynTensor {
             // f16/bf16 (the float class checked above): compute in f32, round once (§3.1.8).
             // The f32 operands and output are at most twice the checked half-precision sizes.
             check_shape(OP, &out_shape, DType::F32)?;
-            let wide = self.cast(DType::F32)?.matmul(other.cast(DType::F32)?)?;
-            return wide.cast(dtype);
+            return self.matmul_in_f32(other, dtype);
         }
         let (mut a_shape, mut b_shape) = (shape.clone(), shape);
         a_shape.extend([n, k]);
@@ -70,6 +69,16 @@ impl DynTensor {
         let (b, _, _) = other.broadcast_to(&b_shape)?.into_parts();
         let inner = zip_rank!(OP, a, b, x, y => x.matmul(y)?);
         Ok(DynTensor::from_parts(inner, dtype, device))
+    }
+
+    /// The `f16`/`bf16` path of [`DynTensor::matmul`], after its checks: both operands cast to
+    /// `f32`, multiplied, the product cast back to `dtype`.
+    // #114: own frame. A debug build gives every temporary its own stack slot; inline, the casts'
+    // slots made `matmul`'s frame larger on the `f32` path too, which this path calls.
+    #[inline(never)]
+    fn matmul_in_f32(self, other: Self, dtype: DType) -> Result<Self> {
+        let wide = self.cast(DType::F32)?.matmul(other.cast(DType::F32)?)?;
+        wide.cast(dtype)
     }
 }
 

@@ -103,6 +103,32 @@ pub(crate) fn check_positive(op: &'static str, name: &str, value: f64) -> Result
     }
 }
 
+/// `t` in `f32` for the computation of `nn.linear` (a no-op for `f32`).
+fn widen(t: DynTensor, dtype: DType) -> Result<DynTensor> {
+    if dtype == DType::F32 {
+        Ok(t)
+    } else {
+        t.cast(DType::F32)
+    }
+}
+
+/// `x @ weightᵀ` of `nn.linear`, in `f32`. The caller checked the operands.
+// #114: `linear_product` and `linear_bias` have their own frames. A debug build gives every
+// temporary its own stack slot; inline, they made `linear`'s frame about 40 KB with `vulkan`, on
+// the stack under both its `matmul` and its bias `add`.
+#[inline(never)]
+fn linear_product(x: DynTensor, weight: DynTensor, dtype: DType) -> Result<DynTensor> {
+    let x = widen(x, dtype)?;
+    x.matmul(widen(weight, dtype)?.transpose(0, 1)?)
+}
+
+/// `y + bias` of `nn.linear`, in `f32`. See [`linear_product`].
+// #114: own frame, see `linear_product`.
+#[inline(never)]
+fn linear_bias(y: DynTensor, bias: DynTensor, dtype: DType) -> Result<DynTensor> {
+    y.add(widen(bias, dtype)?)
+}
+
 impl DynTensor {
     /// `nn.linear`: `x @ weight^T + bias` (`F.linear`). `x` is `[…, in]` with rank 1–6, `weight`
     /// is `[out, in]` and the optional `bias` is `[out]` (PyTorch's layout); the output is
@@ -157,18 +183,11 @@ impl DynTensor {
         // f16/bf16 compute in f32 and round once (graph-ir.md §3.1.8, "Half-precision
         // accumulation"): in f16, Burn's matmul missed rtol 1e-2 on `flex` and lavapipe where the
         // output cancels to near zero (see the module documentation of `crate::ops`).
-        let wide = |t: Self| {
-            if dtype == DType::F32 {
-                Ok(t)
-            } else {
-                t.cast(DType::F32)
-            }
-        };
         let rank1 = shape.len() == 1;
-        let x = wide(if rank1 { self.unsqueeze(0)? } else { self })?;
-        let y = x.matmul(wide(weight)?.transpose(0, 1)?)?;
+        let x = if rank1 { self.unsqueeze(0)? } else { self };
+        let y = linear_product(x, weight, dtype)?;
         let y = match bias {
-            Some(bias) => y.add(wide(bias)?)?,
+            Some(bias) => linear_bias(y, bias, dtype)?,
             None => y,
         };
         let y = y.cast(dtype)?;

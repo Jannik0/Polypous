@@ -35,9 +35,10 @@ impl DynTensor {
             return Ok(self);
         }
         let (inner, dtype, device) = self.into_parts();
-        let inner = with_rank!(inner, t => {
-            dispatch_rank!(shape.len(), N => t.reshape::<N>(shape)?)
-        });
+        // The 6 × 6 rank dispatch is split in two levels (`Ranked::reshape_to` has the inner
+        // one): a debug build gives each of the 36 bodies its own stack slots, which made this
+        // frame about 120 KB with `vulkan` (#114).
+        let inner = with_rank!(inner, t => t.reshape_to(shape)?);
         Ok(DynTensor::from_parts(inner, dtype, device))
     }
 
@@ -399,6 +400,13 @@ fn cat_inner(inners: Vec<Inner>, dim: usize) -> Result<Inner> {
 }
 
 impl<const D: usize> Ranked<D> {
+    /// [`Ranked::reshape`] to a rank known at run time (`shape.len()`, 1–6).
+    // #114: own frame, see `DynTensor::reshape`.
+    #[inline(never)]
+    fn reshape_to(self, shape: &[usize]) -> Result<Inner> {
+        Ok(dispatch_rank!(shape.len(), N => self.reshape::<N>(shape)?))
+    }
+
     /// The caller checked that the element counts match.
     pub(crate) fn reshape<const N: usize>(self, shape: &[usize]) -> Result<Ranked<N>> {
         let dims: [usize; N] = shape

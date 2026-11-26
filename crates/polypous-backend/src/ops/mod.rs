@@ -353,7 +353,7 @@ mod topk;
 use crate::device::DeviceId;
 use burn::tensor::Shape;
 
-use crate::tensor::{DType, DynTensor, Ranked, Result, TensorError, map_rank, num_elements};
+use crate::tensor::{DType, DynTensor, Inner, Ranked, Result, TensorError, map_rank, num_elements};
 
 /// Most inputs of `core.concat` and outputs of `core.split` (graph-ir.md §4.3).
 pub(crate) const MAX_CONCAT_SPLIT: usize = 1024;
@@ -543,9 +543,21 @@ impl DynTensor {
             return Ok(aligned);
         }
         let (inner, dtype, device) = aligned.into_parts();
-        let inner = map_rank!(inner, t => t.expand(shape)?);
-        Ok(DynTensor::from_parts(inner, dtype, device))
+        Ok(DynTensor::from_parts(
+            expand_inner(inner, shape)?,
+            dtype,
+            device,
+        ))
     }
+}
+
+/// [`Ranked::expand`] for any rank.
+// #114: own frame. A debug build gives each rank's body its own stack slots; inline in
+// `broadcast_to`, which is on every elementwise op's path, they made its frame about 35 KB with
+// `vulkan`.
+#[inline(never)]
+fn expand_inner(inner: Inner, shape: &[usize]) -> Result<Inner> {
+    Ok(map_rank!(inner, t => t.expand(shape)?))
 }
 
 impl<const D: usize> Ranked<D> {
