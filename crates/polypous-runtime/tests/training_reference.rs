@@ -23,6 +23,7 @@
 mod common;
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use polypous_backend::device::DeviceId;
@@ -61,32 +62,97 @@ fn cases(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn upload(data: &TensorData, device: DeviceId) -> DynTensor {
-    DynTensor::from_data(data, device).unwrap()
+fn upload(data: &TensorData, device: DeviceId) -> Result<DynTensor, String> {
+    DynTensor::from_data(data, device).map_err(|e| format!("upload on {device}: {e}"))
 }
 
 fn bools(data: &TensorData) -> Vec<bool> {
     data.bytes.iter().map(|&b| b != 0).collect()
 }
 
-/// Runs every case of every model on `device`; returns the number of cases.
-fn run_all(device: DeviceId) -> usize {
-    let mut n = 0;
-    for dir in models() {
-        let model = dir.file_name().unwrap().to_string_lossy().into_owned();
-        let graph = Graph::from_json(&std::fs::read(dir.join("model.graph.json")).unwrap())
-            .unwrap_or_else(|r| panic!("{model}: {r}"));
-        let plan = Plan::new(&graph, PlanOptions::new(device)).unwrap();
-        let weights = SafetensorsFile::open(dir.join("model.safetensors")).unwrap();
-        for sidecar in cases(&dir) {
-            run_case(&model, &plan, &weights, &sidecar, device);
-            n += 1;
+/// Runs every case of every model on each of `devices`, prints a `SUMMARY training_reference`
+/// line per device, and fails with every failing case (case, device, message) once all have run.
+/// Returns the number of cases per device.
+fn run_on(devices: &[DeviceId]) -> usize {
+    let mut failures = Vec::new();
+    let mut summary = String::new();
+    let mut total = 0;
+    for &device in devices {
+        let (mut passed, mut failed) = (0, 0);
+        total = 0;
+        for dir in models() {
+            let model = dir.file_name().unwrap().to_string_lossy().into_owned();
+            let graph = Graph::from_json(&std::fs::read(dir.join("model.graph.json")).unwrap())
+                .unwrap_or_else(|r| panic!("{model}: {r}"));
+            let weights = SafetensorsFile::open(dir.join("model.safetensors")).unwrap();
+            let sidecars = cases(&dir);
+            total += sidecars.len();
+            let plan = match Plan::new(&graph, PlanOptions::new(device)) {
+                Ok(plan) => plan,
+                Err(e) => {
+                    // Every case of the model fails with the plan's error.
+                    for sidecar in &sidecars {
+                        failures.push(format!("{model}/{} on {device}: plan: {e}", stem(sidecar)));
+                    }
+                    failed += sidecars.len();
+                    continue;
+                }
+            };
+            for sidecar in sidecars {
+                match run_case(&model, &plan, &weights, &sidecar, device) {
+                    Ok(()) => passed += 1,
+                    Err(message) => {
+                        eprintln!("FAIL {message}");
+                        failures.push(message);
+                        failed += 1;
+                    }
+                }
+            }
         }
+        let _ = writeln!(
+            summary,
+            "SUMMARY training_reference {device}: {passed} passed, {failed} failed"
+        );
     }
-    n
+    eprint!("{summary}");
+    assert!(
+        failures.is_empty(),
+        "{} training case(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    total
 }
 
-fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path, device: DeviceId) {
+/// The file name of a sidecar without its extension.
+fn stem(sidecar: &Path) -> String {
+    sidecar.file_stem().unwrap().to_string_lossy().into_owned()
+}
+
+/// `Err(message)` if `got != want`, with the text of `assert_eq!`.
+fn ensure_eq<T: PartialEq + std::fmt::Debug>(
+    got: T,
+    want: T,
+    message: String,
+) -> Result<(), String> {
+    if got == want {
+        Ok(())
+    } else {
+        Err(format!(
+            "{message}: assertion `left == right` failed\n  left: {got:?}\n right: {want:?}"
+        ))
+    }
+}
+
+/// Runs one case on `device`. A mismatch or a failing call on the device is an `Err` with the
+/// case, the device and what differs; a malformed fixture panics (it fails on every device).
+fn run_case(
+    model: &str,
+    plan: &Plan,
+    weights: &SafetensorsFile,
+    sidecar: &Path,
+    device: DeviceId,
+) -> Result<(), String> {
     let json: Value = serde_json::from_slice(&std::fs::read(sidecar).unwrap()).unwrap();
     let file = SafetensorsFile::open(sidecar.with_extension("safetensors")).unwrap();
     let case = format!("{model}/{}", json["case"].as_str().unwrap());
@@ -101,9 +167,10 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
     for info in &analysis.params {
         let spec = serde_json::json!({ "name": info.name, "dtype": "f32", "shape": info.shape });
         let (_, data) = common::load_tensor(weights, &sidecar.with_file_name("model.json"), &spec);
-        let t = upload(&data, device);
+        let t = upload(&data, device).map_err(|e| format!("{case}: {e}"))?;
         let t = if info.is_trainable() {
-            t.require_grad().unwrap()
+            t.require_grad()
+                .map_err(|e| format!("{case} on {device}: require_grad of {}: {e}", info.name))?
         } else {
             t
         };
@@ -117,13 +184,13 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
         let shape: Vec<usize> = stored.shape.iter().map(|&d| d as usize).collect();
         let p = mask_p(plan, path);
         let mask = rng::dropout_mask(seed, step, path, &shape, p).unwrap();
-        assert_eq!(mask, bools(&stored), "{case}: mask of {path}");
+        ensure_eq(mask, bools(&stored), format!("{case}: mask of {path}"))?;
     }
 
-    let inputs: Vec<(String, DynTensor)> = common::load_list(&json, &file, sidecar, "inputs")
-        .into_iter()
-        .map(|(n, d)| (n, upload(&d, device)))
-        .collect();
+    let mut inputs: Vec<(String, DynTensor)> = Vec::new();
+    for (n, d) in common::load_list(&json, &file, sidecar, "inputs") {
+        inputs.push((n, upload(&d, device).map_err(|e| format!("{case}: {e}"))?));
+    }
     let out = plan
         .run(
             inputs,
@@ -132,16 +199,20 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
             RunMode::Training { seed, step },
             &RunOptions::default(),
         )
-        .unwrap_or_else(|e| panic!("{case} on {device}: {e}"));
+        .map_err(|e| format!("{case} on {device}: {e}"))?;
     let tol = common::parse_tolerance(&json["tolerance"]);
     let gtol = common::parse_tolerance(&json["gradient_tolerance"]);
 
     // Outputs.
     let expected = common::load_list(&json, &file, sidecar, "outputs");
     for (name, want) in &expected {
-        let got = out.output(name).unwrap().to_data().unwrap();
+        let got = out
+            .output(name)
+            .ok_or_else(|| format!("{case} on {device}: no output {name}"))?
+            .to_data()
+            .map_err(|e| format!("{case} on {device}: output {name}: {e}"))?;
         common::compare(want, &got, tol)
-            .unwrap_or_else(|e| panic!("{case} on {device}: output {name}: {e}"));
+            .map_err(|e| format!("{case} on {device}: output {name}: {e}"))?;
     }
     // Running statistics: names and order (runtime.md §3.3), values, no autodiff context.
     let want_stats: Vec<String> = entries(&json, "running_stats")
@@ -149,17 +220,25 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
         .map(|r| r["param"].as_str().unwrap().to_owned())
         .collect();
     let got_stats: Vec<String> = out.running_stats.iter().map(|(n, _)| n.clone()).collect();
-    assert_eq!(got_stats, want_stats, "{case}: running statistics");
+    ensure_eq(
+        &got_stats,
+        &want_stats,
+        format!("{case}: running statistics"),
+    )?;
     for r in entries(&json, "running_stats") {
         let param = r["param"].as_str().unwrap();
         let (_, want) = common::load_tensor(&file, sidecar, &strip(&r));
-        let t = out.running_stat(param).unwrap();
-        assert!(
-            !t.has_autodiff(),
-            "{case}: {param} carries autodiff context"
-        );
-        common::compare(&want, &t.to_data().unwrap(), tol)
-            .unwrap_or_else(|e| panic!("{case} on {device}: running statistic {param}: {e}"));
+        let t = out
+            .running_stat(param)
+            .ok_or_else(|| format!("{case} on {device}: no running statistic {param}"))?;
+        if t.has_autodiff() {
+            return Err(format!("{case}: {param} carries autodiff context"));
+        }
+        let got = t
+            .to_data()
+            .map_err(|e| format!("{case} on {device}: running statistic {param}: {e}"))?;
+        common::compare(&want, &got, tol)
+            .map_err(|e| format!("{case} on {device}: running statistic {param}: {e}"))?;
     }
 
     // Gradients of Σ out · grad_out.
@@ -167,30 +246,37 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
     for u in entries(&json, "upstream") {
         let output = u["output"].as_str().unwrap();
         let (_, g) = common::load_tensor(&file, sidecar, &strip(&u));
+        let loss_error = |e| format!("{case} on {device}: loss term of {output}: {e}");
         let term = out
             .output(output)
-            .unwrap()
+            .ok_or_else(|| format!("{case} on {device}: no output {output}"))?
             .clone()
-            .mul(upload(&g, device))
-            .unwrap()
+            .mul(upload(&g, device).map_err(|e| format!("{case}: {e}"))?)
+            .map_err(loss_error)?
             .sum(None, false)
-            .unwrap();
+            .map_err(loss_error)?;
         loss = Some(match loss {
             None => term,
-            Some(l) => l.add(term).unwrap(),
+            Some(l) => l.add(term).map_err(loss_error)?,
         });
     }
-    let grads = loss.expect("an upstream gradient").backward().unwrap();
+    let grads = loss
+        .expect("an upstream gradient")
+        .backward()
+        .map_err(|e| format!("{case} on {device}: backward: {e}"))?;
     let mut with_grad = Vec::new();
     for g in entries(&json, "gradients") {
         let param = g["param"].as_str().unwrap();
         let (_, want) = common::load_tensor(&file, sidecar, &strip(&g));
         let got = grads
             .get(&params[param])
-            .unwrap()
-            .unwrap_or_else(|| panic!("{case} on {device}: {param} got no gradient"));
-        common::compare(&want, &got.to_data().unwrap(), gtol)
-            .unwrap_or_else(|e| panic!("{case} on {device}: gradient of {param}: {e}"));
+            .map_err(|e| format!("{case} on {device}: gradient of {param}: {e}"))?
+            .ok_or_else(|| format!("{case} on {device}: {param} got no gradient"))?;
+        let got = got
+            .to_data()
+            .map_err(|e| format!("{case} on {device}: gradient of {param}: {e}"))?;
+        common::compare(&want, &got, gtol)
+            .map_err(|e| format!("{case} on {device}: gradient of {param}: {e}"))?;
         with_grad.push(param.to_owned());
     }
     for info in &analysis.params {
@@ -199,14 +285,15 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
         }
         let t = &params[&info.name];
         if info.is_trainable() {
-            assert!(
-                grads.get(t).unwrap().is_none(),
-                "{case}: {} got a gradient",
-                info.name
-            );
-        } else {
+            let got = grads
+                .get(t)
+                .map_err(|e| format!("{case} on {device}: gradient of {}: {e}", info.name))?;
+            if got.is_some() {
+                return Err(format!("{case}: {} got a gradient", info.name));
+            }
+        } else if t.is_tracked() {
             // Given untracked: never a leaf, so no gradient (and the call didn't track it).
-            assert!(!t.is_tracked(), "{case}: {} is tracked", info.name);
+            return Err(format!("{case}: {} is tracked", info.name));
         }
     }
     eprintln!(
@@ -215,6 +302,7 @@ fn run_case(model: &str, plan: &Plan, weights: &SafetensorsFile, sidecar: &Path,
         got_stats.len(),
         with_grad.len()
     );
+    Ok(())
 }
 
 /// The entries of the sidecar list `key`.
@@ -252,17 +340,12 @@ fn mask_p(plan: &Plan, path: &str) -> f64 {
 
 #[test]
 fn training_graphs_match_pytorch_cpu() {
-    let n = run_all(DeviceId::Cpu);
-    eprintln!("SUMMARY training_reference cpu: {n} passed, 0 failed");
-    assert_eq!(n, 3);
+    assert_eq!(run_on(&[DeviceId::Cpu]), 3);
 }
 
 #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
 #[test]
 #[ignore = "gpu"]
 fn training_graphs_match_pytorch_gpu() {
-    for device in common::gpu_devices() {
-        let n = run_all(device);
-        eprintln!("SUMMARY training_reference {device}: {n} passed, 0 failed");
-    }
+    run_on(&common::gpu_devices());
 }
