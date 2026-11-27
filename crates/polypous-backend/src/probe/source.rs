@@ -69,7 +69,9 @@ pub(crate) fn device_source() -> Box<dyn DeviceSource> {
 pub(crate) fn describe_and_probe(id: DeviceId) -> DeviceInfo {
     tracing::debug!(device = %id, "describing device");
     let started = Instant::now();
-    let mut info = device::describe_device(id);
+    // One device at a time, without the up-front open of the Vulkan open set: a crash must be
+    // attributed to the device being probed (ADR-0013).
+    let mut info = device::describe_device_alone(id);
     tracing::debug!(
         device = %id,
         name = %info.name,
@@ -88,7 +90,7 @@ pub(crate) fn describe_and_probe(id: DeviceId) -> DeviceInfo {
     if info.status == DeviceStatus::NotProbed {
         tracing::debug!(device = %id, "probing device");
         let started = Instant::now();
-        info.status = device::probe_device(id);
+        info.status = device::probe_device_alone(id);
         tracing::debug!(
             device = %id,
             status = %info.status,

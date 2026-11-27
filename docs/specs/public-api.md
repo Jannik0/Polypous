@@ -143,10 +143,25 @@ device types below, the probe API of §1.1 and `Error`. The CLI's
 
 | Item | Behavior |
 |---|---|
-| `Engine::new(config) -> Result<Engine, Error>` | Discovers and probes every device of every compiled-in backend (placement.md §1: probe cache, else prober process, else in process with crash journal), then marks the primary GPU. A failing device is reported as unavailable, never as an error. A panic becomes `Internal` |
+| `Engine::new(config) -> Result<Engine, Error>` | Discovers and probes every device of every compiled-in backend (placement.md §1: probe cache, else prober process, else in process with crash journal), then marks the primary GPU. A failing device is reported as unavailable, never as an error. A panic becomes `Internal`. Passes the probe's results to the backend, so the first Vulkan open of the process opens only Vulkan devices a probe found available and none found unavailable (see below) |
 | `Engine` | `Arc` handle: `Clone + Send + Sync + 'static`, no generics or lifetimes. No `close()` yet: it holds no resources that need deterministic release until models can be loaded |
 | `engine.devices() -> Vec<DeviceInfo>` | All devices in probe order (GPU priority order, the CPU last), the primary GPU with `primary: true` |
 | `engine.primary_gpu() -> Option<DeviceInfo>` | The device with `primary: true`, or `None` (CPU only) |
+
+**The first Vulkan open.** With the prober process or a probe-cache hit, `Engine::new` opens no
+device in the app's process. The first use of a Vulkan device in the process (loading a model or
+creating a trainer on it, its first tensor) opens every Vulkan device of the open set first, once per
+process, so no temporary Vulkan instance can be created while Vulkan compute runs
+([placement.md §1, "Remaining window"](placement.md#1-device-discovery)). That first call costs one
+device open per Vulkan device of the set (on the reference machine about 0.1–0.4 s per device in a
+release build, up to about 1.4 s in a debug build); later calls cost nothing extra. A device that
+fails that open is unavailable for the rest of the process (a `BackendUnavailable` error for a load
+or trainer on it) and is not opened again. The set is process-wide hardware state like the
+enumeration cache: every `Engine` contributes its probe results until the step has run, and a device
+any engine's probe found unavailable is not in it. That is consistent with rule 9 in the same sense
+as the enumeration cache: it holds facts about the hardware (which devices are open, which the GPU
+runtime keeps for the whole process anyway), no configuration, and it changes no engine's devices or
+results.
 
 **`EngineConfig` JSON.** An object; every field is optional, so `{}` is the defaults. Unknown
 fields, and any JSON that is not an object, are an `InvalidInput` error (so a misspelled option never
