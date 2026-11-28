@@ -179,8 +179,10 @@ upstream state in the [upstream findings register](upstream-findings.md); the ID
     takes only the gradient from the indexed pool, so tracked and untracked forwards agree bit for
     bit. Which zero `max_pool2d` returns at such a tie is backend-defined (graph-ir.md §3.3, owner
     decision; the forward fixtures have no such tie).
-- **The first open of a Vulkan device still enumerates once inside CubeCL** (M0-7; M0-6 is the race it is left over from), and that can race with Vulkan compute on other threads ([placement.md §1, "Remaining window"](specs/placement.md); #26).
-  - `Engine::new` opens every device it probes, so only a first use of a device discovery didn't open is exposed.
+- **The first open of a Vulkan device still enumerates once inside CubeCL** (M0-7), and on Debian 13 that crashes another thread in a Vulkan call at the same moment (M2-13, which refines M0-6; [placement.md §1, "Remaining window"](specs/placement.md); #26, #118).
+  - Since #118 the backend opens every Vulkan device of the open set, once per process, on the first Vulkan open, before any of them computes; the facade limits the set to devices its probe found usable, and a device that fails that open is never opened again. The first Vulkan call costs one device open per extra device.
+  - What remains: a Vulkan device outside the set opened later (a software rasterizer a direct backend user opted into, a device a probe rejected and the app addresses through the backend directly), in-process probing while Vulkan compute already runs, and Vulkan instances created outside Polypous.
+  - The race itself reproduces only on the Debian reference machine; the fix is verified there after #118's PR (rerun of #85).
 - **Lavapipe on Debian 13** (Mesa 25.0.7, LLVM 19) segfaults on its first compute work (M0-9).
   - Software rasterizers are skipped unless opted in (#21).
   - Ubuntu's newer Mesa in CI is fine.

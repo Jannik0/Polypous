@@ -6,7 +6,7 @@ use burn::tensor::{Device, Tensor};
 
 use super::discover::{lock_devices, panic_message};
 use super::info::{DeviceId, DeviceStatus, UnavailableReason};
-use super::resolve::resolve_device;
+use super::resolve::{resolve_device, resolve_device_alone};
 
 /// `[[1, 2], [3, 4]] @ [[5, 6], [7, 8]] + 1`. Small integers, exact in every float format a
 /// backend might compute with (f32, tf32, f16), so a correct device gives exactly this.
@@ -26,9 +26,22 @@ const EXPECTED: [f32; 4] = [20.0, 23.0, 44.0, 51.0];
 /// being opened (no driver is touched once the backend's list is cached).
 ///
 /// The first probe of a GPU compiles kernels and can take seconds.
+///
+/// The first open of a Vulkan device in the process opens every Vulkan device of the open set
+/// first, once (placement.md §1, "Remaining window"); a device that failed to open there is
+/// unavailable with that reason and is not opened again.
 pub fn probe_device(id: DeviceId) -> DeviceStatus {
-    // Checked before taking the device lock: enumeration takes it too.
-    let device = resolve_device(id);
+    // Resolved before taking the device lock: enumeration and the open step take it too.
+    probe_resolved(resolve_device(id))
+}
+
+/// [`probe_device`] without the up-front open of the Vulkan open set, for the probe session (see
+/// [`resolve_device_alone`]).
+pub(crate) fn probe_device_alone(id: DeviceId) -> DeviceStatus {
+    probe_resolved(resolve_device_alone(id))
+}
+
+fn probe_resolved(device: Result<Device, String>) -> DeviceStatus {
     let _guard = lock_devices();
     guarded(|| probe(&device?))
 }

@@ -21,21 +21,41 @@
 //! checking an id, listed or not, never touches the driver again. A device that disappears later
 //! (an unplugged eGPU) fails inside the backend; CubeCL keeps a device's client for the whole
 //! process too.
+//!
+//! # The first Vulkan open
+//!
+//! The first time a Vulkan id is resolved, every Vulkan device of the open set is opened first,
+//! once per process and under the device lock ([`super::open_set`], issue #118), so no temporary
+//! wgpu instance is created while Vulkan compute runs. A device that failed to open there is
+//! refused from then on, by [`resolve_device_alone`] too.
 
 use burn::tensor::Device;
 
 use super::discover::{EnumerationError, burn_device, list_backend_devices};
 use super::info::DeviceId;
+use super::open_set;
 
-/// The Burn device for `id`, or why `id` can't be used: its backend isn't compiled in, or the
-/// backend has no such device. Never panics; enumeration panics are caught by
-/// [`list_backend_devices`]. Must not be called while holding the device lock (the first
-/// enumeration of a backend takes it).
+/// The Burn device for `id`, or why `id` can't be used: its backend isn't compiled in, the
+/// backend has no such device, or it failed to open earlier in this process. For a Vulkan id, the
+/// first call in the process opens every Vulkan device of the open set first
+/// ([`super::open_set`]). Never panics; enumeration panics are caught by
+/// [`list_backend_devices`], open panics by the open step. Must not be called while holding the
+/// device lock (the first enumeration of a backend and the open step take it).
 pub(crate) fn resolve_device(id: DeviceId) -> Result<Device, String> {
+    let device = resolve_device_alone(id)?;
+    open_set::prepare(id)?;
+    Ok(device)
+}
+
+/// [`resolve_device`] without the up-front open: for the probe session, which opens one device at
+/// a time on purpose so that a crash is attributed to the device that caused it. A device that
+/// failed to open in the open step is still refused (it is never opened again).
+pub(crate) fn resolve_device_alone(id: DeviceId) -> Result<Device, String> {
     let backend = id.backend();
     let device =
         burn_device(id).ok_or_else(|| format!("the {backend} backend is not compiled in"))?;
     check_listed(id, list_backend_devices(backend))?;
+    open_set::check_failed(id)?;
     Ok(device)
 }
 

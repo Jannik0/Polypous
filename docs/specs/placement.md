@@ -98,8 +98,11 @@ above, only `… RecvError`). Probing isolated is the way to see the full reason
 **When enumeration happens (issue #26).** Each compiled-in backend is enumerated **at most once per
 process**: on the first successful `list_backend_devices` call for it (directly, through
 `list_devices`/`enumerate_devices*`, through `describe_device`/`probe_device`/`DynTensor` checking an
-id, or through `Engine` discovery). Vulkan and Metal enumeration also reads wgpu's adapter info
-(driver strings for `describe_device`) at that moment. Every later call reuses the cached list, and
+id, or through `Engine` discovery). With the prober process or a probe-cache hit, `Engine`
+discovery enumerates and opens nothing in the app's process; the first enumeration is then the first
+device call, and the first Vulkan open opens the whole open set ("Remaining window" below). Vulkan
+and Metal enumeration also reads wgpu's adapter info (driver strings for `describe_device`) at that
+moment. Every later call reuses the cached list, and
 an id that isn't in it fails against the list without enumerating again. Only successful
 enumerations are cached; a failed one (a caught Burn panic) is retried on the next call. Devices
 that appear later in the process lifetime (a newly plugged-in eGPU) are not seen until the process
@@ -111,14 +114,49 @@ on a fresh instance makes the Vulkan loader load all installed ICDs and unload t
 (`dlclose`). With stock Mesa on Debian 13 (Mesa 25.0.7, loader 1.4.309) that crashes the process
 (SIGSEGV in `libvulkan.so.1`) when another thread computes on a Vulkan GPU at the same time.
 
-**Remaining window.** The first time a Vulkan device is opened in a process (`describe_device`,
-`probe_device`, or the first `DynTensor` on it), CubeCL (cubecl-wgpu 0.11.3, `try_create_setup`)
-enumerates adapters once on a temporary wgpu instance before creating the device; Polypous can't
-change that. Opening a device that was already opened touches no instance. So: **open every Vulkan
-device you will use before Vulkan compute starts on other threads** (the first enumeration itself
-counts as well). `Engine::new` does this for every device it probes, so after discovery only an
-explicit first use of a device discovery didn't open (a skipped software rasterizer, a device that
-failed to open) can still race with compute. CUDA and the CPU backend are not affected.
+**Remaining window.** The first time a Vulkan device is opened in a process, CubeCL (cubecl-wgpu
+0.11.3, `try_create_setup`) enumerates adapters once on a temporary wgpu instance before creating the
+device; Polypous can't change that. On Debian 13 that temporary instance crashes another thread that
+is in a Vulkan call at the same moment (register M2-13: the loader unloads ICDs without the lock its
+device calls take; wgpu's debug object names put compute threads in such calls in debug builds).
+Opening a device that was already opened touches no instance. So the backend opens every Vulkan
+device the process will use **before any of them computes** (issue #118):
+
+- **The up-front open.** The first open of any Vulkan device in the process (the first `DynTensor` on
+  it, `describe_device`, `probe_device`) first opens, once per process and under the device lock,
+  every Vulkan device of the **open set**, in enumeration order; then the caller's device is used.
+  Threads that make their first Vulkan call at the same time wait for that one step. It costs one
+  device open per Vulkan device of the set, once per process, without running a kernel (on the
+  reference machine about 0.2–0.3 s for the RTX 3060 and about 20–30 ms for the Iris Xe, in debug
+  and release builds alike).
+- **The open set.** By default every Vulkan device `list_backend_devices` lists, except software
+  rasterizers (the devices discovery skips by default). An `Engine` passes the results of its probe
+  before any of its devices is used (from the prober process, the probe cache, in-process probing or
+  `EngineConfig::probe_report`): then the set is the listed Vulkan devices that some engine's probe
+  found available and no engine's probe found unavailable. A device the prober rejected is so never
+  opened in the app's process by this step (ADR-0013). A device skipped as a software rasterizer, or
+  not probed, gives no verdict; an opted-in software rasterizer that its probe found available joins
+  the set. The set is fixed once the step has run: probe results that come later (another `Engine`,
+  `refresh_devices`) open or close nothing. Like the enumeration cache, this is process-wide hardware
+  state (which devices are open, which CubeCL keeps for the whole process anyway), not engine state
+  (public-api.md §2 rule 9).
+- **Devices that fail to open.** A device of the set whose open fails (CubeCL panics; caught) is
+  remembered for the rest of the process: every later use of it fails (`DeviceUnavailable` for
+  tensors, unavailable for `describe_device` / `probe_device`) with the reason, and Polypous never
+  tries to open it again, because a retry would create another temporary instance. The other devices
+  are not affected.
+- **The probe session** (the prober process and in-process probing) doesn't run the step: it opens
+  one device at a time on purpose, so that a crash is attributed to the device that caused it. It
+  still refuses a device that failed in the step.
+
+What remains: a Vulkan device outside the set that is opened later still opens alone, possibly while
+another Vulkan device computes. That is a software rasterizer a direct backend user opted into
+(`EnumerateOptions` is per call, so the backend doesn't know the opt-in in advance), a device a probe
+rejected and the app addresses directly through the backend, and a device the set didn't include
+because the step ran before an `Engine` passed its results. In-process probing that runs while
+another thread already computes on Vulkan (`refresh_devices` with in-process probing during a run)
+opens its devices alone too. Vulkan instances created outside Polypous (by the app, or another
+library in the process) are not covered at all. CUDA and the CPU backend are not affected.
 
 Tensors address devices by the same ids (issue #19): `DynTensor::from_data(&data, id)`,
 `DynTensor::to_device(id)` and `DynTensor::device()`. An id is usable if its backend is compiled in

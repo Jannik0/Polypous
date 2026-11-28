@@ -16,12 +16,17 @@
 //! - [`probe_device`]: initialize, allocate, run a tiny kernel, compare the result.
 //! - [`select_primary_gpu`]: the priority rule of placement.md §1, on a device list.
 //!
+//! The first open of any Vulkan device in the process (a tensor, [`describe_device`],
+//! [`probe_device`]) opens every Vulkan device of the open set first, once (placement.md §1,
+//! "Remaining window"; `open_set.rs`). The probe session opens devices one at a time instead.
+//!
 //! None of these functions fails or panics: problems become a [`DeviceStatus::Unavailable`].
 //! Calls that touch devices are serialized by a process-wide lock, so they may be called from any
 //! thread.
 
 mod discover;
 mod info;
+mod open_set;
 mod probe;
 mod resolve;
 mod select;
@@ -30,11 +35,13 @@ pub use discover::{
     EnumerateOptions, EnumerationError, describe_device, enumerate_devices, enumerate_devices_with,
     list_backend_devices, list_devices, skipped_device, unprobed_device,
 };
-pub(crate) use discover::{device_id_of, enumeration_details};
+pub(crate) use discover::{describe_device_alone, device_id_of, enumeration_details};
 pub use info::{
     AdapterKind, BackendKind, Capabilities, DeviceId, DeviceInfo, DeviceKind, DeviceStatus,
     PhysicalIdentity, UnavailableReason,
 };
+pub use open_set::{VulkanOpenStep, note_probe_results, vulkan_open_step};
 pub use probe::probe_device;
+pub(crate) use probe::probe_device_alone;
 pub(crate) use resolve::resolve_device;
 pub use select::{group_physical_devices, probe_order, probe_rank, select_primary_gpu};

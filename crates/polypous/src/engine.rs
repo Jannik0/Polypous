@@ -192,6 +192,7 @@ impl Engine {
     ) -> Result<Engine, Error> {
         guard("engine_new", || {
             let state = EngineState::new(discover(&config)?);
+            restrict_vulkan_open_set(&state.devices);
             log_primary(&state);
             Ok(Engine {
                 inner: Arc::new(EngineInner {
@@ -275,6 +276,7 @@ impl Engine {
                 .cloned()
                 .map(device::to_backend_info)
                 .collect();
+            let probed_for_open_set = probed.clone();
             if partial {
                 for device in probed {
                     match state.devices.iter_mut().find(|known| known.id == device.id) {
@@ -288,6 +290,7 @@ impl Engine {
             } else {
                 state.devices = probed;
             }
+            restrict_vulkan_open_set(&probed_for_open_set);
             state.report = report;
             state.mark_primary();
             let report = state.report.clone();
@@ -296,6 +299,20 @@ impl Engine {
             log_primary(&self.state());
             Ok(report)
         })
+    }
+}
+
+/// Passes a probe's results to the backend before any of the engine's devices is used, so the
+/// up-front open of the Vulkan open set (on the first Vulkan open in the process) opens only
+/// devices a probe found usable and none rejected (placement.md §1, "Remaining window"; ADR-0013:
+/// a driver that crashed the prober is never opened in this process by that step). Process-wide
+/// hardware state like the backend's enumeration cache, not engine state (public-api.md §2
+/// rule 9): it decides only which devices are opened early, and is fixed once that open ran.
+fn restrict_vulkan_open_set(devices: &[backend::DeviceInfo]) {
+    if !backend::note_probe_results(devices) {
+        tracing::debug!(
+            "the Vulkan devices of this process were already opened; the new probe results don't change them"
+        );
     }
 }
 

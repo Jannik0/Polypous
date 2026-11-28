@@ -132,7 +132,9 @@ the build failed with random errors such as `E0786` ("found invalid metadata fil
   to crash the process here, because the Vulkan loader loads and unloads Mesa's device-less ICDs on
   every enumeration; Polypous now enumerates each backend once per process (#26, placement.md §1
   "When enumeration happens"). The first open of a Vulkan device still enumerates once inside
-  CubeCL, so tests open their Vulkan GPUs before computing on several threads.
+  CubeCL, which crashed parallel debug test runs here (M2-13, #118); since #118 the backend opens
+  every Vulkan device (but skipped software rasterizers) on the first Vulkan open in the process,
+  so the tests need no pre-open of their own (placement.md §1, "Remaining window").
 - For Vulkan software-driver testing (as in CI), select lavapipe alone with `VK_DRIVER_FILES`
   pointing at `lvp_icd.*.json` (for example `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`)
   **and** set the test-only variable `POLYPOUS_TEST_SOFTWARE_VULKAN=1`, so the GPU tests open and

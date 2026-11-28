@@ -194,9 +194,24 @@ pub fn list_devices() -> Vec<DeviceId> {
 /// [`list_backend_devices`] doesn't list is not opened (no driver is touched once the backend's
 /// list is cached). Opening a GPU loads its driver, which can crash the process natively; run it
 /// in the prober process (ADR-0013).
+///
+/// The first open of a Vulkan device in the process opens every Vulkan device of the open set
+/// first, once (placement.md §1, "Remaining window"); a device that failed to open there is
+/// unavailable with that reason and is not opened again.
 pub fn describe_device(id: DeviceId) -> DeviceInfo {
-    // Checked before taking the device lock: enumeration takes it too.
-    let result = super::resolve::resolve_device(id).and_then(|_| {
+    describe_resolved(id, super::resolve::resolve_device(id))
+}
+
+/// [`describe_device`] without the up-front open of the Vulkan open set, for the probe session
+/// (see [`super::resolve::resolve_device_alone`]).
+pub(crate) fn describe_device_alone(id: DeviceId) -> DeviceInfo {
+    describe_resolved(id, super::resolve::resolve_device_alone(id))
+}
+
+/// Describes `id` once it was resolved (outside the device lock: enumeration and the open step
+/// take it).
+fn describe_resolved(id: DeviceId, resolved: Result<Device, String>) -> DeviceInfo {
+    let result = resolved.and_then(|_| {
         let _guard = lock_devices();
         catch_unwind(AssertUnwindSafe(|| describe(id)))
             .unwrap_or_else(|payload| Err(format!("panic: {}", panic_message(&*payload))))
@@ -212,6 +227,32 @@ pub fn describe_device(id: DeviceId) -> DeviceInfo {
             },
             ..placeholder(id)
         },
+    }
+}
+
+/// Opens one device (creates its CubeCL client, which loads the driver) without using it, for the
+/// up-front open of the Vulkan open set ([`super::open_set`]). Runs under [`DEVICE_LOCK`]; the
+/// caller catches panics.
+///
+/// In test builds with the `test-fault-injection` feature, the device ids listed in
+/// `POLYPOUS_TEST_FAIL_OPEN` (comma-separated, for example `vulkan:cpu:0`) panic here the way
+/// CubeCL does for a device it can't acquire, without touching the driver.
+pub(crate) fn open_device(id: DeviceId) -> Result<(), String> {
+    #[cfg(feature = "test-fault-injection")]
+    if std::env::var("POLYPOUS_TEST_FAIL_OPEN")
+        .is_ok_and(|ids| ids.split(',').any(|listed| listed.trim() == id.to_string()))
+    {
+        panic!("Unable to acquire wgpu device (injected by POLYPOUS_TEST_FAIL_OPEN)");
+    }
+    match id {
+        #[cfg(any(feature = "cuda", feature = "vulkan", feature = "metal"))]
+        DeviceId::Cuda { .. } | DeviceId::Vulkan { .. } | DeviceId::Metal { .. } => {
+            let cube = gpu::cube_device(id)
+                .ok_or_else(|| format!("the {} backend is not compiled in", id.backend()))?;
+            drop(cube.client());
+            Ok(())
+        }
+        _ => Err(format!("{id} is not a device the open step opens")),
     }
 }
 
