@@ -126,8 +126,9 @@ device the process will use **before any of them computes** (issue #118):
   it, `describe_device`, `probe_device`) first opens, once per process and under the device lock,
   every Vulkan device of the **open set**, in enumeration order; then the caller's device is used.
   Threads that make their first Vulkan call at the same time wait for that one step. It costs one
-  device open per Vulkan device of the set, once per process (on the reference machine about
-  0.1–0.4 s per device in a release build, up to about 1.4 s in a debug build).
+  device open per Vulkan device of the set, once per process, without running a kernel (on the
+  reference machine about 0.2–0.3 s for the RTX 3060 and about 20–30 ms for the Iris Xe, in debug
+  and release builds alike).
 - **The open set.** By default every Vulkan device `list_backend_devices` lists, except software
   rasterizers (the devices discovery skips by default). An `Engine` passes the results of its probe
   before any of its devices is used (from the prober process, the probe cache, in-process probing or

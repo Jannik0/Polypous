@@ -464,7 +464,8 @@ All notable changes to Polypous are documented here. The format follows
   opens every Vulkan device of the open set first, once, under the device lock: by default every
   listed Vulkan device but software rasterizers; with an `Engine`, only devices its probe found
   available and no engine's probe found unavailable. That first Vulkan call costs one device open
-  per Vulkan device (about 0.1–0.4 s each on the reference machine in release builds). A device
+  per Vulkan device of the set, once per process, without a kernel (on the reference machine about
+  0.2–0.3 s for the RTX 3060 and about 20–30 ms for the Iris Xe, in debug and release builds). A device
   that fails this open is unavailable for the rest of the process and never opened again. Before,
   this protection came only from `Engine::new` with in-process probing; with the prober process or
   a probe-cache hit nothing was opened up front. Remaining: an opted-in software rasterizer opened

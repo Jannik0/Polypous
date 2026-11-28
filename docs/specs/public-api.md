@@ -153,8 +153,9 @@ device in the app's process. The first use of a Vulkan device in the process (lo
 creating a trainer on it, its first tensor) opens every Vulkan device of the open set first, once per
 process, so no temporary Vulkan instance can be created while Vulkan compute runs
 ([placement.md §1, "Remaining window"](placement.md#1-device-discovery)). That first call costs one
-device open per Vulkan device of the set (on the reference machine about 0.1–0.4 s per device in a
-release build, up to about 1.4 s in a debug build); later calls cost nothing extra. A device that
+device open per Vulkan device of the set, once per process, without running a kernel (on the
+reference machine about 0.2–0.3 s for the RTX 3060 and about 20–30 ms for the Iris Xe, in debug and
+release builds alike); later calls cost nothing extra. A device that
 fails that open is unavailable for the rest of the process (a `BackendUnavailable` error for a load
 or trainer on it) and is not opened again. The set is process-wide hardware state like the
 enumeration cache: every `Engine` contributes its probe results until the step has run, and a device
